@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CS Executive Performance Dashboard</title>
+<!--XLSX_LIB_PLACEHOLDER-->
+<style>
+:root{
+  --navy:#1E3A8A; --blue:#2563EB; --green:#16A34A; --amber:#F59E0B; --red:#DC2626; --purple:#7C3AED;
+  --ink:#0F172A; --slate:#334155; --mut:#64748B; --line:#E2E8F0; --bg:#F1F5F9;
+  --panel:#FFFFFF; --panel2:#F8FAFC;
+  --shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px rgba(15,23,42,.06);
+  --shadow-lg:0 4px 12px rgba(15,23,42,.08),0 20px 48px rgba(15,23,42,.10);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}
+.app{display:flex;min-height:100vh}
+.side{width:250px;background:linear-gradient(175deg,#111C44 0%,#0B1230 100%);color:#CBD5E1;position:fixed;top:0;bottom:0;left:0;display:flex;flex-direction:column;z-index:40}
+.brand{padding:24px 22px 18px;border-bottom:1px solid rgba(255,255,255,.07)}
+.brand .logo{display:flex;align-items:center;gap:11px}
+.brand .mark{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--blue),#60A5FA);display:grid;place-items:center;font-weight:800;color:#fff;font-size:14px;box-shadow:0 4px 12px rgba(37,99,235,.5)}
+.brand h1{font-size:14px;font-weight:700;color:#fff}
+.brand span{font-size:10.5px;color:#8291B0;letter-spacing:.3px}
+.nav{padding:12px 12px;flex:1;overflow-y:auto}
+.nav .lbl{font-size:10px;letter-spacing:.6px;color:#5B6788;padding:12px 12px 6px;text-transform:uppercase}
+.nav a{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:9px;color:#AEB9D4;text-decoration:none;font-size:13.5px;font-weight:500;cursor:pointer;transition:.15s;margin-bottom:2px}
+.nav a:hover{background:rgba(255,255,255,.05);color:#fff}
+.nav a.active{background:linear-gradient(90deg,rgba(37,99,235,.22),rgba(37,99,235,.05));color:#fff}
+.nav a.active .ic{color:#60A5FA}
+.nav a .ic{width:18px;text-align:center;opacity:.9}
+.side .foot{padding:15px 18px;border-top:1px solid rgba(255,255,255,.07);font-size:11px;color:#6B789B}
+.main{margin-left:250px;flex:1;min-width:0}
+.top{background:rgba(255,255,255,.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:15px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:30}
+.top .tt h2{font-size:18px;font-weight:700}
+.top .tt p{font-size:12px;color:var(--mut);margin-top:2px}
+.top .actions{display:flex;gap:9px;align-items:center}
+.btn{border:1px solid var(--line);background:#fff;color:var(--slate);padding:9px 14px;border-radius:9px;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.15s;text-decoration:none}
+.btn:hover{border-color:var(--blue);color:var(--blue);box-shadow:var(--shadow)}
+.btn.primary{background:var(--navy);color:#fff;border-color:var(--navy)}
+.btn.primary:hover{background:#162e6e;color:#fff}
+.wrap{padding:24px 28px 56px}
+.dedup-banner{display:flex;align-items:center;gap:14px;background:linear-gradient(90deg,#EEF2FF,#F8FAFC);border:1px solid #C7D2FE;border-radius:13px;padding:14px 18px;margin-bottom:20px}
+.dedup-banner .di{width:40px;height:40px;border-radius:11px;background:var(--navy);color:#fff;display:grid;place-items:center;font-size:18px;flex-shrink:0}
+.dedup-banner .dt b{font-size:13.5px;color:var(--ink)}
+.dedup-banner .dt p{font-size:12px;color:var(--slate);margin-top:2px}
+.dedup-banner .dm{margin-left:auto;text-align:right;flex-shrink:0}
+.dedup-banner .dm b{font-size:20px;font-weight:800;color:var(--navy);display:block}
+.dedup-banner .dm span{font-size:10.5px;color:var(--mut)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin-bottom:20px}
+.kpi{background:var(--panel);border-radius:15px;padding:17px;box-shadow:var(--shadow);position:relative;overflow:hidden;border:1px solid var(--line)}
+.kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--c,var(--navy))}
+.kpi .ico{width:37px;height:37px;border-radius:10px;display:grid;place-items:center;font-size:16px;background:color-mix(in srgb,var(--c,var(--navy)) 12%,#fff);color:var(--c,var(--navy));margin-bottom:10px}
+.kpi .val{font-size:25px;font-weight:800;letter-spacing:-.5px;line-height:1}
+.kpi .lbl{font-size:11px;color:var(--mut);letter-spacing:.3px;margin-top:7px;font-weight:600;text-transform:uppercase}
+.kpi .sub{font-size:11.5px;margin-top:7px;color:var(--slate)}
+.kpi .sub b{color:var(--c,var(--navy))}
+.grid{display:grid;gap:16px;margin-bottom:16px}
+.g2{grid-template-columns:1.4fr 1fr}.g2e{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}
+.panel{background:var(--panel);border-radius:15px;padding:19px;box-shadow:var(--shadow);border:1px solid var(--line)}
+.panel h3{font-size:14px;font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:8px}
+.panel .hd{margin-bottom:15px}
+.panel .hd p{font-size:11.5px;color:var(--mut);margin-top:2px}
+.tag{font-size:10px;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:.2px}
+.page{display:none;animation:fade .32s ease}.page.active{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar-row{display:grid;grid-template-columns:150px 1fr 62px;align-items:center;gap:12px}
+.bar-row .nm{font-size:12.5px;color:var(--slate);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-track{height:11px;background:var(--panel2);border-radius:20px;overflow:hidden}
+.bar-fill{height:100%;border-radius:20px;background:linear-gradient(90deg,var(--navy),var(--blue));transition:width 1s cubic-bezier(.2,.7,.2,1)}
+.bar-row .vv{font-size:12.5px;font-weight:700;text-align:right}
+.rk{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:7px;font-size:11px;font-weight:800;background:var(--panel2);color:var(--mut);margin-right:8px}
+.rk.g1{background:linear-gradient(135deg,#FDE68A,#F59E0B);color:#7c4a03}
+.rk.g2{background:linear-gradient(135deg,#E2E8F0,#94A3B8);color:#33415a}
+.rk.g3{background:linear-gradient(135deg,#FDBA74,#EA580C);color:#7c2d12}
+.donut-wrap{display:flex;align-items:center;gap:20px}
+.donut{width:150px;height:150px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;position:relative}
+.donut::after{content:'';position:absolute;width:96px;height:96px;border-radius:50%;background:#fff;box-shadow:inset 0 1px 4px rgba(15,23,42,.08)}
+.donut .ctr{position:relative;z-index:2;text-align:center}
+.donut .ctr b{font-size:21px;font-weight:800}
+.donut .ctr span{font-size:10px;color:var(--mut);display:block}
+.leg{display:flex;flex-direction:column;gap:11px;flex:1}
+.leg .li{display:flex;align-items:center;gap:9px}
+.leg .dot{width:12px;height:12px;border-radius:4px;flex-shrink:0}
+.leg .lt{font-size:12.5px;color:var(--slate);flex:1;font-weight:600}
+.leg .lv{font-size:13px;font-weight:800}
+.leg .lp{font-size:11px;color:var(--mut);margin-left:6px;font-weight:600}
+.ins{display:flex;gap:12px;padding:13px 15px;border-radius:11px;background:var(--panel2);margin-bottom:9px;border-left:3px solid var(--blue)}
+.ins .n{width:24px;height:24px;border-radius:7px;background:var(--navy);color:#fff;display:grid;place-items:center;font-size:11px;font-weight:800;flex-shrink:0}
+.ins p{font-size:12.8px;color:var(--slate);line-height:1.55}
+.obs{padding:14px 16px;border-radius:12px;background:var(--panel2);margin-bottom:11px;border:1px solid var(--line)}
+.obs .th{display:flex;align-items:center;gap:9px;margin-bottom:6px}
+.obs .th .b{font-size:13px;font-weight:700}
+.obs .th .chip{font-size:9.5px;font-weight:800;padding:2px 8px;border-radius:20px;background:#FEE2E2;color:#B91C1C;letter-spacing:.2px}
+.obs p{font-size:12.5px;color:var(--slate);line-height:1.6}
+.tbl-tools{display:flex;gap:10px;margin-bottom:13px;flex-wrap:wrap}
+.search{flex:1;min-width:200px;position:relative}
+.search input{width:100%;padding:10px 13px 10px 34px;border:1px solid var(--line);border-radius:9px;font-size:13px;outline:none;background:#fff}
+.search input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.search .si{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--mut);font-size:13px}
+select.filter{padding:10px 13px;border:1px solid var(--line);border-radius:9px;font-size:13px;color:var(--slate);background:#fff;cursor:pointer;outline:none}
+.tbl-scroll{overflow-x:auto;border-radius:12px;border:1px solid var(--line)}
+table{width:100%;border-collapse:collapse;font-size:12.5px;background:#fff}
+thead th{background:var(--navy);color:#fff;padding:11px 12px;text-align:left;font-weight:600;font-size:11.5px;white-space:nowrap;cursor:pointer;user-select:none;position:sticky;top:0}
+thead th:hover{background:#162e6e}
+tbody td{padding:10px 12px;border-bottom:1px solid var(--line);color:var(--slate);white-space:nowrap}
+tbody tr:hover{background:var(--panel2)}
+.nm-cell{font-weight:600;color:var(--ink)}
+.grade{font-weight:800;padding:3px 9px;border-radius:7px;font-size:11px;display:inline-block;min-width:32px;text-align:center}
+.gr-A{background:#DCFCE7;color:#15803D}.gr-B{background:#DBEAFE;color:#1D4ED8}.gr-C{background:#FEF3C7;color:#B45309}.gr-D{background:#FEE2E2;color:#B91C1C}
+.risk{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px}
+.risk-High{background:#FEE2E2;color:#B91C1C}.risk-Elevated{background:#FEF3C7;color:#B45309}
+.risk-Normal{background:#DCFCE7;color:#15803D}.risk-Low{background:#F1F5F9;color:#64748B}
+.mini{width:60px;height:7px;background:var(--panel2);border-radius:20px;overflow:hidden;display:inline-block;vertical-align:middle}
+.mini i{display:block;height:100%;background:linear-gradient(90deg,var(--navy),var(--blue))}
+.seg{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px}
+.seg-top{background:#DCFCE7;color:#15803D}.seg-core{background:#DBEAFE;color:#1D4ED8}.seg-dev{background:#FEF3C7;color:#B45309}.seg-att{background:#FEE2E2;color:#B91C1C}
+.prof-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:15px}
+.prof{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow);transition:.18s}
+.prof:hover{box-shadow:var(--shadow-lg);transform:translateY(-2px)}
+.prof .ph{display:flex;align-items:center;gap:11px;margin-bottom:13px}
+.prof .av{width:44px;height:44px;border-radius:11px;display:grid;place-items:center;font-weight:800;color:#fff;font-size:15px;flex-shrink:0}
+.prof .pn{font-size:14px;font-weight:700;line-height:1.2}
+.prof .pr{font-size:11px;color:var(--mut);margin-top:2px}
+.prof .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px}
+.prof .st{background:var(--panel2);border-radius:9px;padding:8px 5px;text-align:center}
+.prof .st b{font-size:14px;font-weight:800;display:block}
+.prof .st span{font-size:9px;color:var(--mut);letter-spacing:.2px}
+.prof .metric{margin-bottom:8px}
+.prof .metric .ml{display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px}
+.prof .metric .ml span{color:var(--mut);font-weight:600}.prof .metric .ml b{color:var(--slate)}
+.prof .pbar{height:7px;background:var(--panel2);border-radius:20px;overflow:hidden}
+.prof .pbar i{display:block;height:100%;border-radius:20px}
+.stack{display:flex;height:26px;border-radius:8px;overflow:hidden;margin:6px 0}
+.stack .sg{display:grid;place-items:center;font-size:10px;font-weight:700;color:#fff;min-width:0}
+.hstat{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.hstat .d{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.hstat .t{flex:1}.hstat .t b{font-size:12.5px;display:block}.hstat .t span{font-size:11px;color:var(--mut)}
+.hstat .v{font-size:15px;font-weight:800}
+.file-in{display:none}
+@media(max-width:1100px){.kpis{grid-template-columns:repeat(2,1fr)}.g2,.g2e,.g3{grid-template-columns:1fr}.side{transform:translateX(-100%);transition:.3s}.side.open{transform:none}.main{margin-left:0}.menu-btn{display:inline-flex!important}}
+.menu-btn{display:none}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side">
+    <div class="brand"><div class="logo"><div class="mark">CS</div><div><h1>Executive BI</h1><span>Performance Suite</span></div></div></div>
+    <nav class="nav">
+      <div class="lbl">Overview</div>
+      <a class="active" data-p="overview"><span class="ic">▤</span> Executive Overview</a>
+      <a data-p="daily"><span class="ic">📈</span> Daily Trend (HR)</a>
+      <div class="lbl">Agents</div>
+      <a data-p="cancel"><span class="ic">✕</span> Cancellation Analysis</a>
+      <a data-p="pending"><span class="ic">⏳</span> Pending Analysis</a>
+      <a data-p="printed"><span class="ic">✓</span> Printed Analysis</a>
+      <a data-p="phone"><span class="ic">☎</span> Alt Phone Analysis</a>
+      <a data-p="employees"><span class="ic">◉</span> Employee Profiles</a>
+      <a data-p="orders"><span class="ic">＋</span> Added Orders</a>
+      <div class="lbl">Intelligence</div>
+      <a data-p="insights"><span class="ic">◈</span> Executive Insights</a>
+      <a data-p="scorecard"><span class="ic">★</span> Scorecard</a>
+      <a data-p="data"><span class="ic">▦</span> Detailed Data</a>
+    </nav>
+    <div class="foot">Deduplicated · HR daily + agent logs</div>
+  </aside>
+  <div class="main">
+    <div class="top">
+      <div style="display:flex;align-items:center;gap:14px">
+        <button class="btn menu-btn" onclick="document.getElementById('side').classList.toggle('open')">☰</button>
+        <div class="tt"><h2 id="pgTitle">Executive Overview</h2><p id="pgSub">Customer Service — deduplicated performance</p></div>
+      </div>
+      <div class="actions">
+        <label class="btn" for="reup" title="Replace all data with a new Excel log (same format)">⭱ Import / Replace</label>
+        <input class="file-in" type="file" id="reup" accept=".xlsx,.xls">
+        <button class="btn" onclick="document.getElementById('shareModal').style.display='flex'">⇪ Share</button>
+        <a class="btn" href="Executive_Report_v3.xlsx" download>⭳ Excel</a>
+        <a class="btn primary" href="Executive_Report_v3.pdf" download>⭳ PDF</a>
+      </div>
+    </div>
+    <div class="wrap" id="root"></div>
+  </div>
+</div>
+<script>
+const D = __DATA_PLACEHOLDER__;
+const NAVY='#1E3A8A',BLUE='#2563EB',GREEN='#16A34A',AMBER='#F59E0B',RED='#DC2626',PURPLE='#7C3AED';
+const AV=['#1E3A8A','#2563EB','#0891B2','#7C3AED','#DB2777','#0D9488','#EA580C','#4F46E5','#059669','#C026D3'];
+const fmt=n=>Number(n).toLocaleString('en-US');
+const initials=n=>n.replace(/\((pen|cs)\)/gi,'').trim().split(/\s+/).filter(w=>!/^(cs|new|data|entry)$/i.test(w)).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()||'CS';
+
+function kpiCard(ico,val,lbl,sub,c){return `<div class="kpi" style="--c:${c}"><div class="ico">${ico}</div><div class="val">${val}</div><div class="lbl">${lbl}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`;}
+function barList(items,max,color,fmtV){max=max||Math.max(...items.map(i=>i.value),1);
+ return `<div class="bars">${items.map((it,i)=>{const rk=i<3?`g${i+1}`:'';return `<div class="bar-row"><div class="nm"><span class="rk ${rk}">${i+1}</span>${it.name}</div><div class="bar-track"><div class="bar-fill" style="width:0" data-w="${(it.value/max*100)}" ${color?`data-c="${color}"`:''}></div></div><div class="vv">${fmtV?fmtV(it.value):fmt(it.value)}</div></div>`;}).join('')}</div>`;}
+function animateBars(){setTimeout(()=>document.querySelectorAll('.bar-fill[data-w]').forEach(b=>{const c=b.getAttribute('data-c');if(c)b.style.background=c;b.style.width=b.getAttribute('data-w')+'%';}),60);}
+function scoreCell(v){return `<div style="display:flex;align-items:center;gap:8px"><span class="mini"><i style="width:${Math.min(v,100)}%"></i></span><b style="font-size:12px">${v.toFixed(0)}</b></div>`;}
+function segClass(s){return {'Top Performer':'top','Core Contributor':'core','Developing':'dev','Needs Attention':'att'}[s];}
+function riskClass(r){return r==='Low Volume'?'Low':r;}
+
+function lineChart(series,keys,colors,labels,pctMode){
+ const W=680,H=250,pad=38,padB=32;const pts=series.length;
+ const allv=[].concat(...keys.map(k=>series.map(s=>s[k])));
+ const max=Math.max(...allv)*1.1,min=pctMode?0:Math.min(...allv)*0.9;
+ const x=i=>pts<=1?(W/2):pad+(W-pad*2)*(i/(pts-1)); const y=v=>H-padB-(H-pad-padB)*((v-min)/(max-min||1));
+ let g='';for(let t=0;t<=4;t++){const yy=pad+(H-pad-padB)*t/4;const val=(max-(max-min)*t/4);g+=`<line x1="${pad}" y1="${yy}" x2="${W-pad}" y2="${yy}" stroke="#EEF2F6"/><text x="${pad-6}" y="${yy+3}" font-size="9" fill="#94A3B8" text-anchor="end">${pctMode?val.toFixed(0)+'%':Math.round(val)}</text>`;}
+ let lines='';keys.forEach((k,ki)=>{let p='';series.forEach((s,i)=>{p+=(i?'L':'M')+x(i)+' '+y(s[k])+' ';});
+  lines+=`<path d="${p}" fill="none" stroke="${colors[ki]}" stroke-width="2.2"/>`;
+  series.forEach((s,i)=>{if(i%2===0||pts<12)lines+=`<circle cx="${x(i)}" cy="${y(s[k])}" r="2.6" fill="${colors[ki]}"/>`;});});
+ let xl='';series.forEach((s,i)=>{if(i%3===0||pts<12)xl+=`<text x="${x(i)}" y="${H-12}" font-size="8.5" fill="#94A3B8" text-anchor="middle">${s.day.replace('Jul ','')}</text>`;});
+ const leg=keys.map((k,ki)=>`<span style="display:inline-flex;align-items:center;gap:5px;margin-right:16px;font-size:11.5px;color:var(--slate)"><span style="width:11px;height:11px;border-radius:3px;background:${colors[ki]}"></span>${labels[ki]}</span>`).join('');
+ return `<div style="margin-bottom:6px">${leg}</div><svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${g}${lines}${xl}</svg>`;
+}
+
+function pages(){
+const hr=D.hr,st=D.status_totals,tot=D.log_totals,ded=D.dedup;
+const dops=tot.actions;const pctv=x=>(x/dops*100);
+const p1=pctv(st.Printed),p2=p1+pctv(st.Pending),p3=p2+pctv(st.Processing);
+const donutBg=`conic-gradient(${GREEN} 0 ${p1}%,${PURPLE} ${p1}% ${p2}%,${AMBER} ${p2}% ${p3}%,${RED} ${p3}% 100%)`;
+const dedupBanner=`<div class="dedup-banner"><div class="di">⚡</div><div class="dt"><b>Deduplication applied</b><p>Each real status change is counted once per <b>order code + employee + status</b> (repeats within 2 minutes merged). This removed ${fmt(ded.removed)} duplicate rows.</p></div><div class="dm"><b>−${ded.removed_pct}%</b><span>raw rows removed</span></div></div>`;
+
+const overview=dedupBanner+`
+<div class="kpis">
+ ${kpiCard('▤',fmt(dops),'Total Real Actions',`Across <b>${D.employees.length}</b> agents · deduplicated`,NAVY)}
+ ${kpiCard('📦',fmt(hr.tot_new),'New Orders (HR)',`<b>${hr.days}</b> days · avg ${fmt(hr.avg_new)}/day`,BLUE)}
+ ${kpiCard('✓',fmt(st.Printed),'Printed',`<b>${pctv(st.Printed).toFixed(1)}%</b> of actions`,GREEN)}
+ ${kpiCard('✕',fmt(st.Cancelled),'Cancelled',`<b>${D.team_cancel_rate}%</b> cancel rate`,RED)}
+</div>
+<div class="kpis">
+ ${kpiCard('⏳',fmt(st.Pending),'Pending',`<b>${D.team_pending_rate}%</b> of actions`,PURPLE)}
+ ${kpiCard('⧗',fmt(st.Processing),'Processing',`<b>${pctv(st.Processing).toFixed(1)}%</b> of actions`,AMBER)}
+ ${kpiCard('☎',fmt(tot.alt),'Alt Phones Added','Deduplicated corrections',BLUE)}
+ ${kpiCard('★',initials(D.employees[0].name),'Top Performer',`<b>${D.employees[0].name}</b>`,GREEN)}
+</div>
+<div class="grid g2">
+ <div class="panel"><div class="hd"><h3>Top 10 Most Active Agents</h3><p>By total real (deduplicated) actions</p></div>${barList(D.rankings.most_active,null,null)}</div>
+ <div class="panel"><div class="hd"><h3>Status Distribution</h3><p>4 statuses — includes Pending</p></div>
+  <div class="donut-wrap"><div class="donut" style="background:${donutBg}"><div class="ctr"><b>${fmt(dops)}</b><span>Actions</span></div></div>
+  <div class="leg">
+   <div class="li"><span class="dot" style="background:${GREEN}"></span><span class="lt">Printed</span><span class="lv">${fmt(st.Printed)}<span class="lp">${pctv(st.Printed).toFixed(1)}%</span></span></div>
+   <div class="li"><span class="dot" style="background:${PURPLE}"></span><span class="lt">Pending</span><span class="lv">${fmt(st.Pending)}<span class="lp">${pctv(st.Pending).toFixed(1)}%</span></span></div>
+   <div class="li"><span class="dot" style="background:${AMBER}"></span><span class="lt">Processing</span><span class="lv">${fmt(st.Processing)}<span class="lp">${pctv(st.Processing).toFixed(1)}%</span></span></div>
+   <div class="li"><span class="dot" style="background:${RED}"></span><span class="lt">Cancelled</span><span class="lv">${fmt(st.Cancelled)}<span class="lp">${pctv(st.Cancelled).toFixed(1)}%</span></span></div>
+  </div></div></div>
+</div>
+<div class="grid g2">
+ <div class="panel"><div class="hd"><h3>Daily Trend — New vs Printed Orders</h3><p>From HR report · ${hr.days} days</p></div>${lineChart(D.daily,['new','printed'],[BLUE,GREEN],['New','Printed'],false)}</div>
+ <div class="panel"><div class="hd"><h3>Key HR Indicators</h3><p>Period averages</p></div>
+  ${hstat('Avg Daily Printing',hr.avg_printed_pct+'%','Best: '+hr.best_print_day,GREEN)}
+  ${hstat('Avg Daily Cancellation',hr.avg_cancel_pct+'%','Worst: '+hr.worst_cancel_day+' ('+hr.worst_cancel_pct+'%)',RED)}
+  ${hstat('Avg Number-Add Rate',hr.avg_add_pct+'%','Of new orders',BLUE)}
+  ${hstat('Peak Day',fmt(hr.peak_new),hr.peak_day,NAVY)}
+ </div>
+</div>`;
+
+const daily=`
+<div class="kpis">
+ ${kpiCard('📦',fmt(hr.tot_new),'Total New',`${hr.days} days`,BLUE)}
+ ${kpiCard('✓',fmt(hr.tot_printed),'Total Printed',`${(hr.tot_printed/hr.tot_new*100).toFixed(1)}%`,GREEN)}
+ ${kpiCard('✕',fmt(hr.tot_cancel),'Total Cancelled',`${(hr.tot_cancel/hr.tot_new*100).toFixed(1)}%`,RED)}
+ ${kpiCard('＋',fmt(hr.tot_add),'Total Numbers Added',`${(hr.tot_add/hr.tot_new*100).toFixed(1)}%`,BLUE)}
+</div>
+<div class="panel"><div class="hd"><h3>Daily Order Volume</h3><p>New · Printed · Cancelled across ${hr.days} days</p></div>${lineChart(D.daily,['new','printed','cancel'],[BLUE,GREEN,RED],['New','Printed','Cancelled'],false)}</div>
+<div class="grid g2e">
+ <div class="panel"><div class="hd"><h3>Daily Printing Rate %</h3><p>Daily efficiency</p></div>${lineChart(D.daily,['printed_pct'],[GREEN],['Printed %'],true)}</div>
+ <div class="panel"><div class="hd"><h3>Daily Cancellation Rate %</h3><p>Lower is better</p></div>${lineChart(D.daily,['cancel_pct'],[RED],['Cancel %'],true)}</div>
+</div>
+<div class="panel"><div class="hd"><h3>Daily Detail Table</h3><p>All figures and percentages per day</p></div>
+<div class="tbl-scroll"><table><thead><tr><th>Day</th><th>New</th><th>Printed</th><th>Print %</th><th>Numbers Added</th><th>Add %</th><th>Cancelled</th><th>Cancel %</th></tr></thead><tbody>
+${D.daily.map(d=>`<tr><td class="nm-cell">${d.day} <span style="color:var(--mut);font-size:11px">${d.dow}</span></td><td>${fmt(d.new)}</td><td>${fmt(d.printed)}</td><td><span style="color:${GREEN};font-weight:700">${d.printed_pct}%</span></td><td>${fmt(d.add)}</td><td>${d.add_pct}%</td><td>${fmt(d.cancel)}</td><td><span class="risk risk-${d.cancel_pct>=22?'High':d.cancel_pct>=18?'Elevated':'Normal'}">${d.cancel_pct}%</span></td></tr>`).join('')}
+</tbody></table></div></div>`;
+
+const cr=D.cancel_rate_rank;
+const highRisk=D.employees.filter(e=>e.cancel_risk==='High').length;
+const cancel=`
+<div class="kpis">
+ ${kpiCard('✕',fmt(tot.cancelled),'Total Cancelled','Deduplicated',RED)}
+ ${kpiCard('%',D.team_cancel_rate+'%','Team Cancel Rate','Of all real actions',AMBER)}
+ ${kpiCard('⚠',highRisk,'High-Risk Agents','Rate ≥ 1.5× average',RED)}
+ ${kpiCard('▲',cr[0].value+'%','Highest Individual',`<b>${cr[0].name}</b>`,RED)}
+</div>
+<div class="grid g2">
+ <div class="panel"><div class="hd"><h3>Cancellation Rate per Agent % <span class="tag" style="background:#FEE2E2;color:#B91C1C">Own actions</span></h3><p>Cancelled ÷ that agent's total real actions (min 50 actions)</p></div>
+  <div class="bars">${cr.map((e,i)=>{const col=e.value>=D.team_cancel_rate*1.5?RED:e.value>=D.team_cancel_rate*1.15?AMBER:GREEN;return `<div class="bar-row"><div class="nm"><span class="rk ${i<3?'g'+(i+1):''}">${i+1}</span>${e.name}</div><div class="bar-track"><div class="bar-fill" style="width:0" data-w="${Math.min(e.value*1.6,100)}" data-c="${col}"></div></div><div class="vv" style="color:${col}">${e.value}%</div></div>`;}).join('')}</div></div>
+ <div class="panel"><div class="hd"><h3>Highest Cancelled Volume</h3><p>Absolute count (deduplicated)</p></div>${barList(D.rankings.cancelled,null,RED)}</div>
+</div>
+<div class="panel"><div class="hd"><h3>Cancellation Detail per Agent</h3><p>Count · own rate · share of team cancels · risk tier</p></div>
+<div class="tbl-scroll"><table><thead><tr><th>#</th><th>Employee</th><th>Total Actions</th><th>Cancelled</th><th>Own Cancel Rate %</th><th>% of Team Cancels</th><th>Risk</th></tr></thead><tbody>
+${[...D.employees].filter(e=>e.cancelled>0).sort((a,b)=>b.own_cancel_rate-a.own_cancel_rate).map((e,i)=>`<tr><td>${i+1}</td><td class="nm-cell">${e.name}</td><td>${fmt(e.actions)}</td><td>${fmt(e.cancelled)}</td><td><b style="color:${e.own_cancel_rate>=D.team_cancel_rate*1.5?RED:e.own_cancel_rate>=D.team_cancel_rate*1.15?AMBER:GREEN}">${e.own_cancel_rate}%</b></td><td>${e.canc_share_pct}%</td><td><span class="risk risk-${riskClass(e.cancel_risk)}">${e.cancel_risk}</span></td></tr>`).join('')}
+</tbody></table></div></div>`;
+
+const pendEmp=[...D.employees].filter(e=>e.pending>0).sort((a,b)=>b.own_pending_rate-a.own_pending_rate);
+const pending=`
+<div class="kpis">
+ ${kpiCard('⏳',fmt(tot.pending),'Total Pending','Was missing from HR',PURPLE)}
+ ${kpiCard('%',D.team_pending_rate+'%','Pending Rate','Of all actions',BLUE)}
+ ${kpiCard('◉',pendEmp.length,'Agents with Pending',`Of ${D.employees.length}`,NAVY)}
+ ${kpiCard('▲',pendEmp[0]?pendEmp[0].own_pending_rate+'%':'-','Highest Own Rate',`<b>${pendEmp[0]?.name||''}</b>`,PURPLE)}
+</div>
+<div class="grid g2">
+ <div class="panel"><div class="hd"><h3>Pending Rate per Agent % <span class="tag" style="background:#EDE9FE;color:#6D28D9">Own actions</span></h3><p>Pending ÷ that agent's total real actions</p></div>
+  <div class="bars">${pendEmp.slice(0,12).map((e,i)=>`<div class="bar-row"><div class="nm"><span class="rk ${i<3?'g'+(i+1):''}">${i+1}</span>${e.name}</div><div class="bar-track"><div class="bar-fill" style="width:0" data-w="${Math.min(e.own_pending_rate*1.6,100)}" data-c="${PURPLE}"></div></div><div class="vv">${e.own_pending_rate}%</div></div>`).join('')}</div></div>
+ <div class="panel"><div class="hd"><h3>Highest Pending Volume</h3><p>Count of orders left pending</p></div>${barList(D.rankings.pending,null,PURPLE)}</div>
+</div>`;
+
+const prEmp=[...D.employees].filter(e=>e.printed>0).sort((a,b)=>b.own_printed_rate-a.own_printed_rate);
+const printed=`
+<div class="kpis">
+ ${kpiCard('✓',fmt(tot.printed),'Total Printed','Deduplicated',GREEN)}
+ ${kpiCard('%',(tot.printed/tot.actions*100).toFixed(1)+'%','Team Print Rate','Of all actions',GREEN)}
+ ${kpiCard('◉',prEmp.length,'Agents Printing',`Of ${D.employees.length}`,NAVY)}
+ ${kpiCard('▲',prEmp[0]?prEmp[0].own_printed_rate+'%':'-','Highest Own Rate',`<b>${prEmp[0]?.name||''}</b>`,GREEN)}
+</div>
+<div class="grid g2">
+ <div class="panel"><div class="hd"><h3>Printing Rate per Agent % <span class="tag" style="background:#DCFCE7;color:#15803D">Own actions</span></h3><p>Printed ÷ that agent's total real actions (min 50 actions)</p></div>
+  <div class="bars">${prEmp.filter(e=>e.actions>=50).slice(0,12).map((e,i)=>`<div class="bar-row"><div class="nm"><span class="rk ${i<3?'g'+(i+1):''}">${i+1}</span>${e.name}</div><div class="bar-track"><div class="bar-fill" style="width:0" data-w="${e.own_printed_rate}" data-c="${GREEN}"></div></div><div class="vv">${e.own_printed_rate}%</div></div>`).join('')}</div></div>
+ <div class="panel"><div class="hd"><h3>Highest Printed Volume</h3><p>Absolute count</p></div>${barList(D.rankings.printed,null,GREEN)}</div>
+</div>`;
+
+const altEmp=D.employees.filter(e=>e.alt>0).sort((a,b)=>b.alt-a.alt);
+const alt2=altEmp.slice(0,2).reduce((s,e)=>s+e.alt,0);
+const phone=`
+<div class="kpis">
+ ${kpiCard('☎',fmt(tot.alt),'Total Alt Phones','Deduplicated',BLUE)}
+ ${kpiCard('◉',altEmp.length,'Agents Involved',`Of ${D.employees.length}`,NAVY)}
+ ${kpiCard('▲',(alt2/tot.alt*100).toFixed(1)+'%','Top-2 Concentration',`${altEmp[0]?.name||''} + ${altEmp[1]?.name||''}`,AMBER)}
+ ${kpiCard('▲',altEmp[0]?altEmp[0].own_alt_rate+'%':'-','Highest Own Rate',`<b>${altEmp[0]?.name||''}</b>`,BLUE)}
+</div>
+<div class="grid g2">
+ <div class="panel"><div class="hd"><h3>Alt Phone Rate per Agent % <span class="tag" style="background:#DBEAFE;color:#1D4ED8">Own actions</span></h3><p>Alt-phone corrections ÷ that agent's total real actions</p></div>
+  <div class="bars">${altEmp.slice(0,12).map((e,i)=>`<div class="bar-row"><div class="nm"><span class="rk ${i<3?'g'+(i+1):''}">${i+1}</span>${e.name}</div><div class="bar-track"><div class="bar-fill" style="width:0" data-w="${Math.min(e.own_alt_rate*3,100)}" data-c="${BLUE}"></div></div><div class="vv">${e.own_alt_rate}%</div></div>`).join('')}</div></div>
+ <div class="panel"><div class="hd"><h3>Alt Phone Volume & Share</h3><p>Count and share of all corrections</p></div>
+  <div class="bars">${altEmp.slice(0,10).map(e=>`<div class="bar-row"><div class="nm">${e.name}</div><div class="bar-track"><div class="bar-fill" style="width:0" data-w="${e.alt/altEmp[0].alt*100}" data-c="${BLUE}"></div></div><div class="vv">${e.alt} · ${e.alt_share_pct}%</div></div>`).join('')}</div></div>
+</div>`;
+
+const employees=`<div class="prof-grid">${D.employees.map((e,i)=>profileCard(e,i)).join('')}</div>`;
+
+const orders=`
+<div class="kpis">
+ ${kpiCard('＋',fmt(D.added_cs+D.added_noncs),'Total Added Orders','All departments · unique',NAVY)}
+ ${kpiCard('◉',fmt(D.added_cs),'From CS',`${(D.added_cs/(D.added_cs+D.added_noncs)*100).toFixed(1)}%`,BLUE)}
+ ${kpiCard('◫',fmt(D.added_noncs),'From Other Depts',`${(D.added_noncs/(D.added_cs+D.added_noncs)*100).toFixed(1)}%`,GREEN)}
+ ${kpiCard('★',D.added_all_top[0]?initials(D.added_all_top[0].name):'-','Top Contributor',`<b>${D.added_all_top[0]?.name||''}</b> · ${fmt(D.added_all_top[0]?.value||0)}`,AMBER)}
+</div>
+<div class="grid g2">
+ <div class="panel"><div class="hd"><h3>Top Added-Order Contributors <span class="tag" style="background:#DBEAFE;color:#1D4ED8">All Departments</span></h3><p>Counts every employee · one per unique order code</p></div>${barList(D.added_all_top.slice(0,12).map(e=>({name:e.name,value:e.value})),null,null)}</div>
+ <div class="panel"><div class="hd"><h3>CS vs Other Departments</h3><p>Where new orders originate</p></div>
+  <div class="donut-wrap"><div class="donut" style="background:conic-gradient(${BLUE} 0 ${D.added_cs/(D.added_cs+D.added_noncs)*100}%,${GREEN} ${D.added_cs/(D.added_cs+D.added_noncs)*100}% 100%)"><div class="ctr"><b>${fmt(D.added_cs+D.added_noncs)}</b><span>Orders</span></div></div>
+  <div class="leg"><div class="li"><span class="dot" style="background:${BLUE}"></span><span class="lt">CS Department</span><span class="lv">${fmt(D.added_cs)}<span class="lp">${(D.added_cs/(D.added_cs+D.added_noncs)*100).toFixed(1)}%</span></span></div>
+  <div class="li"><span class="dot" style="background:${GREEN}"></span><span class="lt">Other Depts</span><span class="lv">${fmt(D.added_noncs)}<span class="lp">${(D.added_noncs/(D.added_cs+D.added_noncs)*100).toFixed(1)}%</span></span></div></div></div></div>
+</div>`;
+
+const insights=`
+<div class="grid g2">
+ <div class="panel"><div class="hd"><h3>◈ AI-Generated Executive Insights</h3><p>From the deduplicated dataset (HR + logs)</p></div>
+  ${D.insights.map((t,i)=>`<div class="ins"><div class="n">${i+1}</div><p>${t}</p></div>`).join('')}</div>
+ <div class="panel"><div class="hd"><h3>⚑ Observations & Risks</h3><p>Cancellation · Pending · trends</p></div>
+  ${D.observations.map(o=>`<div class="obs"><div class="th"><span class="b">${o[0]}</span><span class="chip">Attention</span></div><p>${o[1]}</p></div>`).join('')}</div>
+</div>`;
+
+const scorecard=`<div class="panel"><div class="hd"><h3>★ Executive Scorecard</h3><p>Activity · efficiency · contribution · cancel rate · grade (deduplicated)</p></div>
+<div class="tbl-scroll"><table><thead><tr><th>Rank</th><th>Employee</th><th>Activity</th><th>Efficiency</th><th>Contribution</th><th>Cancel Rate</th><th>Performance</th><th>Grade</th><th>Segment</th></tr></thead><tbody>
+${D.employees.map(e=>`<tr><td><span class="rk ${e.rank<=3?'g'+e.rank:''}">${e.rank}</span></td><td class="nm-cell">${e.name}</td><td>${scoreCell(e.activity_score)}</td><td>${scoreCell(e.efficiency_score)}</td><td>${e.contribution_pct}%</td><td><b style="color:${e.own_cancel_rate>=D.team_cancel_rate*1.5?RED:e.own_cancel_rate>=D.team_cancel_rate*1.15?AMBER:GREEN}">${e.own_cancel_rate}%</b></td><td>${scoreCell(e.performance_score)}</td><td><span class="grade gr-${e.grade[0]}">${e.grade}</span></td><td><span class="seg seg-${segClass(e.segment)}">${e.segment}</span></td></tr>`).join('')}
+</tbody></table></div></div>`;
+
+const dataP=`<div class="panel">
+<div class="tbl-tools">
+ <div class="search"><span class="si">⌕</span><input id="tSearch" placeholder="Search employee…" oninput="filterTable()"></div>
+ <select class="filter" id="tSeg" onchange="filterTable()"><option value="">All Segments</option><option>Top Performer</option><option>Core Contributor</option><option>Developing</option><option>Needs Attention</option></select>
+ <select class="filter" id="tRisk" onchange="filterTable()"><option value="">All Cancel Risk</option><option>High</option><option>Elevated</option><option>Normal</option></select>
+</div>
+<div class="tbl-scroll"><table id="mainTable"><thead><tr>
+${['#','Employee','Actions','Printed','Print%','Pending','Pend%','Processing','Cancelled','Cancel%','Alt','Alt%','Added','Contrib%','Grade'].map((h,i)=>`<th onclick="sortTable(${i})">${h}</th>`).join('')}
+</tr></thead><tbody id="tBody">${tableRows(D.employees)}</tbody></table></div>
+<p style="font-size:11px;color:var(--mut);margin-top:12px">Showing <b id="tCount">${D.employees.length}</b> of ${D.employees.length} agents · Print% / Pend% / Cancel% / Alt% are each agent's own-mix rates · click a header to sort</p></div>`;
+
+return {overview,daily,cancel,pending,printed,phone,employees,orders,insights,scorecard,data:dataP};
+}
+
+function hstat(t,v,s,c){return `<div class="hstat"><span class="d" style="background:${c}"></span><div class="t"><b>${t}</b><span>${s}</span></div><div class="v" style="color:${c}">${v}</div></div>`;}
+
+function profileCard(e,i){const col=AV[i%AV.length];const t=e.printed+e.pending+e.processing+e.cancelled||1;
+ return `<div class="prof">
+  <div class="ph"><div class="av" style="background:linear-gradient(135deg,${col},${col}cc)">${initials(e.name)}</div>
+   <div style="flex:1"><div class="pn">${e.name}</div><div class="pr">Rank #${e.rank} · <span class="grade gr-${e.grade[0]}" style="padding:1px 7px">${e.grade}</span> · ${e.segment}</div></div></div>
+  <div class="stats"><div class="st"><b>${fmt(e.actions)}</b><span>ACTIONS</span></div><div class="st"><b>${e.printed}</b><span>PRINTED</span></div><div class="st"><b>${e.pending}</b><span>PENDING</span></div><div class="st" style="background:${e.cancelled>0?'#FEF2F2':'var(--panel2)'}"><b style="color:${RED}">${e.cancelled}</b><span>CANCEL</span></div></div>
+  <div class="stack">
+   <div class="sg" style="background:${GREEN};width:${e.printed/t*100}%">${e.printed/t>0.1?e.printed:''}</div>
+   <div class="sg" style="background:${PURPLE};width:${e.pending/t*100}%">${e.pending/t>0.1?e.pending:''}</div>
+   <div class="sg" style="background:${AMBER};width:${e.processing/t*100}%"></div>
+   <div class="sg" style="background:${RED};width:${e.cancelled/t*100}%">${e.cancelled/t>0.1?e.cancelled:''}</div>
+  </div>
+  <div class="metric"><div class="ml"><span>Printed rate (own)</span><b>${e.own_printed_rate}%</b></div><div class="pbar"><i style="width:${e.own_printed_rate}%;background:${GREEN}"></i></div></div>
+  <div class="metric"><div class="ml"><span>Pending rate (own)</span><b>${e.own_pending_rate}%</b></div><div class="pbar"><i style="width:${Math.min(e.own_pending_rate*2,100)}%;background:${PURPLE}"></i></div></div>
+  <div class="metric"><div class="ml"><span>Cancel rate (own)</span><b style="color:${e.own_cancel_rate>=D.team_cancel_rate*1.5?RED:'var(--slate)'}">${e.own_cancel_rate}%</b></div><div class="pbar"><i style="width:${Math.min(e.own_cancel_rate*2,100)}%;background:${e.own_cancel_rate>=D.team_cancel_rate*1.5?RED:AMBER}"></i></div></div>
+  <div class="metric"><div class="ml"><span>Alt-phone rate (own)</span><b>${e.own_alt_rate}%</b></div><div class="pbar"><i style="width:${Math.min(e.own_alt_rate*3,100)}%;background:${BLUE}"></i></div></div>
+ </div>`;}
+
+function tableRows(list){return list.map(e=>`<tr data-seg="${e.segment}" data-risk="${e.cancel_risk}" data-name="${e.name.toLowerCase()}">
+<td><span class="rk ${e.rank<=3?'g'+e.rank:''}">${e.rank}</span></td><td class="nm-cell">${e.name}</td><td>${fmt(e.actions)}</td><td>${fmt(e.printed)}</td><td><b style="color:${GREEN}">${e.own_printed_rate}%</b></td><td>${fmt(e.pending)}</td><td><b style="color:${PURPLE}">${e.own_pending_rate}%</b></td><td>${fmt(e.processing)}</td><td>${fmt(e.cancelled)}</td><td><b style="color:${e.own_cancel_rate>=D.team_cancel_rate*1.5?RED:'var(--slate)'}">${e.own_cancel_rate}%</b></td><td>${e.alt}</td><td><b style="color:${BLUE}">${e.own_alt_rate}%</b></td><td>${e.added}</td><td>${e.contribution_pct}%</td><td><span class="grade gr-${e.grade[0]}">${e.grade}</span></td></tr>`).join('');}
+
+window.filterTable=function(){const q=(document.getElementById('tSearch').value||'').toLowerCase();
+ const sg=document.getElementById('tSeg').value,rk=document.getElementById('tRisk').value;let n=0;
+ document.querySelectorAll('#tBody tr').forEach(r=>{const ok=r.dataset.name.includes(q)&&(!sg||r.dataset.seg===sg)&&(!rk||r.dataset.risk===rk);r.style.display=ok?'':'none';if(ok)n++;});
+ document.getElementById('tCount').textContent=n;};
+let sortState={};
+window.sortTable=function(col){const tb=document.getElementById('tBody');const rows=[...tb.querySelectorAll('tr')];
+ const dir=sortState[col]=-(sortState[col]||1);const num=c=>parseFloat(c.replace(/[^0-9.\-]/g,''))||0;
+ rows.sort((a,b)=>{let x=a.children[col].textContent,y=b.children[col].textContent;if(col===1)return dir*x.localeCompare(y);return dir*(num(x)-num(y));});
+ rows.forEach(r=>tb.appendChild(r));};
+
+let RENDERED={},currentPage='overview';
+const TITLES={overview:['Executive Overview','Customer Service — deduplicated performance'],daily:['Daily Trend (HR)','Daily analysis across '+D.hr.days+' days'],cancel:['Cancellation Analysis','Per-agent cancel rates & risk'],pending:['Pending Analysis','Orders left pending, per agent'],printed:['Printed Analysis','Printing rates, per agent'],phone:['Alt Phone Analysis','Alternative-number corrections'],employees:['Employee Profiles','Full executive profile per agent'],orders:['Added Orders','Across all departments'],insights:['Executive Insights','Operational intelligence'],scorecard:['Scorecard','Graded performance assessment'],data:['Detailed Data','Full searchable dataset']};
+function show(p){currentPage=p;const root=document.getElementById('root');root.innerHTML=`<div class="page active">${RENDERED[p]}</div>`;
+ document.getElementById('pgTitle').textContent=TITLES[p][0];document.getElementById('pgSub').textContent=TITLES[p][1];
+ document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active',a.dataset.p===p));
+ animateBars();window.scrollTo(0,0);document.getElementById('side').classList.remove('open');}
+function render(){RENDERED=pages();show(currentPage);}
+document.querySelectorAll('.nav a').forEach(a=>a.onclick=()=>show(a.dataset.p));
+
+/* re-upload with dedup logic mirrored */
+const ADDED_RE=/أضاف\s*ا?أ?وردر|اضاف\s*ا?أ?وردر/;
+const ALT_RE=/التليفون البديل|رقم بديل|هاتف بديل/;
+const STATUS_RE=/(?:الى|إلى)\s*'?([A-Za-z][A-Za-z ]*?)'?\s*$/;
+const KNOWN={Printed:1,Pending:1,Canceled:1,Cancelled:1,Processing:1};
+const WIN=120000;
+document.getElementById('reup').addEventListener('change',ev=>{const f=ev.target.files[0];if(!f)return;
+ const t=document.getElementById('pgSub');t.textContent='Analyzing '+f.name+' …';
+ if(!confirm('Replace the whole dashboard with the data in this file?\\n(The current view will be overwritten.)')){ev.target.value='';return;}const rd=new FileReader();rd.onload=e=>{try{const wb=XLSX.read(e.target.result,{type:'array',cellDates:true});const ws=wb.Sheets[wb.SheetNames[0]];const arr=XLSX.utils.sheet_to_json(ws,{header:1});
+  const hdr=arr[0].map(x=>(x||'').toString());let oi=1,ci=2,ai=3,di=4;hdr.forEach((h,i)=>{if(/كود|order|code/i.test(h))oi=i;if(/الاسم|name/i.test(h))ci=i;if(/الاكشن|action/i.test(h))ai=i;if(/التاريخ|date/i.test(h))di=i;});
+  const rows=arr.slice(1).filter(r=>r&&r.length);
+  // parse
+  const recs=rows.map(r=>{const act=(r[ai]||'').toString();let st=null;const m=STATUS_RE.exec(act);if(m){st=m[1].trim();if(st==='Canceled')st='Cancelled';if(!KNOWN[st])st=null;}
+   let dt=r[di];if(dt instanceof Date)dt=dt.getTime();else dt=Date.parse(dt)||0;
+   return {order:(r[oi]||'').toString(),name:(r[ci]||'').toString().trim(),act,st,dt,alt:ALT_RE.test(act),added:ADDED_RE.test(act)};}).filter(r=>r.name);
+  // dedup status: key order|name|st, sort by dt, new if gap>WIN
+  const statusRecs=recs.filter(r=>r.st);
+  const groups={};statusRecs.forEach(r=>{const k=r.order+'|'+r.name+'|'+r.st;(groups[k]=groups[k]||[]).push(r);});
+  const emap={};
+  Object.values(groups).forEach(g=>{g.sort((a,b)=>a.dt-b.dt);let last=null;g.forEach(r=>{if(last===null||r.dt-last>WIN){if(!emap[r.name])emap[r.name]={name:r.name,printed:0,pending:0,processing:0,cancelled:0,alt:0,added:0};
+    if(r.st==='Printed')emap[r.name].printed++;else if(r.st==='Pending')emap[r.name].pending++;else if(r.st==='Processing')emap[r.name].processing++;else if(r.st==='Cancelled')emap[r.name].cancelled++;}last=r.dt;});});
+  // dedup alt: order|name gap>WIN
+  const altRecs=recs.filter(r=>r.alt);const ag={};altRecs.forEach(r=>{const k=r.order+'|'+r.name;(ag[k]=ag[k]||[]).push(r);});
+  Object.values(ag).forEach(g=>{g.sort((a,b)=>a.dt-b.dt);let last=null;g.forEach(r=>{if(last===null||r.dt-last>WIN){if(!emap[r.name])emap[r.name]={name:r.name,printed:0,pending:0,processing:0,cancelled:0,alt:0,added:0};emap[r.name].alt++;}last=r.dt;});});
+  // added: unique order|name
+  const addSeen={},addedAll={};let addedCS=0,addedNon=0;
+  recs.filter(r=>r.added).forEach(r=>{const k=r.order+'|'+r.name;if(addSeen[k])return;addSeen[k]=1;const isCS=r.name.toLowerCase().endsWith('cs');addedAll[r.name]=(addedAll[r.name]||0)+1;isCS?addedCS++:addedNon++;if(emap[r.name])emap[r.name].added++;});
+  let emps=Object.values(emap).filter(x=>x.name.toLowerCase().endsWith('cs')).map(x=>({...x,actions:x.printed+x.pending+x.processing+x.cancelled})).filter(x=>x.actions>0);
+  const T={actions:0,printed:0,pending:0,processing:0,cancelled:0,alt:0};emps.forEach(x=>{for(const k in T)T[k]+=x[k];});
+  const pct=(n,d)=>d?+(n/d*100).toFixed(1):0;const mx=Math.max(...emps.map(x=>x.actions),1);
+  emps.forEach(x=>{x.contribution_pct=pct(x.actions,T.actions);x.canc_share_pct=pct(x.cancelled,T.cancelled);x.pending_share_pct=pct(x.pending,T.pending);x.printed_share_pct=pct(x.printed,T.printed);x.alt_share_pct=pct(x.alt,T.alt);
+   x.own_cancel_rate=pct(x.cancelled,x.actions);x.own_pending_rate=pct(x.pending,x.actions);x.own_printed_rate=pct(x.printed,x.actions);x.own_proc_rate=pct(x.processing,x.actions);x.own_alt_rate=pct(x.alt,x.actions);
+   x.activity_score=+(x.actions/mx*100).toFixed(1);x.efficiency_score=pct(x.printed+x.processing,x.actions);});
+  emps.sort((a,b)=>b.actions-a.actions);const maxC=emps[0].contribution_pct||1;
+  emps.forEach((x,i)=>{x.performance_score=+((0.5*x.activity_score+0.3*x.efficiency_score+0.2*x.contribution_pct*(100/maxC))).toFixed(1);x.rank=i+1;const p=(1-i/emps.length)*100;x.pctile=p;x.grade=p>=90?'A+':p>=80?'A':p>=70?'B+':p>=60?'B':p>=45?'C+':p>=30?'C':'D';x.segment=p>=80?'Top Performer':p>=50?'Core Contributor':p>=25?'Developing':'Needs Attention';});
+  const tcr=pct(T.cancelled,T.actions);emps.forEach(x=>{x.cancel_risk=x.actions<50?'Low Volume':x.own_cancel_rate>=tcr*1.5?'High':x.own_cancel_rate>=tcr*1.15?'Elevated':'Normal';});
+  const rawCS=statusRecs.filter(r=>r.name.toLowerCase().endsWith('cs')).length;
+  D.employees=emps;D.log_totals=T;D.team_cancel_rate=tcr;D.team_pending_rate=pct(T.pending,T.actions);
+  D.status_totals={Printed:T.printed,Pending:T.pending,Processing:T.processing,Cancelled:T.cancelled};
+  D.dedup={raw_cs_status:rawCS,dedup_cs_status:T.actions,removed:rawCS-T.actions,removed_pct:pct(rawCS-T.actions,rawCS)};
+  const rt=(k)=>emps.slice().sort((a,b)=>b[k]-a[k]).slice(0,10).map(x=>({name:x.name,value:x[k]}));
+  D.rankings={most_active:emps.slice(0,10).map(x=>({name:x.name,value:x.actions})),printed:rt('printed'),pending:rt('pending'),cancelled:rt('cancelled'),processing:rt('processing'),alt:rt('alt'),contribution:emps.slice(0,10).map(x=>({name:x.name,value:x.contribution_pct}))};
+  D.cancel_rate_rank=emps.filter(x=>x.actions>=50).sort((a,b)=>b.own_cancel_rate-a.own_cancel_rate).slice(0,15).map(x=>({name:x.name,value:x.own_cancel_rate,cancelled:x.cancelled,actions:x.actions,risk:x.cancel_risk}));
+  const aa=Object.entries(addedAll).map(([name,v])=>({name,value:v,is_cs:name.toLowerCase().endsWith('cs')})).sort((a,b)=>b.value-a.value);
+  D.added_all_top=aa.slice(0,15);D.added_cs=addedCS;D.added_noncs=addedNon;
+  // === REBUILD daily HR trend from the uploaded logs (added orders + printed/cancelled per day) ===
+  (function(){
+    var byday={};
+    function dkey(ts){var d=new Date(ts);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+    // added orders per day (all depts, unique order+name already handled in addSeen)
+    Object.keys(addSeen).length; // ensure defined
+    // recompute added-per-day and status-per-day from deduplicated events
+    // added: iterate recs added with unique order+name
+    var addSeen2={};
+    recs.forEach(function(r){ if(!r.added||!r.dt) return; var k=r.order+'|'+r.name; if(addSeen2[k])return; addSeen2[k]=1; var dk=dkey(r.dt); (byday[dk]=byday[dk]||{new:0,printed:0,cancel:0}).new++; });
+    // printed / cancelled per day from the deduped status groups
+    Object.values(groups).forEach(function(g){ g.sort(function(a,b){return a.dt-b.dt;}); var last=null; g.forEach(function(r){ if(last===null||r.dt-last>WIN){ if(r.dt){ var dk=dkey(r.dt); var o=(byday[dk]=byday[dk]||{new:0,printed:0,cancel:0}); if(r.st==='Printed')o.printed++; else if(r.st==='Cancelled')o.cancel++; } } last=r.dt; }); });
+    var days=Object.keys(byday).sort();
+    if(days.length){
+      var mon=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      var dow=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      D.daily=days.map(function(dk){var p=dk.split('-');var dt=new Date(+p[0],+p[1]-1,+p[2]);var o=byday[dk];
+        var pp=o.new?+(o.printed/o.new*100).toFixed(1):0, cp=o.new?+(o.cancel/o.new*100).toFixed(1):0;
+        return {day:mon[+p[1]-1]+' '+String(+p[2]).padStart(2,'0'),dow:dow[dt.getDay()],new:o.new,printed:o.printed,cancel:o.cancel,add:o.new,printed_pct:pp,cancel_pct:cp,add_pct:0};});
+      var tN=D.daily.reduce(function(s,x){return s+x.new;},0), tP=D.daily.reduce(function(s,x){return s+x.printed;},0), tC=D.daily.reduce(function(s,x){return s+x.cancel;},0);
+      var vals=D.daily.map(function(x){return x.new;});
+      var pcts=D.daily.map(function(x){return x.printed_pct;}), cpcts=D.daily.map(function(x){return x.cancel_pct;});
+      function avg(a){return a.length?+(a.reduce(function(s,x){return s+x;},0)/a.length).toFixed(1):0;}
+      var maxNewI=vals.indexOf(Math.max.apply(null,vals)), minNewI=vals.indexOf(Math.min.apply(null,vals));
+      var bestP=pcts.indexOf(Math.max.apply(null,pcts)), worstC=cpcts.indexOf(Math.max.apply(null,cpcts));
+      D.hr={days:D.daily.length,tot_new:tN,tot_printed:tP,tot_add:tN,tot_cancel:tC,
+        avg_new:Math.round(tN/D.daily.length),avg_printed_pct:avg(pcts),avg_cancel_pct:avg(cpcts),avg_add_pct:0,
+        best_print_day:D.daily[bestP].day,best_print_pct:pcts[bestP],
+        worst_cancel_day:D.daily[worstC].day,worst_cancel_pct:cpcts[worstC],
+        peak_day:D.daily[maxNewI].day,peak_new:vals[maxNewI],low_day:D.daily[minNewI].day,low_new:vals[minNewI],
+        date_min:D.daily[0].day,date_max:D.daily[D.daily.length-1].day};
+    }
+  })();
+  // === REGENERATE insights + observations from the new numbers ===
+  (function(){
+    var T2=D.log_totals, tcr2=D.team_cancel_rate, tp2=D.team_pending_rate, es=D.employees, hr2=D.hr;
+    var top3=es.length?+(es.slice(0,3).reduce(function(s,e){return s+e.actions;},0)/T2.actions*100).toFixed(1):0;
+    var high=es.filter(function(e){return e.cancel_risk==='High';});
+    D.insights=[
+      'After removing duplicate log entries, each real status change counts once \u2014 this cut '+D.dedup.removed.toLocaleString()+' repeated rows ('+D.dedup.removed_pct+'% of raw status logs).',
+      'Across '+hr2.days+' days, '+hr2.tot_new.toLocaleString()+' new orders were logged (avg '+hr2.avg_new.toLocaleString()+'/day).',
+      'At agent level (deduplicated), cancellations are '+tcr2+'% of all '+T2.actions.toLocaleString()+' real actions; Pending is '+tp2+'%.',
+      high.length+' agents carry a High cancellation-risk flag (rate \u2265 1.5\u00d7 the '+tcr2+'% team average).',
+      (es[0]?es[0].name:'-')+' leads with '+(es[0]?es[0].contribution_pct:0)+'% of all CS actions; the top 3 hold '+top3+'%.',
+      'Printing is '+(T2.actions?+(T2.printed/T2.actions*100).toFixed(1):0)+'% of real actions; Pending is a '+tp2+'% queue.',
+      'Daily cancellation averaged '+hr2.avg_cancel_pct+'%, worst on '+hr2.worst_cancel_day+' at '+hr2.worst_cancel_pct+'%.',
+      (D.added_cs+D.added_noncs).toLocaleString()+' unique orders were added across ALL departments (deduplicated by order code).'
+    ];
+    var obs=[];
+    if(high.length){var nm=high.slice(0,3).map(function(e){return e.name;}).join(', ');
+      obs.push(['Cancellation Hotspots',high.length+' agents exceed 1.5\u00d7 the team cancel rate \u2014 led by '+nm+'. A review of their cancellation reasons is warranted.']);}
+    var w=es.filter(function(e){return e.actions>=50;}).sort(function(a,b){return b.own_cancel_rate-a.own_cancel_rate;})[0]||es[0];
+    if(w)obs.push(['Top Cancellation Rate',w.name+' cancels '+w.own_cancel_rate+'% of their '+w.actions.toLocaleString()+' real actions ('+w.cancelled.toLocaleString()+' orders) \u2014 the highest rate on the team.']);
+    obs.push(['Pending Backlog',T2.pending.toLocaleString()+' orders sit in Pending ('+tp2+'% of actions) \u2014 a queue that was absent from the HR summary.']);
+    var half=Math.floor(D.daily.length/2)||1;
+    var fh=D.daily.slice(0,half).reduce(function(s,x){return s+x.cancel_pct;},0)/half;
+    var sh=D.daily.slice(-half).reduce(function(s,x){return s+x.cancel_pct;},0)/half;
+    obs.push(['Cancellation Trend','Daily cancellation rate is '+(sh>fh?'rising':'easing')+': '+fh.toFixed(1)+'% in the first half vs '+sh.toFixed(1)+'% in the second.']);
+    obs.push(['Deduplication Impact','Raw logs recorded each status change ~3\u00d7. Counting once per order+employee+status removed '+D.dedup.removed_pct+'% of rows, giving a true action count of '+T2.actions.toLocaleString()+'.']);
+    D.observations=obs;
+  })();
+  // build a lightweight fingerprint of the new data so it's obvious whether it changed
+  var _min=null,_max=null;
+  for(var _i=0;_i<recs.length;_i++){var _d=recs[_i].dt;if(!_d)continue;if(_min===null||_d<_min)_min=_d;if(_max===null||_d>_max)_max=_d;}
+  _min=_min?new Date(_min):null;_max=_max?new Date(_max):null;
+  var _fmtd=function(d){return d?d.toISOString().slice(0,10):'?';};
+  render();
+  t.textContent=f.name+' · '+rows.length.toLocaleString()+' rows → '+T.actions.toLocaleString()+' real actions after dedup';
+  showImportToast(f.name, rows.length, T.actions, emps.length, _fmtd(_min), _fmtd(_max));
+ }catch(err){t.textContent='Could not parse file — check format';console.error(err);}};rd.readAsArrayBuffer(f);});
+
+
+function showImportToast(fname,rawRows,actions,agents,dmin,dmax){
+ var old=document.getElementById('importToast'); if(old) old.remove();
+ var el=document.createElement('div'); el.id='importToast';
+ el.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#0F172A;color:#fff;padding:16px 20px;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.35);z-index:200;max-width:540px;font-size:13px;line-height:1.6;display:flex;gap:14px;align-items:flex-start';
+ var icon=document.createElement('div');
+ icon.style.cssText='width:34px;height:34px;border-radius:9px;background:#16A34A;display:grid;place-items:center;font-size:17px;flex-shrink:0'; icon.textContent='\u2713';
+ var body=document.createElement('div');
+ var h=document.createElement('b'); h.style.fontSize='13.5px'; h.textContent='Data replaced successfully'; body.appendChild(h);
+ function line(txt,strong){var d=document.createElement('div');d.style.color='#CBD5E1';
+  if(strong){var parts=txt.split('||');d.appendChild(document.createTextNode(parts[0]));var s=document.createElement('b');s.style.color='#fff';s.textContent=parts[1];d.appendChild(s);if(parts[2])d.appendChild(document.createTextNode(parts[2]));if(parts[3]){var s2=document.createElement('b');s2.style.color='#fff';s2.textContent=parts[3];d.appendChild(s2);}if(parts[4])d.appendChild(document.createTextNode(parts[4]));if(parts[5]){var s3=document.createElement('b');s3.style.color='#fff';s3.textContent=parts[5];d.appendChild(s3);}}
+  else d.textContent=txt; body.appendChild(d);}
+ line('File: ||'+fname, true);
+ line(rawRows.toLocaleString()+' rows \u2192 ||'+actions.toLocaleString()+'|| real actions \u00b7 ||'+agents+'|| agents', true);
+ line('Date range: ||'+dmin+'|| to ||'+dmax, true);
+ var note=document.createElement('div'); note.style.cssText='color:#94A3B8;font-size:11px;margin-top:4px';
+ note.textContent='If these figures match the previous file, the two sheets contain the same underlying data.'; body.appendChild(note);
+ var close=document.createElement('button');
+ close.style.cssText='border:none;background:rgba(255,255,255,.12);color:#fff;width:26px;height:26px;border-radius:7px;cursor:pointer;flex-shrink:0'; close.textContent='\u2715';
+ close.onclick=function(){el.remove();};
+ el.appendChild(icon); el.appendChild(body); el.appendChild(close);
+ document.body.appendChild(el);
+ clearTimeout(window._toastT); window._toastT=setTimeout(function(){if(el)el.style.display='none';},12000);
+}
+
+render();
+</script>
+
+<div id="shareModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.style.display='none'">
+ <div style="background:#fff;max-width:560px;width:100%;border-radius:16px;padding:26px;box-shadow:0 24px 60px rgba(0,0,0,.3);max-height:88vh;overflow:auto">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+   <h3 style="font-size:17px;font-weight:800;color:#0F172A;margin:0">Share this dashboard</h3>
+   <button onclick="document.getElementById('shareModal').style.display='none'" style="border:none;background:#F1F5F9;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:15px;color:#64748B">&#10005;</button>
+  </div>
+  <p style="font-size:13px;color:#475569;line-height:1.6;margin-bottom:16px">This is one self-contained file &mdash; all data and code live inside it, so it works offline and anyone you open it with sees the exact same dashboard.</p>
+  <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;padding:15px;margin-bottom:12px">
+   <b style="font-size:13.5px;color:#0F172A">&#9312; Send the file directly</b>
+   <p style="font-size:12.5px;color:#475569;line-height:1.6;margin-top:5px">Attach this HTML file to email / WhatsApp / Slack. The recipient opens it in any browser &mdash; no install, no internet needed.</p>
+  </div>
+  <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;padding:15px;margin-bottom:16px">
+   <b style="font-size:13.5px;color:#0F172A">&#9313; Publish a link (free)</b>
+   <p style="font-size:12.5px;color:#475569;line-height:1.6;margin-top:5px">To get a web URL people open in a browser, drag this file onto a free static host:</p>
+   <ul style="font-size:12.5px;color:#334155;line-height:1.9;margin:8px 18px 0">
+    <li><b>app.netlify.com/drop</b> &mdash; drag &amp; drop, instant public link</li>
+    <li><b>tiiny.host</b> &mdash; upload one file &rarr; link (supports a password)</li>
+    <li><b>GitHub Pages</b> &mdash; for a permanent company link</li>
+   </ul>
+   <p style="font-size:11.5px;color:#94A3B8;line-height:1.5;margin-top:9px">&#9888; A published link is public. Since the data has employee names, prefer sending the file directly, or use a password-protected host if it is sensitive.</p>
+  </div>
+  <button class="btn primary" style="width:100%;justify-content:center" onclick="downloadSelf()">&#8595; Download a fresh copy to share</button>
+ </div>
+</div>
+<script>
+function downloadSelf(){
+ var out='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+ var blob=new Blob([out],{type:'text/html'});
+ var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+ a.download='CS_Executive_Dashboard.html';document.body.appendChild(a);a.click();a.remove();
+}
+</script>
+
+</body>
+</html>
