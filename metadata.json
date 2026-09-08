@@ -1,0 +1,8 @@
+{
+  "name": "CS Executive Performance Dashboard",
+  "description": "Executive BI dashboard for Customer Service operational logs with deduplication, employee scorecards, cancellation risk analysis, and interactive reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
