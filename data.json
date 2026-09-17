@@ -2061,5 +2061,860 @@
     "Pending": 8525,
     "Processing": 946,
     "Cancelled": 3763
+  },
+  "allCSContributors": [
+    {
+      "name": "BASMA CS",
+      "employee": "BASMA CS",
+      "value": 226,
+      "count": 226,
+      "is_cs": true
+    },
+    {
+      "name": "Hussen Ibrahim CS",
+      "employee": "Hussen Ibrahim CS",
+      "value": 70,
+      "count": 70,
+      "is_cs": true
+    },
+    {
+      "name": "EMAN CS",
+      "employee": "EMAN CS",
+      "value": 56,
+      "count": 56,
+      "is_cs": true
+    },
+    {
+      "name": "MOHAMED OSAMA CS",
+      "employee": "MOHAMED OSAMA CS",
+      "value": 55,
+      "count": 55,
+      "is_cs": true
+    },
+    {
+      "name": "Zahraa CS",
+      "employee": "Zahraa CS",
+      "value": 54,
+      "count": 54,
+      "is_cs": true
+    },
+    {
+      "name": "Sanaa CS",
+      "employee": "Sanaa CS",
+      "value": 53,
+      "count": 53,
+      "is_cs": true
+    },
+    {
+      "name": "Alyaa CS",
+      "employee": "Alyaa CS",
+      "value": 52,
+      "count": 52,
+      "is_cs": true
+    },
+    {
+      "name": "Abdulrahman mohamed (pen) CS",
+      "employee": "Abdulrahman mohamed (pen) CS",
+      "value": 49,
+      "count": 49,
+      "is_cs": true
+    },
+    {
+      "name": "Esraa Reda CS",
+      "employee": "Esraa Reda CS",
+      "value": 46,
+      "count": 46,
+      "is_cs": true
+    },
+    {
+      "name": "Ahmed Ataa ( pen ) CS",
+      "employee": "Ahmed Ataa ( pen ) CS",
+      "value": 32,
+      "count": 32,
+      "is_cs": true
+    },
+    {
+      "name": "Ali CS",
+      "employee": "Ali CS",
+      "value": 31,
+      "count": 31,
+      "is_cs": true
+    },
+    {
+      "name": "Fagr CS",
+      "employee": "Fagr CS",
+      "value": 30,
+      "count": 30,
+      "is_cs": true
+    },
+    {
+      "name": "MARIAM Aaber CS",
+      "employee": "MARIAM Aaber CS",
+      "value": 29,
+      "count": 29,
+      "is_cs": true
+    },
+    {
+      "name": "Abrar CS",
+      "employee": "Abrar CS",
+      "value": 28,
+      "count": 28,
+      "is_cs": true
+    },
+    {
+      "name": "Marwa new Cs",
+      "employee": "Marwa new Cs",
+      "value": 25,
+      "count": 25,
+      "is_cs": true
+    },
+    {
+      "name": "Eman Elkomy CS",
+      "employee": "Eman Elkomy CS",
+      "value": 23,
+      "count": 23,
+      "is_cs": true
+    },
+    {
+      "name": "SHIMAA HUSSEIN CS",
+      "employee": "SHIMAA HUSSEIN CS",
+      "value": 23,
+      "count": 23,
+      "is_cs": true
+    },
+    {
+      "name": "Sahar cs",
+      "employee": "Sahar cs",
+      "value": 22,
+      "count": 22,
+      "is_cs": true
+    },
+    {
+      "name": "Menna Sherif cs",
+      "employee": "Menna Sherif cs",
+      "value": 22,
+      "count": 22,
+      "is_cs": true
+    },
+    {
+      "name": "Esraa Salah cs",
+      "employee": "Esraa Salah cs",
+      "value": 22,
+      "count": 22,
+      "is_cs": true
+    },
+    {
+      "name": "MARWA AHMED CS",
+      "employee": "MARWA AHMED CS",
+      "value": 20,
+      "count": 20,
+      "is_cs": true
+    },
+    {
+      "name": "REEM ELSAEED CS",
+      "employee": "REEM ELSAEED CS",
+      "value": 19,
+      "count": 19,
+      "is_cs": true
+    },
+    {
+      "name": "Rania ahmed CS",
+      "employee": "Rania ahmed CS",
+      "value": 19,
+      "count": 19,
+      "is_cs": true
+    },
+    {
+      "name": "Nourhan nabil CS",
+      "employee": "Nourhan nabil CS",
+      "value": 19,
+      "count": 19,
+      "is_cs": true
+    },
+    {
+      "name": "Menna atef cs",
+      "employee": "Menna atef cs",
+      "value": 18,
+      "count": 18,
+      "is_cs": true
+    },
+    {
+      "name": "Asmaa Fathy CS",
+      "employee": "Asmaa Fathy CS",
+      "value": 17,
+      "count": 17,
+      "is_cs": true
+    },
+    {
+      "name": "Malak Tamer CS",
+      "employee": "Malak Tamer CS",
+      "value": 17,
+      "count": 17,
+      "is_cs": true
+    },
+    {
+      "name": "Ali Hamada CS",
+      "employee": "Ali Hamada CS",
+      "value": 16,
+      "count": 16,
+      "is_cs": true
+    },
+    {
+      "name": "Hayam CS",
+      "employee": "Hayam CS",
+      "value": 15,
+      "count": 15,
+      "is_cs": true
+    },
+    {
+      "name": "Donia CS",
+      "employee": "Donia CS",
+      "value": 15,
+      "count": 15,
+      "is_cs": true
+    },
+    {
+      "name": "Salwa Cs",
+      "employee": "Salwa Cs",
+      "value": 14,
+      "count": 14,
+      "is_cs": true
+    },
+    {
+      "name": "Ali Bahlol CS",
+      "employee": "Ali Bahlol CS",
+      "value": 12,
+      "count": 12,
+      "is_cs": true
+    },
+    {
+      "name": "Hanan CS",
+      "employee": "Hanan CS",
+      "value": 10,
+      "count": 10,
+      "is_cs": true
+    },
+    {
+      "name": "Ali Mohamed cs",
+      "employee": "Ali Mohamed cs",
+      "value": 10,
+      "count": 10,
+      "is_cs": true
+    },
+    {
+      "name": "Malak Abdelfattah CS",
+      "employee": "Malak Abdelfattah CS",
+      "value": 9,
+      "count": 9,
+      "is_cs": true
+    },
+    {
+      "name": "Mostafa Ehab CS",
+      "employee": "Mostafa Ehab CS",
+      "value": 8,
+      "count": 8,
+      "is_cs": true
+    },
+    {
+      "name": "Asmaa Cs",
+      "employee": "Asmaa Cs",
+      "value": 6,
+      "count": 6,
+      "is_cs": true
+    },
+    {
+      "name": "HABIBA FAHMY (pen) CS",
+      "employee": "HABIBA FAHMY (pen) CS",
+      "value": 5,
+      "count": 5,
+      "is_cs": true
+    },
+    {
+      "name": "Maha Cs",
+      "employee": "Maha Cs",
+      "value": 5,
+      "count": 5,
+      "is_cs": true
+    },
+    {
+      "name": "RAWAN SALAMA CS",
+      "employee": "RAWAN SALAMA CS",
+      "value": 5,
+      "count": 5,
+      "is_cs": true
+    },
+    {
+      "name": "Nour CS",
+      "employee": "Nour CS",
+      "value": 4,
+      "count": 4,
+      "is_cs": true
+    },
+    {
+      "name": "AMR REDA CS",
+      "employee": "AMR REDA CS",
+      "value": 4,
+      "count": 4,
+      "is_cs": true
+    },
+    {
+      "name": "RANIA CS",
+      "employee": "RANIA CS",
+      "value": 3,
+      "count": 3,
+      "is_cs": true
+    },
+    {
+      "name": "Ahmed M CS",
+      "employee": "Ahmed M CS",
+      "value": 1,
+      "count": 1,
+      "is_cs": true
+    }
+  ],
+  "topCSContributors": [
+    {
+      "name": "BASMA CS",
+      "employee": "BASMA CS",
+      "value": 226,
+      "count": 226,
+      "is_cs": true
+    },
+    {
+      "name": "Hussen Ibrahim CS",
+      "employee": "Hussen Ibrahim CS",
+      "value": 70,
+      "count": 70,
+      "is_cs": true
+    },
+    {
+      "name": "EMAN CS",
+      "employee": "EMAN CS",
+      "value": 56,
+      "count": 56,
+      "is_cs": true
+    },
+    {
+      "name": "MOHAMED OSAMA CS",
+      "employee": "MOHAMED OSAMA CS",
+      "value": 55,
+      "count": 55,
+      "is_cs": true
+    },
+    {
+      "name": "Zahraa CS",
+      "employee": "Zahraa CS",
+      "value": 54,
+      "count": 54,
+      "is_cs": true
+    },
+    {
+      "name": "Sanaa CS",
+      "employee": "Sanaa CS",
+      "value": 53,
+      "count": 53,
+      "is_cs": true
+    },
+    {
+      "name": "Alyaa CS",
+      "employee": "Alyaa CS",
+      "value": 52,
+      "count": 52,
+      "is_cs": true
+    },
+    {
+      "name": "Abdulrahman mohamed (pen) CS",
+      "employee": "Abdulrahman mohamed (pen) CS",
+      "value": 49,
+      "count": 49,
+      "is_cs": true
+    },
+    {
+      "name": "Esraa Reda CS",
+      "employee": "Esraa Reda CS",
+      "value": 46,
+      "count": 46,
+      "is_cs": true
+    },
+    {
+      "name": "Ahmed Ataa ( pen ) CS",
+      "employee": "Ahmed Ataa ( pen ) CS",
+      "value": 32,
+      "count": 32,
+      "is_cs": true
+    },
+    {
+      "name": "Ali CS",
+      "employee": "Ali CS",
+      "value": 31,
+      "count": 31,
+      "is_cs": true
+    },
+    {
+      "name": "Fagr CS",
+      "employee": "Fagr CS",
+      "value": 30,
+      "count": 30,
+      "is_cs": true
+    },
+    {
+      "name": "MARIAM Aaber CS",
+      "employee": "MARIAM Aaber CS",
+      "value": 29,
+      "count": 29,
+      "is_cs": true
+    },
+    {
+      "name": "Abrar CS",
+      "employee": "Abrar CS",
+      "value": 28,
+      "count": 28,
+      "is_cs": true
+    },
+    {
+      "name": "Marwa new Cs",
+      "employee": "Marwa new Cs",
+      "value": 25,
+      "count": 25,
+      "is_cs": true
+    }
+  ],
+  "topCSContributor": {
+    "employee": "BASMA CS",
+    "name": "BASMA CS",
+    "count": 226,
+    "value": 226
+  },
+  "fromCS": 1219,
+  "fromOtherDepartments": 18634,
+  "addedOrders": {
+    "totalAdded": 19853,
+    "totalAddedCS": 1219,
+    "totalAddedNonCS": 18634,
+    "fromCS": 1219,
+    "fromOtherDepartments": 18634,
+    "topCSContributor": {
+      "employee": "BASMA CS",
+      "name": "BASMA CS",
+      "count": 226,
+      "value": 226
+    },
+    "topCSContributors": [
+      {
+        "name": "BASMA CS",
+        "employee": "BASMA CS",
+        "value": 226,
+        "count": 226,
+        "is_cs": true
+      },
+      {
+        "name": "Hussen Ibrahim CS",
+        "employee": "Hussen Ibrahim CS",
+        "value": 70,
+        "count": 70,
+        "is_cs": true
+      },
+      {
+        "name": "EMAN CS",
+        "employee": "EMAN CS",
+        "value": 56,
+        "count": 56,
+        "is_cs": true
+      },
+      {
+        "name": "MOHAMED OSAMA CS",
+        "employee": "MOHAMED OSAMA CS",
+        "value": 55,
+        "count": 55,
+        "is_cs": true
+      },
+      {
+        "name": "Zahraa CS",
+        "employee": "Zahraa CS",
+        "value": 54,
+        "count": 54,
+        "is_cs": true
+      },
+      {
+        "name": "Sanaa CS",
+        "employee": "Sanaa CS",
+        "value": 53,
+        "count": 53,
+        "is_cs": true
+      },
+      {
+        "name": "Alyaa CS",
+        "employee": "Alyaa CS",
+        "value": 52,
+        "count": 52,
+        "is_cs": true
+      },
+      {
+        "name": "Abdulrahman mohamed (pen) CS",
+        "employee": "Abdulrahman mohamed (pen) CS",
+        "value": 49,
+        "count": 49,
+        "is_cs": true
+      },
+      {
+        "name": "Esraa Reda CS",
+        "employee": "Esraa Reda CS",
+        "value": 46,
+        "count": 46,
+        "is_cs": true
+      },
+      {
+        "name": "Ahmed Ataa ( pen ) CS",
+        "employee": "Ahmed Ataa ( pen ) CS",
+        "value": 32,
+        "count": 32,
+        "is_cs": true
+      },
+      {
+        "name": "Ali CS",
+        "employee": "Ali CS",
+        "value": 31,
+        "count": 31,
+        "is_cs": true
+      },
+      {
+        "name": "Fagr CS",
+        "employee": "Fagr CS",
+        "value": 30,
+        "count": 30,
+        "is_cs": true
+      },
+      {
+        "name": "MARIAM Aaber CS",
+        "employee": "MARIAM Aaber CS",
+        "value": 29,
+        "count": 29,
+        "is_cs": true
+      },
+      {
+        "name": "Abrar CS",
+        "employee": "Abrar CS",
+        "value": 28,
+        "count": 28,
+        "is_cs": true
+      },
+      {
+        "name": "Marwa new Cs",
+        "employee": "Marwa new Cs",
+        "value": 25,
+        "count": 25,
+        "is_cs": true
+      }
+    ],
+    "allCSContributors": [
+      {
+        "name": "BASMA CS",
+        "employee": "BASMA CS",
+        "value": 226,
+        "count": 226,
+        "is_cs": true
+      },
+      {
+        "name": "Hussen Ibrahim CS",
+        "employee": "Hussen Ibrahim CS",
+        "value": 70,
+        "count": 70,
+        "is_cs": true
+      },
+      {
+        "name": "EMAN CS",
+        "employee": "EMAN CS",
+        "value": 56,
+        "count": 56,
+        "is_cs": true
+      },
+      {
+        "name": "MOHAMED OSAMA CS",
+        "employee": "MOHAMED OSAMA CS",
+        "value": 55,
+        "count": 55,
+        "is_cs": true
+      },
+      {
+        "name": "Zahraa CS",
+        "employee": "Zahraa CS",
+        "value": 54,
+        "count": 54,
+        "is_cs": true
+      },
+      {
+        "name": "Sanaa CS",
+        "employee": "Sanaa CS",
+        "value": 53,
+        "count": 53,
+        "is_cs": true
+      },
+      {
+        "name": "Alyaa CS",
+        "employee": "Alyaa CS",
+        "value": 52,
+        "count": 52,
+        "is_cs": true
+      },
+      {
+        "name": "Abdulrahman mohamed (pen) CS",
+        "employee": "Abdulrahman mohamed (pen) CS",
+        "value": 49,
+        "count": 49,
+        "is_cs": true
+      },
+      {
+        "name": "Esraa Reda CS",
+        "employee": "Esraa Reda CS",
+        "value": 46,
+        "count": 46,
+        "is_cs": true
+      },
+      {
+        "name": "Ahmed Ataa ( pen ) CS",
+        "employee": "Ahmed Ataa ( pen ) CS",
+        "value": 32,
+        "count": 32,
+        "is_cs": true
+      },
+      {
+        "name": "Ali CS",
+        "employee": "Ali CS",
+        "value": 31,
+        "count": 31,
+        "is_cs": true
+      },
+      {
+        "name": "Fagr CS",
+        "employee": "Fagr CS",
+        "value": 30,
+        "count": 30,
+        "is_cs": true
+      },
+      {
+        "name": "MARIAM Aaber CS",
+        "employee": "MARIAM Aaber CS",
+        "value": 29,
+        "count": 29,
+        "is_cs": true
+      },
+      {
+        "name": "Abrar CS",
+        "employee": "Abrar CS",
+        "value": 28,
+        "count": 28,
+        "is_cs": true
+      },
+      {
+        "name": "Marwa new Cs",
+        "employee": "Marwa new Cs",
+        "value": 25,
+        "count": 25,
+        "is_cs": true
+      },
+      {
+        "name": "Eman Elkomy CS",
+        "employee": "Eman Elkomy CS",
+        "value": 23,
+        "count": 23,
+        "is_cs": true
+      },
+      {
+        "name": "SHIMAA HUSSEIN CS",
+        "employee": "SHIMAA HUSSEIN CS",
+        "value": 23,
+        "count": 23,
+        "is_cs": true
+      },
+      {
+        "name": "Sahar cs",
+        "employee": "Sahar cs",
+        "value": 22,
+        "count": 22,
+        "is_cs": true
+      },
+      {
+        "name": "Menna Sherif cs",
+        "employee": "Menna Sherif cs",
+        "value": 22,
+        "count": 22,
+        "is_cs": true
+      },
+      {
+        "name": "Esraa Salah cs",
+        "employee": "Esraa Salah cs",
+        "value": 22,
+        "count": 22,
+        "is_cs": true
+      },
+      {
+        "name": "MARWA AHMED CS",
+        "employee": "MARWA AHMED CS",
+        "value": 20,
+        "count": 20,
+        "is_cs": true
+      },
+      {
+        "name": "REEM ELSAEED CS",
+        "employee": "REEM ELSAEED CS",
+        "value": 19,
+        "count": 19,
+        "is_cs": true
+      },
+      {
+        "name": "Rania ahmed CS",
+        "employee": "Rania ahmed CS",
+        "value": 19,
+        "count": 19,
+        "is_cs": true
+      },
+      {
+        "name": "Nourhan nabil CS",
+        "employee": "Nourhan nabil CS",
+        "value": 19,
+        "count": 19,
+        "is_cs": true
+      },
+      {
+        "name": "Menna atef cs",
+        "employee": "Menna atef cs",
+        "value": 18,
+        "count": 18,
+        "is_cs": true
+      },
+      {
+        "name": "Asmaa Fathy CS",
+        "employee": "Asmaa Fathy CS",
+        "value": 17,
+        "count": 17,
+        "is_cs": true
+      },
+      {
+        "name": "Malak Tamer CS",
+        "employee": "Malak Tamer CS",
+        "value": 17,
+        "count": 17,
+        "is_cs": true
+      },
+      {
+        "name": "Ali Hamada CS",
+        "employee": "Ali Hamada CS",
+        "value": 16,
+        "count": 16,
+        "is_cs": true
+      },
+      {
+        "name": "Hayam CS",
+        "employee": "Hayam CS",
+        "value": 15,
+        "count": 15,
+        "is_cs": true
+      },
+      {
+        "name": "Donia CS",
+        "employee": "Donia CS",
+        "value": 15,
+        "count": 15,
+        "is_cs": true
+      },
+      {
+        "name": "Salwa Cs",
+        "employee": "Salwa Cs",
+        "value": 14,
+        "count": 14,
+        "is_cs": true
+      },
+      {
+        "name": "Ali Bahlol CS",
+        "employee": "Ali Bahlol CS",
+        "value": 12,
+        "count": 12,
+        "is_cs": true
+      },
+      {
+        "name": "Hanan CS",
+        "employee": "Hanan CS",
+        "value": 10,
+        "count": 10,
+        "is_cs": true
+      },
+      {
+        "name": "Ali Mohamed cs",
+        "employee": "Ali Mohamed cs",
+        "value": 10,
+        "count": 10,
+        "is_cs": true
+      },
+      {
+        "name": "Malak Abdelfattah CS",
+        "employee": "Malak Abdelfattah CS",
+        "value": 9,
+        "count": 9,
+        "is_cs": true
+      },
+      {
+        "name": "Mostafa Ehab CS",
+        "employee": "Mostafa Ehab CS",
+        "value": 8,
+        "count": 8,
+        "is_cs": true
+      },
+      {
+        "name": "Asmaa Cs",
+        "employee": "Asmaa Cs",
+        "value": 6,
+        "count": 6,
+        "is_cs": true
+      },
+      {
+        "name": "HABIBA FAHMY (pen) CS",
+        "employee": "HABIBA FAHMY (pen) CS",
+        "value": 5,
+        "count": 5,
+        "is_cs": true
+      },
+      {
+        "name": "Maha Cs",
+        "employee": "Maha Cs",
+        "value": 5,
+        "count": 5,
+        "is_cs": true
+      },
+      {
+        "name": "RAWAN SALAMA CS",
+        "employee": "RAWAN SALAMA CS",
+        "value": 5,
+        "count": 5,
+        "is_cs": true
+      },
+      {
+        "name": "Nour CS",
+        "employee": "Nour CS",
+        "value": 4,
+        "count": 4,
+        "is_cs": true
+      },
+      {
+        "name": "AMR REDA CS",
+        "employee": "AMR REDA CS",
+        "value": 4,
+        "count": 4,
+        "is_cs": true
+      },
+      {
+        "name": "RANIA CS",
+        "employee": "RANIA CS",
+        "value": 3,
+        "count": 3,
+        "is_cs": true
+      },
+      {
+        "name": "Ahmed M CS",
+        "employee": "Ahmed M CS",
+        "value": 1,
+        "count": 1,
+        "is_cs": true
+      }
+    ]
   }
 }

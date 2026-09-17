@@ -1,5 +1,5 @@
 {
-  "name": "executive-bi",
+  "name": "cs-performance-dashboard",
   "version": "1.0.0",
   "description": "CS Executive Performance Dashboard",
   "type": "module",
@@ -7,11 +7,13 @@
     "dev": "node server.js",
     "build": "node build.js",
     "start": "node server.js",
-    "test": "node tests/regression.test.js"
+    "lint": "node -c server.js analyze.js build.js export_excel.js services/parser.js services/performance.js services/allocation.js services/tracking.js services/reports.js db/index.js tests/regression.test.js tests/final_pass.test.js tests/comprehensive_spec.test.js tests/e2e_full_audit.test.js tests/fragmentation_minimization.test.js tests/simplified_navigation.test.js tests/dynamic_batch_ui.test.js tests/account_centric_allocation.test.js tests/account_stream_eligibility.test.js tests/audit_invariants_proof.test.js tests/forensic_verification.test.js tests/smart_allocation_engine.test.js tests/forensic_allocation_integration.test.js tests/vendoor_phase1_integration.test.js tests/vendoor_phase2_integration.test.js tests/vendoor_phase3_integration.test.js tests/reports_integration.test.js tests/master_simulations.test.js",
+    "test": "node tests/regression.test.js && node tests/final_pass.test.js && node tests/comprehensive_spec.test.js && node tests/e2e_full_audit.test.js && node --test tests/fragmentation_minimization.test.js && node --test tests/simplified_navigation.test.js && node --test tests/dynamic_batch_ui.test.js && node --test tests/account_centric_allocation.test.js && node --test tests/account_stream_eligibility.test.js && node --test tests/audit_invariants_proof.test.js && node --test tests/forensic_verification.test.js && node --test tests/smart_allocation_engine.test.js && node --test tests/forensic_allocation_integration.test.js && node --test tests/vendoor_phase1_integration.test.js && node --test tests/vendoor_phase2_integration.test.js && node --test tests/vendoor_phase3_integration.test.js && node --test tests/reports_integration.test.js && node --test tests/master_simulations.test.js"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
     "express": "^4.21.2",
+    "jszip": "^3.10.2",
     "multer": "^2.3.0",
     "xlsx": "^0.18.5"
   }

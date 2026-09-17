@@ -12,8 +12,22 @@ import {
   saveWorkAllocation,
   getAllocationForDate,
   generateCopyAllocationText,
-  getCurrentWorkOverview
+  getCurrentWorkOverview,
+  deleteAllocationForDate
 } from '../services/allocation.js';
+import {
+  inspectExcelSchema,
+  persistDailyLogRecords,
+  getOrderTracking,
+  getEmployeeTracking,
+  getAccountTracking,
+  getTrackingOverview,
+  getRangeTracking,
+  isDailyLogUploaded,
+  getSourcesUploadStatus,
+  getTeamTrackingSummary
+} from '../services/tracking.js';
+import XLSX from 'xlsx';
 
 console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
 
@@ -236,9 +250,9 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
   assert.deepStrictEqual(status.accounts.sort(), ['Account Alpha', 'Account Beta', 'Account Gamma']);
   assert.strictEqual(status.summary.duplicate_orders_count, 1);
 
-  // Verify that SHARED-01 resolved to Pending (active pending priority)
+  // Verify that SHARED-01 resolved to Opening Status Conflict (Phase 3 & 25)
   const sharedOrder = db.prepare('SELECT * FROM current_work_orders WHERE work_date = ? AND order_code = ?').get(testDate, 'SHARED-01');
-  assert.strictEqual(sharedOrder.status, 'Pending', 'Status precedence resolved to Pending');
+  assert.strictEqual(sharedOrder.status, 'Opening Status Conflict', 'Status precedence resolved to Opening Status Conflict');
 
   console.log('✓ PASS: Two-File Staging, Merging, and Status Resolution verified.');
 }
@@ -683,6 +697,542 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
   } finally {
     server.close();
   }
+}
+
+// -------------------------------------------------------------
+// TEST 13: Added Orders CS Employee Matching & Reconciliation
+// -------------------------------------------------------------
+{
+  console.log('Testing: Added Orders CS Employee Matching & Sum Reconciliation...');
+  const { isCSName, normalizeEmployeeName, matchEmployeeInMaster } = await import('../services/parser.js');
+  const fs = await import('fs');
+
+  // 1. Employee Master Department is Authoritative
+  const testMasterMap = new Map([
+    ['Nouran Ezzat', 'CS'],
+    ['Hassan Data Entry', 'Data Entry'],
+    ['Ahmed Shaker CS', 'Other'], // Master overrides "CS" suffix!
+  ]);
+
+  // Case-insensitive & normalized matching
+  assert.strictEqual(isCSName(' Nouran  Ezzat ', testMasterMap), true, 'CS employee in master must be classified as CS');
+  assert.strictEqual(isCSName('HASSAN DATA ENTRY', testMasterMap), false, 'Data Entry employee in master must NOT be CS');
+  assert.strictEqual(isCSName('Ahmed Shaker CS', testMasterMap), false, 'Master department overrides name suffix');
+
+  // Fallback rule when not in master
+  assert.strictEqual(isCSName('Unknown Person CS', testMasterMap), true, 'Fallback to CS suffix if not in master');
+  assert.strictEqual(isCSName('Unknown Person Data Entry', testMasterMap), false, 'Fallback non-CS if suffix is not CS');
+
+  // 2. Performance computation with dbEmployeesMap
+  const sampleRecords = [
+    { order: 'ORD-101', name: 'Nouran Ezzat', act: 'أضاف اوردر', added: true, dt: 1700000000 },
+    { order: 'ORD-102', name: 'nouran ezzat', act: 'أضاف اوردر', added: true, dt: 1700000010 }, // duplicate order+emp with case variation
+    { order: 'ORD-103', name: 'Nouran Ezzat', act: 'أضاف اوردر', added: true, dt: 1700000020 },
+    { order: 'ORD-104', name: 'Unknown Person CS', act: 'أضاف اوردر', added: true, dt: 1700000030 },
+    { order: 'ORD-105', name: 'Hassan Data Entry', act: 'أضاف اوردر', added: true, dt: 1700000040 },
+  ];
+
+  const metrics = computePerformanceFromRecords(sampleRecords, testMasterMap);
+  assert.strictEqual(metrics.addedOrders.fromCS, 4, 'Should have 4 CS added orders (3 from Nouran, 1 from Unknown)');
+  assert.strictEqual(metrics.addedOrders.fromOtherDepartments, 1, 'Should have 1 non-CS added order');
+  assert.strictEqual(metrics.addedOrders.topCSContributors.length, 2, 'Should have 2 CS contributors');
+  assert.strictEqual(metrics.addedOrders.topCSContributors[0].name, 'Nouran Ezzat', 'Top contributor should be Nouran Ezzat');
+  assert.strictEqual(metrics.addedOrders.topCSContributors[0].count, 3, 'Nouran Ezzat count should be 3');
+  assert.strictEqual(metrics.addedOrders.topCSContributor.employee, 'Nouran Ezzat', 'topCSContributor must match rank 1');
+
+  // 3. Verify data.json Reconciliation: Sum of CS Contributors == From CS (1,219)
+  const data = JSON.parse(fs.readFileSync('data.json', 'utf-8'));
+  assert.strictEqual(data.fromCS, 1219, 'data.json fromCS must be 1219');
+  assert.ok(Array.isArray(data.allCSContributors), 'allCSContributors must be an array');
+  assert.ok(data.allCSContributors.length > 0, 'allCSContributors must not be empty');
+
+  const contributorSum = data.allCSContributors.reduce((sum, c) => sum + (c.count || c.value || 0), 0);
+  assert.strictEqual(contributorSum, 1219, 'Sum of all CS contributor rows must reconcile exactly to 1,219');
+
+  // Top CS Contributor must match rank 1
+  assert.ok(data.topCSContributor, 'topCSContributor must exist');
+  assert.strictEqual(data.topCSContributor.employee, data.allCSContributors[0].employee);
+  assert.strictEqual(data.topCSContributor.count, data.allCSContributors[0].count);
+  assert.strictEqual(data.topCSContributor.employee, 'BASMA CS');
+  assert.strictEqual(data.topCSContributor.count, 226);
+
+  console.log('✓ PASS: Added Orders CS Employee Matching & Sum Reconciliation (1,219) verified.');
+}
+
+// -------------------------------------------------------------
+// TEST 14: Global Date Navigation, API Date Routing & Multi-Date Isolation
+// -------------------------------------------------------------
+{
+  console.log('Testing: Global Date Navigation, API Date Routing & Multi-Date Isolation...');
+  const http = await import('http');
+  const fs = await import('fs');
+  const { app } = await import('../server.js');
+
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+  const port = server.address().port;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    // 1. Query baseline date: 2026-09-08
+    const baseRes = await fetch(`${baseUrl}/api/data?date=2026-09-08`);
+    assert.strictEqual(baseRes.status, 200);
+    const baseData = await baseRes.json();
+    assert.strictEqual(baseData.exists, true, '2026-09-08 data must exist');
+    assert.strictEqual(baseData.date, '2026-09-08');
+    assert.ok(Array.isArray(baseData.employees), 'employees should be array');
+    assert.ok(baseData.employees.length > 0, 'employees should not be empty on baseline date');
+    assert.strictEqual(baseData.fromCS, 1219, 'Baseline fromCS should be 1219');
+
+    // 2. Query empty historical date: 2026-09-06
+    const emptyRes = await fetch(`${baseUrl}/api/data?date=2026-09-06`);
+    assert.strictEqual(emptyRes.status, 200);
+    const emptyData = await emptyRes.json();
+    assert.strictEqual(emptyData.exists, false, '2026-09-06 should return exists: false');
+    assert.strictEqual(emptyData.date, '2026-09-06');
+    assert.strictEqual(emptyData.employees.length, 0, '2026-09-06 should have 0 employees');
+    assert.strictEqual(emptyData.log_totals.actions, 0, '2026-09-06 should have 0 actions');
+
+    // 3. Query future date: 2026-09-20
+    const futureRes = await fetch(`${baseUrl}/api/data?date=2026-09-20`);
+    assert.strictEqual(futureRes.status, 200);
+    const futureData = await futureRes.json();
+    assert.strictEqual(futureData.exists, false, '2026-09-20 future date must return exists: false');
+
+    // 4. Performance endpoint date queries
+    const perfBase = await fetch(`${baseUrl}/api/performance/2026-09-08`).then(r => r.json());
+    assert.strictEqual(perfBase.exists, true, 'Performance for 2026-09-08 must exist');
+    const perfEmpty = await fetch(`${baseUrl}/api/performance/2026-09-06`).then(r => r.json());
+    assert.strictEqual(perfEmpty.exists, false, 'Performance for 2026-09-06 must report exists: false');
+
+    // 5. Working Team date isolation
+    db.prepare('DELETE FROM daily_working_team WHERE work_date IN (?, ?)').run('2026-09-06', '2026-09-07');
+    const emp1 = db.prepare('SELECT id FROM employees ORDER BY id LIMIT 1').get();
+    assert.ok(emp1, 'At least one employee must exist');
+
+    // Set working team for 2026-09-07
+    await fetch(`${baseUrl}/api/working-team/2026-09-07`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeIds: [emp1.id] })
+    });
+
+    const team07 = await fetch(`${baseUrl}/api/working-team/2026-09-07`).then(r => r.json());
+    const working07 = team07.filter(e => e.is_working);
+    assert.strictEqual(working07.length, 1, '2026-09-07 must have exactly 1 working member');
+    assert.strictEqual(working07[0].id, emp1.id);
+
+    // Verify 2026-09-06 working team is not contaminated by 2026-09-07
+    await fetch(`${baseUrl}/api/working-team/2026-09-06`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeIds: [] })
+    });
+    const team06 = await fetch(`${baseUrl}/api/working-team/2026-09-06`).then(r => r.json());
+    const working06 = team06.filter(e => e.is_working);
+    assert.strictEqual(working06.length, 0, '2026-09-06 must have 0 working members');
+
+    // 6. Work Allocation date isolation
+    await fetch(`${baseUrl}/api/allocations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: '2026-09-07',
+        assignments: [{ employee_id: emp1.id, account: 'TEST-ACC-07', status: 'New', available_orders: 45 }]
+      })
+    });
+
+    const alloc07 = await fetch(`${baseUrl}/api/allocations/2026-09-07`).then(r => r.json());
+    assert.strictEqual(alloc07.exists, true, 'Allocation on 2026-09-07 must exist');
+    assert.strictEqual(alloc07.items.length, 1);
+    assert.strictEqual(alloc07.items[0].account, 'TEST-ACC-07');
+
+    const alloc06 = await fetch(`${baseUrl}/api/allocations/2026-09-06`).then(r => r.json());
+    assert.strictEqual(alloc06.exists, false, 'Allocation on 2026-09-06 must NOT exist');
+
+    // Clean up test records
+    deleteAllocationForDate('2026-09-07');
+    db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run('2026-09-07');
+
+    // 7. HTML Bundle UI Component Verification
+    const indexHtml = fs.readFileSync('public/index.html', 'utf-8');
+    assert.ok(indexHtml.includes('id="globalDateSelector"'), 'HTML must include #globalDateSelector');
+    assert.ok(indexHtml.includes('id="globalDateDisplay"'), 'HTML must include #globalDateDisplay');
+    assert.ok(indexHtml.includes('id="btnPrevDay"'), 'HTML must include #btnPrevDay');
+    assert.ok(indexHtml.includes('id="btnToday"'), 'HTML must include #btnToday');
+    assert.ok(indexHtml.includes('id="btnNextDay"'), 'HTML must include #btnNextDay');
+    assert.ok(indexHtml.includes('id="globalCalendarPicker"'), 'HTML must include #globalCalendarPicker');
+    assert.ok(indexHtml.includes('setGlobalSelectedDate'), 'HTML must include setGlobalSelectedDate function');
+    assert.ok(indexHtml.includes('updateUrlDate'), 'HTML must include updateUrlDate function');
+    assert.ok(indexHtml.includes('fetchPerformanceDataForDate'), 'HTML must include fetchPerformanceDataForDate function');
+
+    console.log('✓ PASS: Global Date Navigation, API Date Routing & Multi-Date Isolation verified.');
+  } finally {
+    server.close();
+  }
+}
+
+// -------------------------------------------------------------
+// TEST 15: Comprehensive Tracking Engine & Schema Discovery (Phase 25)
+// -------------------------------------------------------------
+{
+  console.log('Testing: Tracking Engine, Schema Discovery & Audit (Phase 25 Verification Suite)...');
+  const fs = await import('fs');
+
+  // 1. Schema discovery on real sample_log.xlsx
+  if (fs.existsSync('sample_log.xlsx')) {
+    const sampleBuf = fs.readFileSync('sample_log.xlsx');
+    const schemaReport = inspectExcelSchema(sampleBuf, 'daily_log');
+    assert.strictEqual(schemaReport.is_valid, true, 'sample_log.xlsx schema must be valid');
+    assert.ok(schemaReport.worksheets.length >= 1, 'At least 1 worksheet');
+    assert.ok(schemaReport.total_rows > 1000, 'Must have thousands of rows');
+    assert.ok(schemaReport.columns.some(c => c.normalized_role === 'order_code'), 'Must detect order_code');
+    assert.ok(schemaReport.columns.some(c => c.normalized_role === 'employee_name'), 'Must detect employee_name');
+    assert.ok(schemaReport.columns.some(c => c.normalized_role === 'action'), 'Must detect action');
+    assert.strictEqual(schemaReport.missing_required_keys.length, 0, 'No missing required keys');
+  }
+
+  // 2. Schema inspection flags files missing required keys
+  const invalidWb = XLSX.utils.book_new();
+  const invalidWs = XLSX.utils.json_to_sheet([
+    { random_col1: 'val1', random_col2: 'val2' }
+  ]);
+  XLSX.utils.book_append_sheet(invalidWb, invalidWs, 'Sheet1');
+  const invalidBuf = XLSX.write(invalidWb, { type: 'buffer', bookType: 'xlsx' });
+  const invalidReport = inspectExcelSchema(invalidBuf, 'daily_log');
+  assert.strictEqual(invalidReport.is_valid, false, 'Invalid schema must be flagged');
+  assert.ok(invalidReport.missing_required_keys.length > 0, 'Must report missing required keys');
+
+  // Set up controlled test date: 2026-10-15
+  const tDate = '2026-10-15';
+  db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(tDate);
+  db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(tDate);
+  db.prepare('DELETE FROM allocation_headers WHERE allocation_date = ?').run(tDate);
+
+  // Setup opening inventory in current_work_orders:
+  // - ORD-NEW-01: from File 1 (Slot 1 -> New) in 'Store Alpha'
+  // - ORD-PEN-01: from File 2 (Slot 2 -> Pending) in 'Store Beta'
+  // - ORD-CONFLICT: in both File 1 (New) and File 2 (Pending) -> Opening Status Conflict
+  // - ORD-UNTOUCHED: in File 1 (New) in 'Store Alpha' (will have 0 actions)
+  const insertOrder = db.prepare(`
+    INSERT INTO current_work_orders (work_date, order_code, account, status, source_file_slot)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  insertOrder.run(tDate, 'ORD-NEW-01', 'Store Alpha', 'New', 1);
+  insertOrder.run(tDate, 'ORD-PEN-01', 'Store Beta', 'Pending', 2);
+  insertOrder.run(tDate, 'ORD-CONFLICT', 'Store Gamma', 'Opening Status Conflict', 1);
+  insertOrder.run(tDate, 'ORD-UNTOUCHED', 'Store Alpha', 'New', 1);
+
+  // Create manual allocation for tDate:
+  // Agent Ali (id: 1) is assigned 'Store Alpha' (New)
+  // Agent Basma (id: 2) is assigned 'Store Beta' (Pending)
+  const empAli = db.prepare("SELECT id, name FROM employees WHERE name LIKE '%Ali Bahlol%' LIMIT 1").get() || { id: 1, name: 'Ali Bahlol cs' };
+  const empBasma = db.prepare("SELECT id, name FROM employees WHERE name LIKE '%BASMA%' LIMIT 1").get() || { id: 2, name: 'BASMA CS' };
+
+  const hRes = db.prepare("INSERT INTO allocation_headers (allocation_date, notes) VALUES (?, 'Tracking Test Alloc')").run(tDate);
+  const hId = hRes.lastInsertRowid;
+  db.prepare('INSERT INTO allocation_items (allocation_header_id, employee_id, account, status, available_orders_at_assignment) VALUES (?, ?, ?, ?, ?)').run(hId, empAli.id, 'Store Alpha', 'New', 2);
+  db.prepare('INSERT INTO allocation_items (allocation_header_id, employee_id, account, status, available_orders_at_assignment) VALUES (?, ?, ?, ?, ?)').run(hId, empBasma.id, 'Store Beta', 'Pending', 1);
+
+  // Synthesize Daily Log events for tDate:
+  // 1 & 2: Ali touches ORD-NEW-01 at 09:00:00 (Printed), then at 09:01:00 (Printed) within 60s -> deduplicated to 1 action
+  // 3: Ali touches ORD-NEW-01 at 09:03:00 (Printed) 120s after previous -> 2nd action counted
+  // 4: Basma ALSO touches ORD-NEW-01 at 09:05:00 (Pending) -> multi-employee touch!
+  // 5: Basma touches ORD-PEN-01 at 10:00:00 (Printed) -> 1 action
+  // 6: Basma touches an UNALLOCATED account order ORD-EXTRA-01 ('Store Unassigned') at 10:15:00 (Printed) -> outside allocation!
+  // 7: Ali touches an UNMATCHED order ORD-UNMATCHED-99 at 11:00:00 (Processing) -> order not in New or Pending inventory
+  const testRecords = [
+    { order: 'ORD-NEW-01', name: empAli.name, act: 'طباعة الطلب', st: 'Printed', dt: new Date('2026-10-15T09:00:00Z'), isCS: true },
+    { order: 'ORD-NEW-01', name: empAli.name, act: 'طباعة الطلب', st: 'Printed', dt: new Date('2026-10-15T09:01:00Z'), isCS: true }, // deduped
+    { order: 'ORD-NEW-01', name: empAli.name, act: 'طباعة الطلب', st: 'Printed', dt: new Date('2026-10-15T09:03:00Z'), isCS: true }, // valid
+    { order: 'ORD-NEW-01', name: empBasma.name, act: 'طلب معلق', st: 'Pending', dt: new Date('2026-10-15T09:05:00Z'), isCS: true }, // multi-employee
+    { order: 'ORD-PEN-01', name: empBasma.name, act: 'طباعة الطلب', st: 'Printed', dt: new Date('2026-10-15T10:00:00Z'), isCS: true },
+    { order: 'ORD-EXTRA-01', name: empBasma.name, act: 'طباعة الطلب', st: 'Printed', dt: new Date('2026-10-15T10:15:00Z'), isCS: true },
+    { order: 'ORD-UNMATCHED-99', name: empAli.name, act: 'تجهيز الطلب', st: 'Processing', dt: new Date('2026-10-15T11:00:00Z'), isCS: true }
+  ];
+
+  persistDailyLogRecords(tDate, null, testRecords);
+
+  // 3. Test Deduplication & Orders Worked Today vs Real Actions
+  const aliTracking = getEmployeeTracking(tDate, empAli.id);
+  // Ali touched: ORD-NEW-01 (3 log events -> 2 real actions due to 120s dedup) and ORD-UNMATCHED-99 (1 real action)
+  assert.strictEqual(aliTracking.orders_worked_today, 2, 'Orders Worked Today must count UNIQUE orders only');
+  assert.strictEqual(aliTracking.real_actions, 3, 'Real Actions must count all valid deduplicated actions (2 on ORD-NEW-01 + 1 on ORD-UNMATCHED-99)');
+
+  // 4. Assigned Accounts reflects manual allocation
+  assert.deepStrictEqual(aliTracking.assigned_accounts, ['Store Alpha'], 'Assigned accounts must reflect manual allocation');
+  assert.ok(aliTracking.actually_worked_accounts.includes('Store Alpha'), 'Actually worked accounts includes Store Alpha');
+  assert.ok(aliTracking.actually_worked_accounts.includes('Unmatched Account'), 'Unmatched order account reported without hiding');
+
+  // 5. Basma tracking: Extra Accounts Worked & Orders outside allocation
+  const basmaTracking = getEmployeeTracking(tDate, empBasma.id);
+  // Basma was assigned 'Store Beta', but touched ORD-NEW-01 (Store Alpha) and ORD-PEN-01 (Store Beta)
+  assert.strictEqual(basmaTracking.orders_worked_outside_allocation, 2, 'Touched 2 orders outside assigned Store Beta (ORD-NEW-01 in Store Alpha + ORD-EXTRA-01 unknown)');
+  assert.ok(basmaTracking.extra_accounts_worked.includes('Store Alpha'), 'Store Alpha is an extra account worked not assigned to Basma');
+
+  // 6. Unassigned activity does NOT modify manual allocation
+  const allocCheck = getAllocationForDate(tDate);
+  assert.strictEqual(allocCheck.items.length, 2, 'Manual allocation items count must remain strictly 2');
+  assert.strictEqual(allocCheck.items.find(i => i.employee_id === empBasma.id).account, 'Store Beta', 'Manual allocation untouched');
+
+  // 7. Multi-employee touch: ORD-NEW-01 touched by both Ali and Basma
+  const ordNewTrack = getOrderTracking(tDate, 'ORD-NEW-01');
+  assert.strictEqual(ordNewTrack.order_code, 'ORD-NEW-01');
+  assert.strictEqual(ordNewTrack.opening_status, 'New', 'Derived from File 1 (Slot 1)');
+  assert.ok(ordNewTrack.actual_employees.includes(empAli.name), 'Must include Ali');
+  assert.ok(ordNewTrack.actual_employees.includes(empBasma.name), 'Must include Basma');
+  assert.strictEqual(ordNewTrack.last_logged_status, 'Pending', 'Last logged action was Basma pending at 09:05:00');
+  assert.strictEqual(ordNewTrack.current_status, 'Pending', 'Current status matches last logged status');
+  assert.strictEqual(ordNewTrack.timeline.length, 4, 'Timeline contains all 4 raw entries');
+
+  // 8. Opening Status Conflict
+  const ordConflictTrack = getOrderTracking(tDate, 'ORD-CONFLICT');
+  assert.strictEqual(ordConflictTrack.opening_status, 'Opening Status Conflict', 'Flagged as Opening Status Conflict');
+
+  // 9. Untouched order preserves opening status
+  const ordUntouchedTrack = getOrderTracking(tDate, 'ORD-UNTOUCHED');
+  assert.strictEqual(ordUntouchedTrack.opening_status, 'New');
+  assert.strictEqual(ordUntouchedTrack.last_logged_status, null, 'No daily log actions');
+  assert.strictEqual(ordUntouchedTrack.current_status, 'New', 'Current status preserved as opening status when untouched');
+
+  // 10. Audit: Unmatched order IDs & Summary
+  const overview = getTrackingOverview(tDate);
+  assert.ok(overview.audit.unmatched_daily_log_orders.some(o => o.order_code === 'ORD-UNMATCHED-99'), 'ORD-UNMATCHED-99 reported in audit');
+  assert.strictEqual(overview.opening_inventory.opening_status_conflicts, 1, '1 Opening status conflict reported');
+  assert.strictEqual(overview.opening_inventory.untouched_orders, 2, 'ORD-CONFLICT and ORD-UNTOUCHED are untouched');
+
+  // 11. Multi-Day Range Tracking: Distinguishes unique period orders from daily sums
+  const tDate2 = '2026-10-16';
+  db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(tDate2);
+  // On Day 2, Ali touches ORD-NEW-01 again (1 action) and a new order ORD-DAY2-01 (1 action)
+  persistDailyLogRecords(tDate2, null, [
+    { order: 'ORD-NEW-01', name: empAli.name, act: 'طباعة الطلب', st: 'Printed', dt: new Date('2026-10-16T10:00:00Z'), isCS: true },
+    { order: 'ORD-DAY2-01', name: empAli.name, act: 'طباعة الطلب', st: 'Printed', dt: new Date('2026-10-16T11:00:00Z'), isCS: true }
+  ]);
+
+  const rangeReport = getRangeTracking('2026-10-15', '2026-10-16');
+  assert.strictEqual(rangeReport.days_count, 2);
+  assert.strictEqual(rangeReport.summary.total_daily_unique_orders_sum, 6, 'Sum of daily unique orders: 4 on day 1 + 2 on day 2 = 6');
+  assert.strictEqual(rangeReport.summary.unique_orders_in_period, 5, 'ORD-NEW-01 appeared on both days, so unique period orders is 5!');
+
+  // Cleanup test dates
+  db.prepare('DELETE FROM raw_log_records WHERE work_date IN (?, ?)').run(tDate, tDate2);
+  db.prepare('DELETE FROM current_work_orders WHERE work_date IN (?, ?)').run(tDate, tDate2);
+  deleteAllocationForDate(tDate);
+
+  console.log('✓ PASS: All 18 Phase 25 Verification Requirements thoroughly tested and verified.');
+}
+
+// -------------------------------------------------------------
+// TEST 16: Tracking Truth-Telling & Daily Employee Summary (Scenarios A-F)
+// -------------------------------------------------------------
+{
+  console.log('Testing: Tracking Truth-Telling & Daily Employee Summary (Scenarios A-F)...');
+
+  // Setup test employees
+  const insEmp = db.prepare('INSERT OR IGNORE INTO employees (name, department, active) VALUES (?, ?, 1)');
+  insEmp.run('Truth Ali CS', 'CS');
+  insEmp.run('Truth Bob CS', 'CS');
+  insEmp.run('Truth Clara CS', 'CS');
+
+  const empAli = db.prepare('SELECT * FROM employees WHERE name = ?').get('Truth Ali CS');
+  const empBob = db.prepare('SELECT * FROM employees WHERE name = ?').get('Truth Bob CS');
+  const empClara = db.prepare('SELECT * FROM employees WHERE name = ?').get('Truth Clara CS');
+
+  const setupOpeningOrder = (date, orderCode, account, status = 'New', slot = 1) => {
+    db.prepare(`
+      INSERT INTO current_work_orders (work_date, order_code, account, status, source_file_slot)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(date, orderCode, account, status, slot);
+  };
+
+  const setupManualAllocation = (date, empId, account, status = 'New') => {
+    let header = db.prepare('SELECT id FROM allocation_headers WHERE allocation_date = ?').get(date);
+    let headerId = header ? header.id : null;
+    if (!headerId) {
+      const res = db.prepare("INSERT INTO allocation_headers (allocation_date, notes) VALUES (?, 'Test Alloc')").run(date);
+      headerId = res.lastInsertRowid;
+    }
+    db.prepare(`
+      INSERT INTO allocation_items (allocation_header_id, employee_id, account, status, available_orders_at_assignment)
+      VALUES (?, ?, ?, ?, 1)
+    `).run(headerId, empId, account, status);
+  };
+
+  // ============================================================
+  // SCENARIO A: End-of-Day Log Not Uploaded
+  // ============================================================
+  const dateA = '2026-11-01';
+  db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(dateA);
+  db.prepare('DELETE FROM performance_snapshots WHERE date = ?').run(dateA);
+  db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(dateA);
+  deleteAllocationForDate(dateA);
+
+  // Setup opening inventory & manual allocation for dateA
+  setupOpeningOrder(dateA, 'ORD-A1', 'ALPHA_STORE', 'New', 1);
+  setupManualAllocation(dateA, empAli.id, 'ALPHA_STORE', 'New');
+
+  // Assert upload status
+  assert.strictEqual(isDailyLogUploaded(dateA), false, 'Scenario A: Log must NOT be marked uploaded');
+  const sourcesA = getSourcesUploadStatus(dateA);
+  assert.strictEqual(sourcesA.daily_log_uploaded, false, 'Scenario A: sources status shows log missing');
+  assert.strictEqual(sourcesA.new_orders_uploaded, true, 'Scenario A: new orders uploaded');
+
+  // Employee Reality: Must return null and 'N/A' compliance
+  const empTrackA = getEmployeeTracking(dateA, empAli.id);
+  assert.strictEqual(empTrackA.daily_log_uploaded, false);
+  assert.strictEqual(empTrackA.orders_worked_today, null, 'Scenario A: orders_worked_today must be null');
+  assert.strictEqual(empTrackA.real_actions, null, 'Scenario A: real_actions must be null');
+  assert.strictEqual(empTrackA.allocation_compliance, null, 'Scenario A: allocation_compliance must be null');
+  assert.strictEqual(empTrackA.allocation_compliance_label, 'N/A', 'Scenario A: compliance label must be N/A');
+  assert.strictEqual(empTrackA.status_message, 'End-of-Day Log Not Uploaded');
+  assert.deepStrictEqual(empTrackA.assigned_accounts, ['ALPHA_STORE']);
+
+  // Team Summary: null aggregates for worked metrics
+  const teamSumA = getTeamTrackingSummary(dateA);
+  assert.strictEqual(teamSumA.daily_log_uploaded, false);
+  assert.strictEqual(teamSumA.team_kpis.employees_with_activity, null);
+  assert.strictEqual(teamSumA.team_kpis.total_orders_worked_today, null);
+  const aliInTeamA = teamSumA.employees.find(e => e.employee_id === empAli.id);
+  assert.strictEqual(aliInTeamA.allocation_compliance, null);
+  assert.strictEqual(aliInTeamA.allocation_compliance_label, 'N/A');
+
+  // Tracking Overview: null actual work
+  const overviewA = getTrackingOverview(dateA);
+  assert.strictEqual(overviewA.daily_log_uploaded, false);
+  assert.strictEqual(overviewA.actual_work.orders_worked_today, null);
+  assert.strictEqual(overviewA.opening_inventory.untouched_orders, null);
+
+  // ============================================================
+  // SCENARIO B: Log Uploaded — Zero Activity Recorded for Employee
+  // ============================================================
+  const dateB = '2026-11-02';
+  db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(dateB);
+  db.prepare('DELETE FROM performance_snapshots WHERE date = ?').run(dateB);
+  db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(dateB);
+  deleteAllocationForDate(dateB);
+
+  // Ali and Bob are assigned accounts
+  setupOpeningOrder(dateB, 'ORD-B1', 'ALPHA_STORE', 'New', 1);
+  setupOpeningOrder(dateB, 'ORD-B2', 'BETA_STORE', 'New', 1);
+  setupManualAllocation(dateB, empAli.id, 'ALPHA_STORE', 'New');
+  setupManualAllocation(dateB, empBob.id, 'BETA_STORE', 'New');
+
+  // Only Ali works; Bob has zero activity in daily log!
+  persistDailyLogRecords(dateB, null, [
+    { order: 'ORD-B1', name: empAli.name, act: 'طباعة الطلب', st: 'Printed', dt: new Date('2026-11-02T10:00:00Z'), isCS: true }
+  ]);
+
+  assert.strictEqual(isDailyLogUploaded(dateB), true, 'Scenario B: Log IS uploaded');
+
+  // Bob has assigned account BETA_STORE, but 0 actions logged
+  const empTrackBobB = getEmployeeTracking(dateB, empBob.id);
+  assert.strictEqual(empTrackBobB.daily_log_uploaded, true);
+  assert.strictEqual(empTrackBobB.orders_worked_today, 0, 'Scenario B: Bob worked 0 orders');
+  assert.strictEqual(empTrackBobB.real_actions, 0, 'Scenario B: Bob has 0 real actions');
+  assert.strictEqual(empTrackBobB.allocation_compliance, null, 'Scenario B: Zero activity compliance must be null (NOT 100%!)');
+  assert.strictEqual(empTrackBobB.allocation_compliance_label, 'N/A', 'Scenario B: Zero activity compliance must be N/A');
+  assert.strictEqual(empTrackBobB.status_message, 'Log Uploaded — No Activity Recorded');
+
+  // ============================================================
+  // SCENARIO C: Assigned vs Actually Worked Alignment (100% Compliance)
+  // ============================================================
+  // Ali worked on ORD-B1 which belongs to ALPHA_STORE (his assigned account)
+  const empTrackAliB = getEmployeeTracking(dateB, empAli.id);
+  assert.strictEqual(empTrackAliB.orders_worked_today, 1);
+  assert.strictEqual(empTrackAliB.real_actions, 1);
+  assert.strictEqual(empTrackAliB.orders_worked_outside_allocation, 0);
+  assert.strictEqual(empTrackAliB.allocation_compliance, 100);
+  assert.strictEqual(empTrackAliB.allocation_compliance_label, '100%');
+  assert.strictEqual(empTrackAliB.outside_allocation.has_unassigned_activity, false);
+  assert.deepStrictEqual(empTrackAliB.actually_worked_accounts, ['ALPHA_STORE']);
+  assert.deepStrictEqual(empTrackAliB.extra_accounts_worked, []);
+
+  // ============================================================
+  // SCENARIO D: Outside Allocation Detection (Manual allocation preserved)
+  // ============================================================
+  const dateD = '2026-11-03';
+  db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(dateD);
+  db.prepare('DELETE FROM performance_snapshots WHERE date = ?').run(dateD);
+  db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(dateD);
+  deleteAllocationForDate(dateD);
+
+  setupOpeningOrder(dateD, 'ORD-D1', 'ALPHA_STORE', 'New', 1);
+  setupOpeningOrder(dateD, 'ORD-D2', 'EXTRA_STORE', 'New', 1);
+  // Clara is manually assigned ONLY ALPHA_STORE
+  setupManualAllocation(dateD, empClara.id, 'ALPHA_STORE', 'New');
+
+  // Clara touches ORD-D1 (in ALPHA_STORE) AND ORD-D2 (in EXTRA_STORE - unassigned!)
+  persistDailyLogRecords(dateD, null, [
+    { order: 'ORD-D1', name: empClara.name, act: 'طباعة الطلب', st: 'Printed', dt: new Date('2026-11-03T10:00:00Z'), isCS: true },
+    { order: 'ORD-D2', name: empClara.name, act: 'طباعة الطلب', st: 'Printed', dt: new Date('2026-11-03T11:00:00Z'), isCS: true }
+  ]);
+
+  const empTrackClaraD = getEmployeeTracking(dateD, empClara.id);
+  assert.strictEqual(empTrackClaraD.orders_worked_today, 2);
+  assert.strictEqual(empTrackClaraD.real_actions, 2);
+  assert.strictEqual(empTrackClaraD.orders_worked_outside_allocation, 1);
+  assert.strictEqual(empTrackClaraD.allocation_compliance, 50);
+  assert.strictEqual(empTrackClaraD.allocation_compliance_label, '50%');
+  assert.strictEqual(empTrackClaraD.outside_allocation.has_unassigned_activity, true);
+  assert.deepStrictEqual(empTrackClaraD.extra_accounts_worked, ['EXTRA_STORE']);
+
+  // CRITICAL: Manual allocation must NOT be modified
+  const currentAllocD = getAllocationForDate(dateD);
+  const claraAlloc = currentAllocD.items.find(a => a.employee_id === empClara.id);
+  assert.strictEqual(claraAlloc.account, 'ALPHA_STORE', 'CRITICAL: Original manual allocation is never modified automatically');
+
+  // ============================================================
+  // SCENARIO E: Team-Level Summary Aggregates
+  // ============================================================
+  const teamSumD = getTeamTrackingSummary(dateD);
+  assert.strictEqual(teamSumD.daily_log_uploaded, true);
+  assert.strictEqual(teamSumD.team_kpis.employees_with_activity, 1, 'Only Clara was active');
+  assert.strictEqual(teamSumD.team_kpis.total_orders_worked_today, 2);
+  assert.strictEqual(teamSumD.team_kpis.total_real_actions, 2);
+  assert.strictEqual(teamSumD.team_kpis.outside_allocation_accounts, 1, '1 outside account worked');
+
+  const claraInTeamD = teamSumD.employees.find(e => e.employee_id === empClara.id);
+  assert.strictEqual(claraInTeamD.has_outside_activity, true);
+  assert.strictEqual(claraInTeamD.extra_accounts_count, 1);
+  assert.strictEqual(claraInTeamD.allocation_compliance, 50);
+
+  // ============================================================
+  // SCENARIO F: Multi-Action Order Deduplication & Accurate Orders Worked
+  // ============================================================
+  const dateF = '2026-11-04';
+  db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(dateF);
+  db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(dateF);
+  deleteAllocationForDate(dateF);
+
+  setupOpeningOrder(dateF, 'ORD-MULTI-1', 'ALPHA_STORE', 'New', 1);
+  setupManualAllocation(dateF, empAli.id, 'ALPHA_STORE', 'New');
+
+  // Ali performs 3 actions on the SAME order:
+  // 1. t=0: Printed
+  // 2. t=20s: Printed (duplicate within 120s window -> should be filtered by deduplication)
+  // 3. t=300s: Pending (distinct action 5 minutes later -> should be 2nd real action)
+  persistDailyLogRecords(dateF, null, [
+    { order: 'ORD-MULTI-1', name: empAli.name, act: 'حالة الطلب إلى Printed', st: 'Printed', dt: new Date('2026-11-04T10:00:00Z'), isCS: true },
+    { order: 'ORD-MULTI-1', name: empAli.name, act: 'حالة الطلب إلى Printed', st: 'Printed', dt: new Date('2026-11-04T10:00:20Z'), isCS: true },
+    { order: 'ORD-MULTI-1', name: empAli.name, act: 'حالة الطلب إلى Pending', st: 'Pending', dt: new Date('2026-11-04T10:05:00Z'), isCS: true }
+  ]);
+
+  const empTrackAliF = getEmployeeTracking(dateF, empAli.id);
+  assert.strictEqual(empTrackAliF.orders_worked_today, 1, 'Scenario F: Orders Worked Today must be exactly 1 unique order');
+  assert.strictEqual(empTrackAliF.real_actions, 2, 'Scenario F: Real actions must be exactly 2 after 120s deduplication');
+  assert.strictEqual(empTrackAliF.allocation_compliance, 100, 'Scenario F: Compliance is 100%');
+
+  // Cleanup test records
+  db.prepare('DELETE FROM raw_log_records WHERE work_date IN (?, ?, ?, ?)').run(dateA, dateB, dateD, dateF);
+  db.prepare('DELETE FROM current_work_orders WHERE work_date IN (?, ?, ?, ?)').run(dateA, dateB, dateD, dateF);
+  db.prepare('DELETE FROM employees WHERE id IN (?, ?, ?)').run(empAli.id, empBob.id, empClara.id);
+  deleteAllocationForDate(dateA);
+  deleteAllocationForDate(dateB);
+  deleteAllocationForDate(dateD);
+  deleteAllocationForDate(dateF);
+
+  console.log('✓ PASS: Test 16 Scenarios A-F (Truth-Telling Tracking & Daily Employee Summary) verified.');
 }
 
 console.log('--- ALL REGRESSION TESTS PASSED SUCCESSFULLY! ---');

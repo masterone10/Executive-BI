@@ -1,6 +1,7 @@
 import XLSX from 'xlsx';
 import fs from 'fs';
 import path from 'path';
+import { isCSName, normalizeEmployeeName, matchEmployeeInMaster } from './services/parser.js';
 
 const DEDUP_WINDOW_SEC = 120;
 const DEDUP_WINDOW_MS = DEDUP_WINDOW_SEC * 1000;
@@ -9,10 +10,6 @@ const KNOWN_STATUSES = new Set(['Printed', 'Pending', 'Canceled', 'Cancelled', '
 const STATUS_RE = /(?:الى|إلى)\s*'?([A-Za-z][A-Za-z ]*?)'?\s*$/;
 const ADDED_RE = /أضاف\s*ا?أ?وردر|اضاف\s*ا?أ?وردر/;
 const ALT_RE = /التليفون البديل|رقم بديل|هاتف بديل/;
-
-function isCSName(name) {
-  return String(name || '').trim().toLowerCase().endsWith('cs');
-}
 
 function pct(n, d) {
   return d ? +(n / d * 100).toFixed(1) : 0;
@@ -235,8 +232,22 @@ export function buildPayload(filePath) {
     }));
 
   const aa = Object.entries(addedAll)
-    .map(([name, v]) => ({ name, value: v, is_cs: isCSName(name) }))
+    .map(([name, v]) => ({ name, employee: name, value: v, count: v, is_cs: isCSName(name) }))
     .sort((a, b) => b.value - a.value);
+
+  const csContributorsAll = Object.entries(addedAll)
+    .filter(([name]) => isCSName(name))
+    .map(([name, v]) => ({
+      name,
+      employee: name,
+      value: v,
+      count: v,
+      is_cs: true,
+    }))
+    .sort((a, b) => b.value - a.value);
+
+  const topCSContributors = csContributorsAll.slice(0, 15);
+  const topCSContributor = topCSContributors[0] || null;
 
   // Daily trend
   const byday = {};
@@ -390,6 +401,21 @@ export function buildPayload(filePath) {
     added_all_top: aa.slice(0, 15),
     added_cs: addedCS,
     added_noncs: addedNon,
+    fromCS: addedCS,
+    fromOtherDepartments: addedNon,
+    topCSContributor,
+    topCSContributors,
+    allCSContributors: csContributorsAll,
+    addedOrders: {
+      totalAdded: addedCS + addedNon,
+      totalAddedCS: addedCS,
+      totalAddedNonCS: addedNon,
+      fromCS: addedCS,
+      fromOtherDepartments: addedNon,
+      topCSContributor,
+      topCSContributors,
+      allCSContributors: csContributorsAll,
+    },
     status_totals: {
       Printed: T.printed,
       Pending: T.pending,

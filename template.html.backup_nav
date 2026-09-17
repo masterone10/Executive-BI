@@ -183,51 +183,6 @@ tbody tr:hover{background:var(--panel2)}
 input:checked + .slider{background-color:var(--green)}
 input:checked + .slider:before{transform:translateX(16px)}
 
-/* SUBNAV TABS STYLES */
-.subnav-tabs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 6px 8px;
-  margin-bottom: 20px;
-  box-shadow: var(--shadow);
-  overflow-x: auto;
-  flex-wrap: wrap;
-}
-.subnav-tab {
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--slate);
-  cursor: pointer;
-  background: transparent;
-  border: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  transition: all 0.15s ease;
-  white-space: nowrap;
-}
-.subnav-tab:hover {
-  background: var(--panel2);
-  color: var(--ink);
-}
-.subnav-tab.active {
-  background: var(--navy);
-  color: #fff;
-  box-shadow: 0 2px 6px rgba(30, 58, 138, 0.25);
-}
-.subnav-tab .badge {
-  font-size: 10.5px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.2);
-}
-
 @media(max-width:1100px){
   .kpis{grid-template-columns:repeat(2,1fr)}
   .g2,.g2e,.g3{grid-template-columns:1fr}
@@ -250,12 +205,40 @@ input:checked + .slider:before{transform:translateX(16px)}
       </div>
     </div>
     <nav class="nav">
-      <div class="lbl">Navigation</div>
-      <a class="active" data-p="dashboard" onclick="show('dashboard')"><span class="ic">📊</span> Dashboard</a>
-      <a data-p="operations" onclick="show('operations')"><span class="ic">⚡</span> Operations</a>
-      <a data-p="tracking" onclick="show('tracking')"><span class="ic">🛡️</span> Tracking</a>
-      <a data-p="management" onclick="show('management')"><span class="ic">⚙️</span> Management</a>
-      <a data-p="performance" onclick="show('performance')"><span class="ic">📈</span> Performance</a>
+      <div class="lbl">Overview</div>
+      <a class="active" data-p="overview"><span class="ic">▤</span> Executive Overview</a>
+      <a data-p="daily"><span class="ic">📈</span> Daily Trend</a>
+
+      <div class="lbl">Work Allocation</div>
+      <a data-p="work-allocation"><span class="ic">📋</span> Work Allocation</a>
+      <a data-p="account-config"><span class="ic">⚡</span> Account Configuration</a>
+      <a data-p="allocation-history"><span class="ic">⏳</span> Allocation History</a>
+      <a data-p="current-orders"><span class="ic">📦</span> Current Orders Pool</a>
+
+      <div class="lbl">Tracking & Auditing</div>
+      <a data-p="tracking-overview"><span class="ic">🛡️</span> Tracking Overview</a>
+      <a data-p="accounts"><span class="ic">📑</span> Accounts Directory</a>
+      <a data-p="employee-tracking"><span class="ic">👤</span> Employee Reality</a>
+      <a data-p="order-tracking"><span class="ic">🔍</span> Order Tracking</a>
+      <a data-p="tracking-audit"><span class="ic">📋</span> Quality & Audit</a>
+
+      <div class="lbl">Team Management</div>
+      <a data-p="team-setup"><span class="ic">⚙️</span> Team Setup</a>
+      <a data-p="working-team"><span class="ic">👥</span> Today's Working Team</a>
+      <a data-p="team-members"><span class="ic">⚙</span> Employee Master</a>
+
+      <div class="lbl">Performance Analysis</div>
+      <a data-p="scorecard"><span class="ic">★</span> Scorecard</a>
+      <a data-p="employees"><span class="ic">◉</span> Employee Profiles</a>
+      <a data-p="cancel"><span class="ic">✕</span> Cancellation Analysis</a>
+      <a data-p="pending"><span class="ic">⏳</span> Pending Analysis</a>
+      <a data-p="printed"><span class="ic">✓</span> Printed Analysis</a>
+      <a data-p="phone"><span class="ic">☎</span> Alt Phone Analysis</a>
+      <a data-p="orders"><span class="ic">＋</span> Added Orders</a>
+
+      <div class="lbl">Intelligence & Data</div>
+      <a data-p="insights"><span class="ic">◈</span> Executive Insights</a>
+      <a data-p="data"><span class="ic">▦</span> Detailed Data</a>
     </nav>
     <div class="foot">
       Deduplicated · SQLite Persistent<br>
@@ -299,18 +282,13 @@ input:checked + .slider:before{transform:translateX(16px)}
       </div>
 
       <div class="actions">
-        <label class="btn primary" for="universalAutoUploadInput" title="Auto-detect Business Date & File Type (New, Pending, or Daily Log) without manual sorting" style="background:linear-gradient(135deg,var(--blue),var(--purple));border:none">
-          ⚡ Auto-Detect Upload
-        </label>
-        <input class="file-in" type="file" id="universalAutoUploadInput" multiple accept=".xlsx,.xls" style="display:none" onchange="handleUniversalAutoUpload(this)">
-
-        <label class="btn" for="dailyLogInput" title="Upload Daily Log (.xlsx) at end of day to record performance snapshot">
-          ⭱ Daily Log
+        <label class="btn primary" for="dailyLogInput" title="Upload Daily Log (.xlsx) at end of day to record performance snapshot">
+          ⭱ Import Daily Log
         </label>
         <input class="file-in" type="file" id="dailyLogInput" accept=".xlsx,.xls" style="display:none" onchange="uploadDailyLog(this)">
 
         <label class="btn" for="specificOrdersInput" title="Upload Specific Orders (.xlsx) to update active accounts and manual work pool">
-          ⭱ Specific Orders
+          ⭱ Import Specific Orders
         </label>
         <input class="file-in" type="file" id="specificOrdersInput" accept=".xlsx,.xls" style="display:none" onchange="uploadSpecificOrders(this)">
 
@@ -609,7 +587,7 @@ async function loadWorkAllocationData() {
   try {
     const [overviewRes, accRes, teamRes, allocRes] = await Promise.all([
       apiFetch(`/api/work/current?date=${currentWorkDate}`),
-      apiFetch(`/api/work/accounts-detailed?date=${currentWorkDate}`),
+      apiFetch(`/api/work/accounts?date=${currentWorkDate}`),
       apiFetch(`/api/working-team/${currentWorkDate}`),
       apiFetch(`/api/allocations/${currentWorkDate}`).catch(() => ({ exists: false, items: [] }))
     ]);
@@ -651,7 +629,7 @@ async function loadWorkAllocationData() {
   }
 }
 
-let workAllocViewMode = 'accounts'; // Default to Account Cards as primary daily workspace
+let workAllocViewMode = 'agents'; // 'agents' or 'accounts'
 let currentOrderLevelAllocation = null;
 
 function setWorkAllocViewMode(mode) {
@@ -663,29 +641,6 @@ function setWorkAllocViewMode(mode) {
   renderWorkAllocationUI(overview);
 }
 
-async function copyAllEmployeesDirect() {
-  try {
-    const res = await apiFetch(`/api/allocations/${currentWorkDate}/copy-text?format=all_employees`);
-    if (res && res.text) {
-      await navigator.clipboard.writeText(res.text);
-      showToast('📋 Copied All Employees!', 'One combined allocation message ready to paste into WhatsApp, Teams, or Slack.');
-    } else {
-      showToast('⚠️ No Allocation Saved', 'Generate or save an allocation before copying.');
-    }
-  } catch (err) {
-    alert('Failed to copy all employees: ' + err.message);
-  }
-}
-
-async function copySelectedEmployeeDirect() {
-  openCopyModal();
-  const fmt = document.getElementById('copyModalFormatSelect');
-  if (fmt) {
-    fmt.value = 'single_employee';
-    refreshCopyPreview();
-  }
-}
-
 function renderWorkAllocationUI(overview) {
   const container = document.getElementById('workAllocContainer');
   if (!container) return;
@@ -694,15 +649,6 @@ function renderWorkAllocationUI(overview) {
   const accCount = overview ? (overview.accounts_count || currentAccountsList.length) : currentAccountsList.length;
   const teamCount = todayWorkingEmployees.length;
 
-  // Calculate new and pending counts from active work pool
-  let newOrdersPool = 0, penOrdersPool = 0;
-  if (Array.isArray(currentAccountsList)) {
-    currentAccountsList.forEach(a => {
-      newOrdersPool += (a.new_orders || 0);
-      penOrdersPool += (a.pending_orders || 0);
-    });
-  }
-
   let html = `
     <div class="alloc-bar">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -710,24 +656,22 @@ function renderWorkAllocationUI(overview) {
         <input type="date" class="date-in" id="allocDateInput" value="${currentWorkDate}" onchange="changeAllocDate(this.value)">
       </div>
       <div class="alloc-stats">
-        <div class="alloc-stat">👥 Today's CS Team: <b>${teamCount} Working</b></div>
-        <div class="alloc-stat">🏢 Active Accounts: <b>${accCount} Accounts</b></div>
-        <div class="alloc-stat">📦 Work Pool: <b>${fmt(totalOrders)} Orders</b> ${newOrdersPool > 0 || penOrdersPool > 0 ? `(${fmt(newOrdersPool)} New · ${fmt(penOrdersPool)} Pending)` : ''}</div>
+        <div class="alloc-stat">Today's CS Team: <b>${teamCount} Agents</b></div>
+        <div class="alloc-stat">Active Accounts: <b>${accCount} Accounts</b></div>
+        <div class="alloc-stat">Work Pool: <b>${fmt(totalOrders)} Orders</b></div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         <!-- View Mode Switch -->
         <div style="display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#F8FAFC;margin-right:6px">
-          <button class="btn sm ${workAllocViewMode === 'accounts' ? 'primary' : ''}" style="border-radius:0;border:none;padding:5px 10px;font-size:11.5px" onclick="setWorkAllocViewMode('accounts')">📦 Account Cards</button>
-          <button class="btn sm ${workAllocViewMode === 'agents' ? 'primary' : ''}" style="border-radius:0;border:none;padding:5px 10px;font-size:11.5px" onclick="setWorkAllocViewMode('agents')">👥 Agent Cards</button>
+          <button class="btn sm ${workAllocViewMode === 'agents' ? 'primary' : ''}" style="border-radius:0;border:none;padding:5px 10px;font-size:11.5px" onclick="setWorkAllocViewMode('agents')">👥 By CS Agent</button>
+          <button class="btn sm ${workAllocViewMode === 'accounts' ? 'primary' : ''}" style="border-radius:0;border:none;padding:5px 10px;font-size:11.5px" onclick="setWorkAllocViewMode('accounts')">📦 By Account</button>
         </div>
 
-        <!-- Smart Allocation Engine Action Buttons -->
+        <!-- Smart Allocation Engine Buttons -->
         <button class="btn primary" onclick="runAutoFairAllocation(false)" title="Distributes work fairly. Preserves existing allocations if any.">⚡ Auto Fair Allocation</button>
         <button class="btn sm" onclick="confirmRegenerateAllocation()" title="Wipe current assignments and distribute from scratch" style="background:#FFF1F2;color:#BE123C;border-color:#FECDD3">🔄 Re-allocate All</button>
-        <button class="btn sm" onclick="copyAllEmployeesDirect()" style="background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE" title="Copy combined WhatsApp/Teams message for the entire group">📋 Copy All Employees</button>
-        <button class="btn sm" onclick="copySelectedEmployeeDirect()" style="background:#F8FAFC;color:var(--slate)" title="Copy allocation for a specific CS agent">👤 Copy Selected</button>
-        <button class="btn sm" onclick="openOrderLevelModal()" style="background:#F0FDF4;color:#15803D;border-color:#BBF7D0">🔍 View & Override Orders</button>
-        <a class="btn sm" href="/api/allocations/${currentWorkDate}/export-zip" download style="background:#FAF5FF;color:#7C3AED;border-color:#E9D5FF;text-decoration:none" title="Download ZIP containing individual Excel sheets per CS employee">⭳ Export ZIP</a>
+        <button class="btn sm" onclick="openOrderLevelModal()" style="background:#F0FDF4;color:#15803D;border-color:#BBF7D0">🔍 Order Details</button>
+        <button class="btn sm" onclick="openCopyModal()">📋 Copy Allocation</button>
         <button class="btn success sm" onclick="saveManualAllocation()">💾 Save Allocation</button>
       </div>
     </div>
@@ -739,7 +683,7 @@ function renderWorkAllocationUI(overview) {
         <div style="font-size:28px;margin-bottom:8px">👥</div>
         <b style="font-size:15px;color:var(--ink)">No CS employees selected for today's working team yet</b>
         <p style="margin:6px 0 16px">Select the team members working on ${currentWorkDate} to start fair work distribution.</p>
-        <button class="btn primary" onclick="show('operations', 'working-team')">Manage Today's Working Team</button>
+        <button class="btn primary" onclick="show('working-team')">Manage Today's Working Team</button>
       </div>
     `;
     container.innerHTML = html;
@@ -752,130 +696,65 @@ function renderWorkAllocationUI(overview) {
         <div style="font-size:26px;margin-bottom:6px">📦</div>
         <b style="font-size:14px;color:var(--navy)">No Specific Orders uploaded for this date yet</b>
         <p style="margin:4px 0 14px;color:var(--slate)">Upload a Specific Orders Excel file (e.g. SpecificOrders.xlsx) to populate the accounts list and order queue.</p>
-        <button class="btn primary" onclick="show('operations', 'uploads')">⭱ Upload Specific Orders Now</button>
+        <label class="btn primary" for="specificOrdersInput">⭱ Upload Specific Orders Now</label>
       </div>
     `;
   }
 
   if (workAllocViewMode === 'accounts') {
     // -------------------------------------------------------------
-    // ACCOUNT CARDS PRIMARY VIEW (Grouped by Account & Status)
+    // ACCOUNT CARDS VIEW (Highlights ONE SMALL ACCOUNT → ONE EMPLOYEE)
     // -------------------------------------------------------------
     html += `<div class="alloc-grid">`;
-
-    // Extract all distinct (Account, Status) pairs from currentAccountsList and activeAllocations
-    const accountGroups = [];
+    
     currentAccountsList.forEach(acc => {
       const accName = typeof acc === 'string' ? acc : (acc.account || acc.account_name || 'Unknown');
-      const newCount = acc.new_orders || 0;
-      const penCount = acc.pending_orders || 0;
-      const totCount = acc.total_orders || (newCount + penCount) || 0;
-
-      if (newCount > 0 && penCount > 0) {
-        accountGroups.push({ account: accName, status: 'NEW', total_orders: newCount });
-        accountGroups.push({ account: accName, status: 'PENDING', total_orders: penCount });
-      } else if (newCount > 0) {
-        accountGroups.push({ account: accName, status: 'NEW', total_orders: newCount });
-      } else if (penCount > 0) {
-        accountGroups.push({ account: accName, status: 'PENDING', total_orders: penCount });
-      } else {
-        accountGroups.push({ account: accName, status: 'NEW', total_orders: totCount });
-      }
-    });
-
-    if (accountGroups.length === 0 && activeAllocations.length > 0) {
-      const seenAccStatus = new Set();
-      activeAllocations.forEach(a => {
-        const key = `${a.account}|${a.status}`;
-        if (!seenAccStatus.has(key)) {
-          seenAccStatus.add(key);
-          accountGroups.push({ account: a.account, status: a.status || 'NEW', total_orders: a.available_orders || 0 });
-        }
-      });
-    }
-
-    accountGroups.forEach(grp => {
-      const accName = grp.account;
-      const grpStatus = (grp.status || 'NEW').toUpperCase();
-      const isNew = grpStatus.includes('NEW');
-      const isPending = grpStatus.includes('PENDING');
-      
-      const accAssigned = activeAllocations.filter(a => 
-        a.account && a.account.toLowerCase() === accName.toLowerCase() &&
-        (!grp.status || (a.status || '').toUpperCase().includes(grpStatus) || (grpStatus.includes('NEW') && (a.status || '').toLowerCase().includes('new')) || (grpStatus.includes('PEN') && (a.status || '').toLowerCase().includes('pen')))
-      );
-
+      const accAssigned = activeAllocations.filter(a => a.account && a.account.toLowerCase() === accName.toLowerCase());
       const totalAssignedOrders = accAssigned.reduce((s, a) => s + (a.available_orders || 0), 0);
-      const displayTotalOrders = grp.total_orders || totalAssignedOrders;
-      const isSmallAccount = displayTotalOrders > 0 && displayTotalOrders < 30;
-      const unassignedOrders = Math.max(0, displayTotalOrders - totalAssignedOrders);
-
-      const statusTagBg = isNew ? '#DBEAFE' : isPending ? '#F3E8FF' : '#DCFCE7';
-      const statusTagCol = isNew ? '#1E40AF' : isPending ? '#6B21A8' : '#166534';
-      const borderTopCol = isSmallAccount ? '#10B981' : isNew ? '#2563EB' : '#7C3AED';
+      const isSmallAccount = totalAssignedOrders > 0 && totalAssignedOrders < 30;
 
       html += `
-        <div class="alloc-card" style="border-top:3px solid ${borderTopCol}">
-          <div class="head" style="background:#F8FAFC;justify-content:space-between">
-            <div style="display:flex;align-items:center;gap:10px">
-              <div class="av" style="background:${borderTopCol};color:#fff">${isSmallAccount ? '🎯' : '🏬'}</div>
-              <div>
-                <div class="title" style="font-size:15px;display:flex;align-items:center;gap:6px">
-                  ${escapeHtml(accName)}
-                  <span class="tag" style="background:${statusTagBg};color:${statusTagCol};font-weight:800;font-size:10px">${escapeHtml(grpStatus)}</span>
-                  ${isSmallAccount ? '<span class="tag" style="background:#DCFCE7;color:#15803D;font-size:10px;font-weight:700">1 Account → 1 CS</span>' : ''}
-                </div>
-                <div class="dept" style="margin-top:2px">
-                  <b>${fmt(displayTotalOrders)} Orders</b> · <b>${accAssigned.length} CS Assigned</b>
-                </div>
+        <div class="alloc-card" style="border-top:3px solid ${isSmallAccount ? '#10B981' : 'var(--blue)'}">
+          <div class="head" style="background:#F8FAFC">
+            <div class="av" style="background:${isSmallAccount ? '#10B981' : 'var(--navy)'};color:#fff">${isSmallAccount ? '🎯' : '🏢'}</div>
+            <div style="flex:1">
+              <div class="title" style="font-size:14px;display:flex;align-items:center;gap:6px">
+                ${escapeHtml(accName)}
+                ${isSmallAccount ? '<span class="tag" style="background:#DCFCE7;color:#15803D;font-size:10.5px;font-weight:700">1 Account → 1 CS</span>' : ''}
               </div>
-            </div>
-            <div>
-              <button class="btn sm" onclick="openOrderLevelModal('${escapeHtml(accName)}', '${escapeHtml(grpStatus)}')" style="background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE;font-weight:700">
-                🔍 View Orders
-              </button>
+              <div class="dept">Assigned Agents: <b>${accAssigned.length} CS</b> · Total Orders: <b>${totalAssignedOrders > 0 ? totalAssignedOrders : 'Pending distribution'}</b></div>
             </div>
           </div>
-
-          <div class="alloc-rows" style="padding:10px 14px">
+          <div class="alloc-rows" style="padding:12px 14px">
       `;
 
       if (accAssigned.length === 0) {
-        html += `
-          <div style="font-size:12px;color:var(--mut);padding:10px 0;text-align:center">
-            No CS agents assigned to ${escapeHtml(accName)} (${escapeHtml(grpStatus)}) yet.<br>
-            <button class="btn primary sm" style="margin-top:6px" onclick="runAutoFairAllocation(false)">⚡ Auto Fair Allocation</button>
-          </div>
-        `;
+        html += `<div style="font-size:12px;color:var(--mut);padding:8px 0">No CS agents assigned to this account yet. Click "Auto Fair Allocation" or switch to CS Agent view.</div>`;
       } else {
         html += `<div style="display:flex;flex-direction:column;gap:6px">`;
         accAssigned.forEach(assign => {
           const emp = todayWorkingEmployees.find(e => e.id === assign.employee_id);
           const empName = emp ? emp.name : `Agent #${assign.employee_id}`;
+          const isNew = (assign.status || '').toLowerCase().includes('new');
+          const isPen = (assign.status || '').toLowerCase().includes('pending');
+          const tagBg = isNew ? '#DBEAFE' : isPen ? '#F3E8FF' : '#DCFCE7';
+          const tagCol = isNew ? '#1E40AF' : isPen ? '#6B21A8' : '#166534';
           const ordCount = assign.available_orders || 0;
 
           html += `
             <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid var(--line);padding:8px 12px;border-radius:8px">
               <div style="display:flex;align-items:center;gap:8px">
-                <div class="av" style="width:26px;height:26px;font-size:11px;background:var(--panel2);color:var(--slate)">${initials(empName)}</div>
-                <b style="font-size:13px;color:var(--ink)">${escapeHtml(empName)}</b>
+                <div class="av" style="width:24px;height:24px;font-size:10px">${initials(empName)}</div>
+                <b style="font-size:12.5px">${escapeHtml(empName)}</b>
               </div>
               <div style="display:flex;align-items:center;gap:8px">
-                <span style="font-size:13px;font-weight:800;color:var(--navy);background:#EFF6FF;padding:3px 8px;border-radius:6px">${ordCount} Orders</span>
+                <span class="tag" style="background:${tagBg};color:${tagCol};font-weight:700;font-size:11px">${escapeHtml(assign.status || 'Active')}</span>
+                <span style="font-size:12px;font-weight:700;color:var(--ink)">${ordCount ? ordCount + ' orders' : ''}</span>
               </div>
             </div>
           `;
         });
         html += `</div>`;
-      }
-
-      if (unassignedOrders > 0 && accAssigned.length > 0) {
-        html += `
-          <div style="margin-top:6px;padding:6px 10px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;font-size:11.5px;color:#92400E;display:flex;justify-content:space-between;align-items:center">
-            <span>⚠️ <b>${unassignedOrders} orders</b> unassigned</span>
-            <button class="btn sm" onclick="runAutoFairAllocation(false)" style="padding:2px 6px;font-size:10.5px">Distribute</button>
-          </div>
-        `;
       }
 
       html += `
@@ -887,7 +766,7 @@ function renderWorkAllocationUI(overview) {
     html += `</div>`;
   } else {
     // -------------------------------------------------------------
-    // CS AGENT CARDS VIEW (By CS Employee)
+    // CS AGENT CARDS VIEW (DEFAULT - Shows Account count & Order count)
     // -------------------------------------------------------------
     html += `<div class="alloc-grid">`;
 
@@ -1249,55 +1128,27 @@ async function copyAllocationText(format = 'standard') {
 // ORDER-LEVEL AUDIT & MANUAL OVERRIDE MODAL
 // -------------------------------------------------------------
 let orderLevelModalData = null;
-let orderLevelTargetAccount = '';
-let orderLevelTargetStatus = '';
 
-async function openOrderLevelModal(targetAcc = '', targetStatus = '') {
+async function openOrderLevelModal() {
   const modal = document.getElementById('orderLevelModal');
   if (!modal) return;
 
-  orderLevelTargetAccount = targetAcc || '';
-  orderLevelTargetStatus = targetStatus || '';
-
   modal.style.display = 'flex';
   const content = document.getElementById('orderLevelModalContent');
-  if (content) content.innerHTML = '<div style="text-align:center;padding:40px;color:var(--slate)"><div class="spin" style="margin-bottom:12px">⏳</div>Loading orders from database...</div>';
+  if (content) content.innerHTML = '<div style="text-align:center;padding:40px;color:var(--slate)"><div class="spin" style="margin-bottom:12px">⏳</div>Loading order-level allocations...</div>';
 
   try {
-    // 1. Try fetching saved order-level allocations first
-    let res = await apiFetch(`/api/allocations/${currentWorkDate}/order-level`).catch(() => null);
-
-    if (res && res.orders && res.orders.length > 0) {
-      orderLevelModalData = res;
-    } else {
-      // 2. Fallback to current work orders pool from database
-      const poolOrders = await apiFetch(`/api/orders/current/${currentWorkDate}?account=${encodeURIComponent(targetAcc || '')}&status=${encodeURIComponent(targetStatus || '')}&limit=1000`);
-      orderLevelModalData = {
-        date: currentWorkDate,
-        is_staged_pool: true,
-        orders: (poolOrders.orders || []).map(o => ({
-          order_code: o.order_code,
-          account: o.account,
-          status: o.status,
-          employee_name: 'Unassigned (Staged in Pool)',
-          employee_id: null,
-          source_file_slot: o.source_file_slot,
-          method: 'Staged · Ready for Allocation',
-          is_override: false,
-          is_staged: true
-        }))
-      };
-    }
-
+    const res = await apiFetch(`/api/allocations/${currentWorkDate}/order-level`);
+    orderLevelModalData = res;
     renderOrderLevelModalTable();
   } catch (err) {
     if (content) {
       content.innerHTML = `
         <div style="text-align:center;padding:30px;color:var(--slate)">
           <div style="font-size:32px;margin-bottom:8px">📦</div>
-          <b style="color:var(--ink)">No Orders Found in Pool</b>
-          <p style="font-size:12.5px;margin:6px 0 16px">${escapeHtml(err.message || 'No orders found for this account.')}</p>
-          <button class="btn primary sm" onclick="closeOrderLevelModal();show('operations', 'uploads')">⭱ Upload Specific Orders</button>
+          <b style="color:var(--ink)">No Order-Level Allocation Stored Yet</b>
+          <p style="font-size:12.5px;margin:6px 0 16px">Click "⚡ Auto Fair Allocation" on the main screen to generate and assign individual order codes.</p>
+          <button class="btn primary sm" onclick="closeOrderLevelModal();runAutoFairAllocation(false)">⚡ Generate Fair Allocation Now</button>
         </div>
       `;
     }
@@ -1315,8 +1166,7 @@ function renderOrderLevelModalTable() {
 
   const orders = orderLevelModalData.orders || [];
   const search = (document.getElementById('orderLevelSearch')?.value || '').toLowerCase().trim();
-  const accFilterElem = document.getElementById('orderLevelAccFilter');
-  const accFilter = accFilterElem ? accFilterElem.value : orderLevelTargetAccount;
+  const accFilter = document.getElementById('orderLevelAccFilter')?.value || '';
   const empFilter = document.getElementById('orderLevelEmpFilter')?.value || '';
 
   const filtered = orders.filter(o => {
@@ -1327,25 +1177,14 @@ function renderOrderLevelModalTable() {
   });
 
   const empOptions = todayWorkingEmployees.map(e => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join('');
-  const allAccounts = Array.from(new Set(orders.map(o => o.account))).filter(Boolean);
 
   let html = `
-    ${orderLevelModalData.is_staged_pool ? `
-      <div style="background:#ECFDF5;border:1px solid #A7F3D0;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
-        <div>
-          <b style="color:#065F46;font-size:13px">📦 Staged Pool Orders (Ready for Allocation)</b>
-          <p style="margin:2px 0 0;font-size:11.5px;color:#047857">These orders are live in the database. Click "⚡ Generate Fair Allocation" to assign them across the working team.</p>
-        </div>
-        <button class="btn primary sm" onclick="closeOrderLevelModal();runAutoFairAllocation(false)">⚡ Auto Fair Allocation</button>
-      </div>
-    ` : ''}
-
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <input type="text" id="orderLevelSearch" placeholder="Search order code or agent..." value="${escapeHtml(search)}" oninput="renderOrderLevelModalTable()" style="padding:6px 12px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;min-width:180px">
+        <input type="text" id="orderLevelSearch" placeholder="Search order code or agent..." value="${escapeHtml(search)}" oninput="renderOrderLevelModalTable()" style="padding:6px 12px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;min-width:200px">
         <select id="orderLevelAccFilter" onchange="renderOrderLevelModalTable()" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px">
-          <option value="">All Accounts (${allAccounts.length})</option>
-          ${allAccounts.map(a => `<option value="${escapeHtml(a)}" ${a === accFilter ? 'selected' : ''}>${escapeHtml(a)}</option>`).join('')}
+          <option value="">All Accounts</option>
+          ${Array.from(new Set(orders.map(o => o.account))).map(a => `<option value="${escapeHtml(a)}" ${a === accFilter ? 'selected' : ''}>${escapeHtml(a)}</option>`).join('')}
         </select>
         <select id="orderLevelEmpFilter" onchange="renderOrderLevelModalTable()" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px">
           <option value="">All Agents</option>
@@ -1365,16 +1204,13 @@ function renderOrderLevelModalTable() {
             <th>Order Code</th>
             <th>Account</th>
             <th>Status</th>
-            <th>Source</th>
             <th>Assigned Agent</th>
             <th>Method / Rule</th>
             <th style="text-align:right">Override</th>
           </tr>
         </thead>
         <tbody>
-          ${filtered.length === 0 ? `
-            <tr><td colspan="8" style="text-align:center;padding:24px;color:var(--mut)">No orders match your filter criteria.</td></tr>
-          ` : filtered.map((ord, idx) => {
+          ${filtered.map((ord, idx) => {
             const isNew = (ord.status || '').toLowerCase().includes('new');
             const statusBg = isNew ? '#DBEAFE' : '#F3E8FF';
             const statusCol = isNew ? '#1E40AF' : '#6B21A8';
@@ -1384,7 +1220,6 @@ function renderOrderLevelModalTable() {
                 <td><b style="font-family:monospace;font-size:12px">${escapeHtml(ord.order_code)}</b></td>
                 <td><b>${escapeHtml(ord.account)}</b></td>
                 <td><span class="tag" style="background:${statusBg};color:${statusCol};font-weight:700">${escapeHtml(ord.status)}</span></td>
-                <td><span class="tag" style="background:var(--panel2);color:var(--slate);font-size:10px">${ord.source_file_slot ? `Slot #${ord.source_file_slot}` : 'Pool'}</span></td>
                 <td>
                   <span style="font-weight:700;color:var(--ink)">${escapeHtml(ord.employee_name || 'UNASSIGNED')}</span>
                   ${ord.is_override ? '<span class="tag" style="background:#FEF3C7;color:#D97706;font-size:10px;margin-left:4px">Manual Override</span>' : ''}
@@ -2579,1602 +2414,8 @@ async function deleteAccountExceptionPrompt(id) {
 }
 
 // -------------------------------------------------------------
-// 2B. VENDOOR INTEGRATION & PRODUCTIVITY ENGINE (Phase 2)
+// 3. ACCOUNTS DIRECTORY VIEW (Date-Aware Reporting & Audit)
 // -------------------------------------------------------------
-let vendoorStatusData = null;
-let vendoorHistoryData = [];
-let vendoorSyncHistoryData = [];
-let vendoorIdentityQueueData = { items: [] };
-let vendoorProductivityData = { profiles: [] };
-let vendoorMasterEmployeesList = [];
-let vendoorActiveTestResult = null;
-let vendoorActiveSyncResult = null;
-let currentVendoorSubTab = 'sync'; // 'sync' | 'identity' | 'productivity' | 'probes'
-
-async function loadVendoorIntegrationView() {
-  const container = document.getElementById('vendoorIntegrationContainer');
-  if (!container) return;
-
-  try {
-    const [statusRes, historyRes, syncHistRes, identRes, prodRes, empRes] = await Promise.all([
-      apiFetch('/api/integrations/vendoor/status').catch(e => ({ success: false, error: e.message })),
-      apiFetch('/api/integrations/vendoor/history').catch(e => ({ success: false, history: [] })),
-      apiFetch('/api/integrations/vendoor/sync/history').catch(e => ({ success: false, runs: [] })),
-      apiFetch('/api/integrations/vendoor/identity/queue').catch(e => ({ success: false, items: [] })),
-      apiFetch(`/api/integrations/vendoor/productivity?date=${currentWorkDate}`).catch(e => ({ success: false, profiles: [] })),
-      apiFetch('/api/employees').catch(() => [])
-    ]);
-
-    vendoorStatusData = statusRes;
-    vendoorHistoryData = Array.isArray(historyRes?.history) ? historyRes.history : [];
-    vendoorSyncHistoryData = Array.isArray(syncHistRes?.runs) ? syncHistRes.runs : [];
-    vendoorIdentityQueueData = identRes || { items: [] };
-    vendoorProductivityData = prodRes || { profiles: [] };
-    vendoorMasterEmployeesList = Array.isArray(empRes) ? empRes : (Array.isArray(allEmployeesMaster) ? allEmployeesMaster : []);
-
-    renderVendoorIntegrationUI();
-  } catch (err) {
-    console.error('Error loading Vendoor view:', err);
-    container.innerHTML = `
-      <div class="panel" style="text-align:center;padding:40px 20px">
-        <div style="font-size:36px;margin-bottom:12px">⚠️</div>
-        <h3 style="margin:0 0 8px 0;color:var(--ink)">Failed to load Vendoor Integration Suite</h3>
-        <p style="color:var(--mut);font-size:13px">${escapeHtml(err.message || 'Unknown error')}</p>
-        <button class="btn primary" onclick="loadVendoorIntegrationView()">↻ Retry</button>
-      </div>
-    `;
-  }
-}
-
-function setVendoorSubTab(tab) {
-  currentVendoorSubTab = tab;
-  renderVendoorIntegrationUI();
-}
-
-function renderVendoorIntegrationUI() {
-  const container = document.getElementById('vendoorIntegrationContainer');
-  if (!container) return;
-
-  const st = vendoorStatusData || {};
-  const isEnabled = Boolean(st.enabled);
-  const isMock = Boolean(st.mock_mode);
-  const authMethod = st.auth_method || 'NONE';
-  const hasCreds = Boolean(st.has_credentials);
-
-  const queueItems = Array.isArray(vendoorIdentityQueueData?.items) ? vendoorIdentityQueueData.items : [];
-  const unmatchedCount = queueItems.filter(q => q.status === 'UNMATCHED' || q.status === 'NEEDS_REVIEW').length;
-  const prodProfiles = Array.isArray(vendoorProductivityData?.profiles) ? vendoorProductivityData.profiles : [];
-
-  let html = `
-    <!-- Top Explanatory Banner -->
-    <div style="background:linear-gradient(135deg, #1E1B4B, #312E81);color:#fff;border-radius:14px;padding:18px 22px;margin-bottom:20px;display:flex;align-items:center;gap:16px;box-shadow:var(--shadow)">
-      <div style="width:48px;height:48px;border-radius:12px;background:rgba(255,255,255,0.15);display:grid;place-items:center;font-size:24px">🔌</div>
-      <div style="flex:1">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap">
-          <b style="font-size:16px">Vendoor Web Integration & Productivity Engine</b>
-          <span class="tag" style="background:${isEnabled ? '#DCFCE7' : (isMock ? '#FEF3C7' : '#FEE2E2')};color:${isEnabled ? '#15803D' : (isMock ? '#B45309' : '#991B1B')};font-weight:800;font-size:11px">
-            ${isEnabled ? '✓ LIVE ENABLED' : (isMock ? '⚡ MOCK ADAPTER ACTIVE' : '✕ DISABLED IN CONFIG')}
-          </span>
-          <span class="tag" style="background:rgba(255,255,255,0.2);color:#fff;font-size:11px">Phase 2 Ingestion & Real-Log Profiles</span>
-        </div>
-        <p style="font-size:12px;opacity:0.9;margin:0;line-height:1.5">
-          Ingests orders & logs directly into SQLite tables, maps agent identities with full supervisor overrides, and derives empirical 10-minute tumbling window median throughput to fuel the Smart Allocation engine.
-        </p>
-      </div>
-      <div style="display:flex;gap:8px">
-        <button class="btn sm" onclick="loadVendoorIntegrationView()" style="background:rgba(255,255,255,0.2);color:#fff;border:none">↻ Refresh</button>
-      </div>
-    </div>
-
-    <!-- Inner Subnav Tabs -->
-    <div class="subnav-tabs" style="margin-bottom:20px">
-      <button class="subnav-tab ${currentVendoorSubTab === 'sync' ? 'active' : ''}" onclick="setVendoorSubTab('sync')">
-        <span>⚡</span> Data Sync & Ingestion
-      </button>
-      <button class="subnav-tab ${currentVendoorSubTab === 'dispatcher' ? 'active' : ''}" onclick="setVendoorSubTab('dispatcher')">
-        <span>🚀</span> Auto Dispatcher & Smart Refill
-      </button>
-      <button class="subnav-tab ${currentVendoorSubTab === 'identity' ? 'active' : ''}" onclick="setVendoorSubTab('identity')">
-        <span>👤</span> Identity Resolution
-        ${unmatchedCount > 0 ? `<span class="badge" style="background:#DC2626;color:#fff">${unmatchedCount} Unmatched</span>` : `<span class="badge" style="background:#16A34A;color:#fff">✓ Clean</span>`}
-      </button>
-      <button class="subnav-tab ${currentVendoorSubTab === 'productivity' ? 'active' : ''}" onclick="setVendoorSubTab('productivity')">
-        <span>📈</span> Dynamic Productivity Profiles (${prodProfiles.length})
-      </button>
-      <button class="subnav-tab ${currentVendoorSubTab === 'probes' ? 'active' : ''}" onclick="setVendoorSubTab('probes')">
-        <span>🔍</span> Diagnostic Probes
-      </button>
-    </div>
-
-    <!-- Active Sync Notification -->
-    <div id="vendoorActiveSyncContainer">
-      ${renderActiveVendoorSyncOutput()}
-    </div>
-  `;
-
-  if (currentVendoorSubTab === 'sync') {
-    html += renderVendoorSyncTab();
-  } else if (currentVendoorSubTab === 'dispatcher') {
-    html += '<div id="vendoorDispatcherSubtabContainer"><div style="text-align:center;padding:40px;color:var(--mut)">Loading Auto Dispatcher...</div></div>';
-  } else if (currentVendoorSubTab === 'identity') {
-    html += renderVendoorIdentityTab(queueItems);
-  } else if (currentVendoorSubTab === 'productivity') {
-    html += renderVendoorProductivityTab(prodProfiles);
-  } else if (currentVendoorSubTab === 'probes') {
-    html += renderVendoorProbesTab(st, isEnabled, isMock, authMethod, hasCreds);
-  }
-
-  container.innerHTML = html;
-
-  if (currentVendoorSubTab === 'dispatcher') {
-    loadAutoDispatcherView();
-  }
-}
-
-function renderActiveVendoorSyncOutput() {
-  if (!vendoorActiveSyncResult) return '';
-  const r = vendoorActiveSyncResult;
-  const isSucc = Boolean(r.success);
-
-  return `
-    <div class="panel" style="margin-bottom:20px;border-left:5px solid ${isSucc ? '#16A34A' : '#DC2626'};background:${isSucc ? '#F0FDF4' : '#FEF2F2'}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
-        <div>
-          <b style="font-size:14px;color:${isSucc ? '#166534' : '#991B1B'}">
-            ${isSucc ? '✓ Vendoor Sync Completed' : '⚠️ Vendoor Sync Failed'}
-          </b>
-          <p style="margin:4px 0 0 0;font-size:12.5px;color:${isSucc ? '#14532D' : '#7F1D1D'}">
-            ${escapeHtml(r.message || r.error || 'Execution finished.')}
-          </p>
-          ${r.summary ? `
-            <div style="display:flex;gap:12px;margin-top:8px;font-size:12px;flex-wrap:wrap">
-              <span><b>Fetched:</b> ${fmt(r.summary.total_fetched || r.summary.total_rows || 0)}</span>
-              <span><b>Inserted:</b> ${fmt(r.summary.inserted_orders || r.summary.inserted_logs || 0)}</span>
-              <span><b>Updated:</b> ${fmt(r.summary.updated_orders || 0)}</span>
-              <span><b>Skipped:</b> ${fmt(r.summary.skipped_duplicates || 0)}</span>
-              <span><b>Duration:</b> ${r.duration_ms || 0}ms</span>
-            </div>
-          ` : ''}
-        </div>
-        <button class="btn sm" onclick="vendoorActiveSyncResult=null;renderVendoorIntegrationUI()" style="padding:2px 8px">✕ Dismiss</button>
-      </div>
-    </div>
-  `;
-}
-
-function renderVendoorSyncTab() {
-  const isMock = Boolean(vendoorStatusData?.mock_mode);
-
-  return `
-    <div class="grid g2" style="margin-bottom:20px">
-      <!-- Sync Orders Action Box -->
-      <div class="panel" style="border-top:3px solid var(--blue)">
-        <div class="hd">
-          <div>
-            <h3>📦 Sync Orders from Vendoor</h3>
-            <p>Pulls orders from <code>/dashboard/orders</code> directly into persistent <code>vendoor_orders</code></p>
-          </div>
-          <span class="tag" style="background:#EFF6FF;color:var(--blue);font-weight:700">Orders Table</span>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
-          <div>
-            <label style="display:block;font-size:11px;font-weight:700;color:var(--slate);margin-bottom:4px">From Date (Optional)</label>
-            <input type="date" id="vendoorSyncOrdersFromDate" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px">
-          </div>
-          <div>
-            <label style="display:block;font-size:11px;font-weight:700;color:var(--slate);margin-bottom:4px">To Date (Optional)</label>
-            <input type="date" id="vendoorSyncOrdersToDate" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px">
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-          <div>
-            <label style="display:block;font-size:11px;font-weight:700;color:var(--slate);margin-bottom:4px">Max Pages (Safety Guard)</label>
-            <select id="vendoorSyncOrdersMaxPages" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px">
-              <option value="5">5 Pages</option>
-              <option value="10" selected>10 Pages</option>
-              <option value="25">25 Pages</option>
-              <option value="50">50 Pages</option>
-            </select>
-          </div>
-          <div>
-            <label style="display:block;font-size:11px;font-weight:700;color:var(--slate);margin-bottom:4px">Page Size</label>
-            <select id="vendoorSyncOrdersPageSize" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px">
-              <option value="25">25 Orders</option>
-              <option value="50" selected>50 Orders</option>
-              <option value="100">100 Orders</option>
-            </select>
-          </div>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <label style="font-size:12px;color:var(--slate);display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="vendoorSyncOrdersMockToggle" ${isMock ? 'checked' : ''} style="accent-color:var(--blue)">
-            Force Mock
-          </label>
-          <button class="btn primary sm" id="btnRunSyncOrders" onclick="runVendoorSyncOrdersAction()">
-            ⚡ Ingest & Sync Orders
-          </button>
-        </div>
-      </div>
-
-      <!-- Sync Logs Action Box -->
-      <div class="panel" style="border-top:3px solid var(--green)">
-        <div class="hd">
-          <div>
-            <h3>📋 Sync Daily Logs from Vendoor</h3>
-            <p>Pulls audit action stream from <code>/dashboard/log/xls/all</code> into <code>raw_log_records</code></p>
-          </div>
-          <span class="tag" style="background:#DCFCE7;color:var(--green);font-weight:700">Logs Stream</span>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-          <div>
-            <label style="display:block;font-size:11px;font-weight:700;color:var(--slate);margin-bottom:4px">Start Date <span style="color:#DC2626">*</span></label>
-            <input type="date" id="vendoorSyncLogsStartDate" value="${currentWorkDate}" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px">
-          </div>
-          <div>
-            <label style="display:block;font-size:11px;font-weight:700;color:var(--slate);margin-bottom:4px">End Date</label>
-            <input type="date" id="vendoorSyncLogsEndDate" value="${currentWorkDate}" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px">
-          </div>
-        </div>
-        <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
-          Logs are automatically partitioned by work date, deduplicated with a 120s sliding window, and fed into the productivity profile engine.
-        </p>
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <label style="font-size:12px;color:var(--slate);display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="vendoorSyncLogsMockToggle" ${isMock ? 'checked' : ''} style="accent-color:var(--green)">
-            Force Mock
-          </label>
-          <button class="btn success sm" id="btnRunSyncLogs" onclick="runVendoorSyncLogsAction()">
-            ✓ Ingest & Sync Logs
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Sync History Log Table -->
-    <div class="panel">
-      <div class="hd">
-        <div>
-          <h3>📜 Ingestion & Sync Run History</h3>
-          <p>Audit trail of all automated and manual Vendoor synchronization runs</p>
-        </div>
-        <span class="tag" style="background:#F1F5F9;color:var(--slate);font-weight:700">${vendoorSyncHistoryData.length} Runs</span>
-      </div>
-      ${vendoorSyncHistoryData.length === 0 ? `
-        <div style="padding:28px;text-align:center;color:var(--mut);font-size:13px">
-          No synchronization runs recorded yet. Execute a sync above to populate data.
-        </div>
-      ` : `
-        <div class="tbl-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Run ID</th>
-                <th>Resource</th>
-                <th>Mode</th>
-                <th>Window / Date</th>
-                <th>Total Fetched</th>
-                <th>Inserted</th>
-                <th>Updated</th>
-                <th>Skipped</th>
-                <th>Status</th>
-                <th>Duration</th>
-                <th>Timestamp</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${vendoorSyncHistoryData.map(r => {
-                const isSucc = r.status === 'SUCCESS';
-                return `
-                  <tr>
-                    <td><b>#${r.id}</b></td>
-                    <td><b>${escapeHtml(r.resource)}</b></td>
-                    <td><span class="tag" style="background:#F1F5F9;color:#334155">${escapeHtml(r.mode || 'live')}</span></td>
-                    <td>${r.start_date ? `${r.start_date}${r.end_date && r.end_date !== r.start_date ? ' → ' + r.end_date : ''}` : '—'}</td>
-                    <td><b>${fmt(r.total_fetched)}</b></td>
-                    <td><span style="color:#15803D;font-weight:700">${fmt(r.inserted_records)}</span></td>
-                    <td><span style="color:#1D4ED8;font-weight:700">${fmt(r.updated_records)}</span></td>
-                    <td><span style="color:var(--mut)">${fmt(r.skipped_records)}</span></td>
-                    <td>
-                      <span class="tag" style="background:${isSucc ? '#DCFCE7' : '#FEE2E2'};color:${isSucc ? '#15803D' : '#991B1B'};font-weight:700">
-                        ${escapeHtml(r.status)}
-                      </span>
-                    </td>
-                    <td>${r.duration_ms ? `${r.duration_ms}ms` : '—'}</td>
-                    <td style="font-size:11px;color:var(--mut)">${escapeHtml(r.created_at || '—')}</td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
-      `}
-    </div>
-  `;
-}
-
-function renderVendoorIdentityTab(queueItems) {
-  const unmatched = queueItems.filter(q => q.status === 'UNMATCHED' || q.status === 'NEEDS_REVIEW');
-  const mapped = queueItems.filter(q => q.status === 'EXPLICIT_MAPPING' || q.status === 'EXACT_MATCH' || q.status === 'NORMALIZED');
-
-  return `
-    <div class="panel" style="margin-bottom:20px;padding:16px 20px">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
-        <div>
-          <h3 style="margin:0 0 4px 0;font-size:16px;color:var(--navy)">👤 Employee Identity Resolution & Alias Mapping</h3>
-          <p style="margin:0;font-size:12.5px;color:var(--mut)">
-            Deterministically maps employee names from Vendoor logs to Master Registry. Unmatched names are queued for supervisor mapping without failing imports.
-          </p>
-        </div>
-        <div style="display:flex;gap:8px">
-          <span class="tag" style="background:#FEE2E2;color:#991B1B;font-weight:700">${unmatched.length} Unmatched</span>
-          <span class="tag" style="background:#DCFCE7;color:#15803D;font-weight:700">${mapped.length} Resolved</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Unmatched Queue Panel -->
-    <div class="panel" style="margin-bottom:20px;border-top:3px solid ${unmatched.length > 0 ? '#DC2626' : '#16A34A'}">
-      <div class="hd">
-        <div>
-          <h3>⚠️ Unmatched Vendoor Names Queue</h3>
-          <p>Agents found in raw logs who could not be resolved automatically. Map them to an existing Master Employee below.</p>
-        </div>
-        <span class="tag" style="background:${unmatched.length > 0 ? '#FEE2E2' : '#DCFCE7'};color:${unmatched.length > 0 ? '#991B1B' : '#15803D'};font-weight:700">
-          ${unmatched.length} Pending Resolution
-        </span>
-      </div>
-
-      ${unmatched.length === 0 ? `
-        <div style="padding:28px;text-align:center;color:#15803D;font-size:13px;background:#F0FDF4;border-radius:8px">
-          ✓ All Vendoor employee identities are fully matched to the Employee Master registry!
-        </div>
-      ` : `
-        <div class="tbl-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Vendoor Raw Name</th>
-                <th>Occurrences in Logs</th>
-                <th>Sample Action</th>
-                <th>Map to Master Employee</th>
-                <th style="text-align:right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${unmatched.map((item, idx) => `
-                <tr>
-                  <td><span class="rk">${idx + 1}</span></td>
-                  <td><b style="color:var(--ink)">${escapeHtml(item.vendoor_name)}</b></td>
-                  <td><span class="tag" style="background:#EFF6FF;color:#1D4ED8;font-weight:700">${fmt(item.occurrences || 1)} events</span></td>
-                  <td style="font-size:12px;color:var(--mut)">${escapeHtml(item.sample_action || '—')}</td>
-                  <td>
-                    <select id="map-select-${idx}" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:12px;background:#fff;max-width:240px">
-                      <option value="">-- Select Master Employee --</option>
-                      ${vendoorMasterEmployeesList.map(e => `
-                        <option value="${e.id}">${escapeHtml(e.name)} (${escapeHtml(e.department || 'CS')})</option>
-                      `).join('')}
-                    </select>
-                  </td>
-                  <td style="text-align:right">
-                    <button class="btn primary sm" onclick="submitVendoorIdentityMap('${escapeHtml(item.vendoor_name)}', 'map-select-${idx}')">
-                      🔗 Link Identity
-                    </button>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      `}
-    </div>
-
-    <!-- Active Mappings Registry -->
-    <div class="panel">
-      <div class="hd">
-        <div>
-          <h3>📋 Resolved & Active Identity Mappings</h3>
-          <p>Permanent and explicit identity mappings currently active in the database</p>
-        </div>
-        <span class="tag" style="background:#F1F5F9;color:var(--slate);font-weight:700">${mapped.length} Total</span>
-      </div>
-
-      <div class="tbl-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Vendoor Name</th>
-              <th>Resolved Master Employee</th>
-              <th>Match Status</th>
-              <th>Notes / Origin</th>
-              <th style="text-align:right">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${mapped.map((m, i) => `
-              <tr>
-                <td><span class="rk">${i + 1}</span></td>
-                <td><b>${escapeHtml(m.vendoor_name)}</b></td>
-                <td><b style="color:var(--navy)">${escapeHtml(m.employee_name || '—')}</b></td>
-                <td>
-                  <span class="tag" style="background:${m.status === 'EXPLICIT_MAPPING' ? '#F3E8FF' : '#DCFCE7'};color:${m.status === 'EXPLICIT_MAPPING' ? '#7C3AED' : '#15803D'};font-weight:700">
-                    ${escapeHtml(m.status)}
-                  </span>
-                </td>
-                <td style="font-size:12px;color:var(--mut)">${escapeHtml(m.notes || 'Automated / Verified')}</td>
-                <td style="text-align:right">
-                  ${m.mapping_id ? `
-                    <button class="btn sm" style="color:#DC2626" onclick="deleteVendoorIdentityMapping(${m.mapping_id})">
-                      🗑 Remove
-                    </button>
-                  ` : `<span style="font-size:11px;color:var(--mut)">System Match</span>`}
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-}
-
-function renderVendoorProductivityTab(profiles) {
-  const cfg = vendoorProductivityData?.config || {};
-
-  return `
-    <div class="panel" style="margin-bottom:20px;padding:16px 20px">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
-        <div>
-          <h3 style="margin:0 0 4px 0;font-size:16px;color:var(--navy)">📈 Dynamic Employee Productivity & Capacity Profiles</h3>
-          <p style="margin:0;font-size:12.5px;color:var(--mut)">
-            Calculated from 10-minute tumbling windows of productive actions (deduped, cancellations strictly excluded). Feeds real-time capacity into Smart Allocation.
-          </p>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:12px;color:var(--slate)">Profile Date:</span>
-          <b style="font-size:13px;color:var(--navy)">${formatDisplayDate(currentWorkDate)}</b>
-        </div>
-      </div>
-    </div>
-
-    <!-- Algorithm KPI Cards -->
-    <div class="kpis" style="margin-bottom:20px">
-      ${kpiCard('⏱', `${cfg.window_minutes || 10} min`, 'Tumbling Window', 'Continuous active time blocks', NAVY)}
-      ${kpiCard('⚖️', 'Median (P50)', 'Outlier Robustness', 'Filters spikes & idle blocks', BLUE)}
-      ${kpiCard('🛡️', 'Canceled Excluded', 'Quality Protection', 'Zero throughput for canceled', GREEN)}
-      ${kpiCard('⚡', `${profiles.length} Agents`, 'Active Profiles', 'Dynamically available for allocation', PURPLE)}
-    </div>
-
-    <!-- Productivity Profiles Table -->
-    <div class="panel">
-      <div class="hd">
-        <div>
-          <h3>👥 Team Productivity & Dynamic Capacity Ledger</h3>
-          <p>Empirical throughput rates and dynamic remaining capacity for ${formatDisplayDate(currentWorkDate)}</p>
-        </div>
-        <span class="tag" style="background:#EFF6FF;color:var(--blue);font-weight:700">${profiles.length} Active Profiles</span>
-      </div>
-
-      ${profiles.length === 0 ? `
-        <div style="padding:28px;text-align:center;color:var(--mut);font-size:13px">
-          No employee activity recorded yet for ${formatDisplayDate(currentWorkDate)}. Sync or upload daily logs to generate productivity profiles.
-        </div>
-      ` : `
-        <div class="tbl-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Employee</th>
-                <th>Active Windows</th>
-                <th>Unique Orders Worked</th>
-                <th>10-Min Rate (P50)</th>
-                <th>Hourly Rate</th>
-                <th>Estimated Capacity</th>
-                <th>Assigned Load</th>
-                <th>Remaining Capacity</th>
-                <th>Allocation Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${profiles.map((p, idx) => {
-                const rem = p.remaining_capacity;
-                const remBg = rem <= 0 ? '#FEE2E2' : (rem < 20 ? '#FEF3C7' : '#DCFCE7');
-                const remCol = rem <= 0 ? '#991B1B' : (rem < 20 ? '#B45309' : '#15803D');
-
-                return `
-                  <tr>
-                    <td><span class="rk">${idx + 1}</span></td>
-                    <td>
-                      <b style="color:var(--navy);font-size:13px">${escapeHtml(p.employee_name)}</b>
-                      <span style="font-size:11px;color:var(--mut);display:block">${escapeHtml(p.department || 'CS')} · ${escapeHtml(p.team_membership || 'Both')}</span>
-                    </td>
-                    <td><span class="tag" style="background:#F1F5F9;color:#334155">${p.window_count} windows</span></td>
-                    <td><b>${fmt(p.unique_orders_worked)}</b></td>
-                    <td><b style="color:#1D4ED8">${p.typical_orders_per_10m}</b> <span style="font-size:10.5px;color:var(--mut)">ord/10m</span></td>
-                    <td><b style="color:#7C3AED">${p.typical_orders_per_hour}</b> <span style="font-size:10.5px;color:var(--mut)">ord/hr</span></td>
-                    <td><b style="font-size:13px">${fmt(p.estimated_capacity)}</b></td>
-                    <td><b>${fmt(p.current_load)}</b></td>
-                    <td>
-                      <span class="tag" style="background:${remBg};color:${remCol};font-weight:800;font-size:12px">
-                        ${fmt(rem)} orders left
-                      </span>
-                    </td>
-                    <td>
-                      <span class="tag" style="background:${p.can_take_orders ? '#DCFCE7' : '#FEE2E2'};color:${p.can_take_orders ? '#15803D' : '#991B1B'};font-weight:700">
-                        ${p.can_take_orders ? '✓ Ready' : '✕ At Capacity'}
-                      </span>
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
-      `}
-    </div>
-  `;
-}
-
-function renderVendoorProbesTab(st, isEnabled, isMock, authMethod, hasCreds) {
-  return `
-    <!-- Configuration & KPI Status Cards -->
-    <div class="kpis" style="margin-bottom:20px">
-      ${kpiCard('🌐', st.base_url || 'https://aff.ven-door.com', 'Base Endpoint', 'Authenticated Web URL', NAVY)}
-      ${kpiCard('🔑', authMethod, 'Authentication Mode', hasCreds ? 'Credentials Active (Masked)' : 'No session configured', hasCreds ? GREEN : AMBER)}
-      ${kpiCard('⏱', `${st.timeout_ms || 15000}ms`, 'Request Timeout', 'With safe single-retry backoff', BLUE)}
-      ${kpiCard('📊', vendoorHistoryData.length, 'Connection Tests Run', 'Recorded in audit log', PURPLE)}
-    </div>
-
-    <!-- Interactive Test Actions Panel -->
-    <div class="panel" style="margin-bottom:20px">
-      <div class="hd" style="flex-wrap:wrap;gap:12px">
-        <div>
-          <h3>⚡ On-Demand Connection & Access Tests</h3>
-          <p>Execute targeted access probes against orders and export logs with volume restrictions.</p>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px">
-          <label style="font-size:12px;color:var(--slate);display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="vendoorForceMockToggle" ${isMock ? 'checked' : ''} style="accent-color:var(--blue)">
-            <b>Use Mock Adapter</b> (Safe offline test)
-          </label>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px;margin-top:12px">
-        <!-- Action 1: Small Page Orders Test -->
-        <div style="background:#F8FAFC;border:1px solid var(--line);border-radius:10px;padding:16px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <b style="color:var(--navy);font-size:14px">📦 Test Orders Access</b>
-            <span class="tag" style="background:#DBEAFE;color:#1D4ED8;font-size:10.5px">DataTables GET</span>
-          </div>
-          <p style="font-size:12px;color:var(--slate);margin:0 0 12px 0">
-            Requests a small page of orders (10 records) from <code>/dashboard/orders</code> with DataTables pagination parameters.
-          </p>
-          <div style="display:flex;gap:8px;align-items:center">
-            <select id="vendoorOrdersLength" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:12px">
-              <option value="10">10 Orders (Default)</option>
-              <option value="25">25 Orders</option>
-              <option value="50">50 Orders</option>
-            </select>
-            <button class="btn primary sm" id="btnTestOrders" onclick="runVendoorOrdersTest()" style="flex:1">
-              ⚡ Test Orders Access
-            </button>
-          </div>
-        </div>
-
-        <!-- Action 2: 1-Day Log Export Test -->
-        <div style="background:#F8FAFC;border:1px solid var(--line);border-radius:10px;padding:16px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <b style="color:var(--navy);font-size:14px">📋 Test 1-Day Logs Export</b>
-            <span class="tag" style="background:#DCFCE7;color:#15803D;font-size:10.5px">XLS Export</span>
-          </div>
-          <p style="font-size:12px;color:var(--slate);margin:0 0 12px 0">
-            Requests a single-day Excel log export from <code>/dashboard/log/xls/all</code> and parses rows via SheetJS.
-          </p>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input type="date" id="vendoorLogSingleDate" value="${currentWorkDate}" style="padding:5px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px">
-            <button class="btn success sm" id="btnTestLogsSingle" onclick="runVendoorLogsTest(1)" style="flex:1">
-              ✓ Test 1-Day Logs
-            </button>
-          </div>
-        </div>
-
-        <!-- Action 3: 2-Day Range Log Export Test -->
-        <div style="background:#F8FAFC;border:1px solid var(--line);border-radius:10px;padding:16px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <b style="color:var(--navy);font-size:14px">📅 Test 2-Day Logs Range</b>
-            <span class="tag" style="background:#F3E8FF;color:#7C3AED;font-size:10.5px">Multi-Day</span>
-          </div>
-          <p style="font-size:12px;color:var(--slate);margin:0 0 12px 0">
-            Probes multi-day date range filtering (strictly restricted to 2 days) to verify date boundaries.
-          </p>
-          <div style="display:flex;gap:6px;align-items:center">
-            <input type="date" id="vendoorLogRangeStart" value="${currentWorkDate}" style="padding:5px 6px;border:1px solid var(--line);border-radius:6px;font-size:11px;width:125px">
-            <span style="font-size:11px;color:var(--mut)">to</span>
-            <input type="date" id="vendoorLogRangeEnd" value="${currentWorkDate}" style="padding:5px 6px;border:1px solid var(--line);border-radius:6px;font-size:11px;width:125px">
-            <button class="btn amber sm" id="btnTestLogsRange" onclick="runVendoorLogsTest(2)" style="flex:1;padding:5px 10px">
-              ⚡ Test 2-Day
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Active Test Result / Proof Output -->
-    <div id="vendoorActiveResultContainer">
-      ${renderActiveVendoorTestOutput()}
-    </div>
-
-    <!-- Diagnostic Audit History Table -->
-    <div class="panel">
-      <div class="hd">
-        <div>
-          <h3>📜 Connection & Access Audit Log</h3>
-          <p>Historical audit trail of all Vendoor probe executions and diagnostic metrics.</p>
-        </div>
-        <span class="tag" style="background:#F1F5F9;color:var(--slate);font-weight:700">${vendoorHistoryData.length} Records</span>
-      </div>
-
-      ${vendoorHistoryData.length === 0 ? `
-        <div style="padding:28px;text-align:center;color:var(--mut);font-size:13px">
-          No test probes run yet. Click one of the test buttons above to execute a diagnostic check.
-        </div>
-      ` : `
-        <div class="tbl-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Resource</th>
-                <th>Type</th>
-                <th>Date Range</th>
-                <th>Status</th>
-                <th>HTTP</th>
-                <th>Duration</th>
-                <th>Rows</th>
-                <th>Timestamp</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${vendoorHistoryData.map((h, i) => {
-                const isSucc = h.status === 'SUCCESS';
-                const stBg = isSucc ? '#DCFCE7' : '#FEE2E2';
-                const stCol = isSucc ? '#15803D' : '#991B1B';
-                return `
-                  <tr>
-                    <td><span class="rk">${i + 1}</span></td>
-                    <td><b>${escapeHtml(h.resource)}</b></td>
-                    <td><span class="tag" style="background:#F1F5F9;color:#334155">${escapeHtml(h.test_type)}</span></td>
-                    <td>${h.start_date ? `${h.start_date}${h.end_date && h.end_date !== h.start_date ? ' → ' + h.end_date : ''}` : '—'}</td>
-                    <td><span class="tag" style="background:${stBg};color:${stCol};font-weight:700">${escapeHtml(h.status)}</span></td>
-                    <td><b>${h.http_status || '—'}</b></td>
-                    <td>${h.duration_ms ? `${h.duration_ms}ms` : '—'}</td>
-                    <td><b>${fmt(h.rows_received)}</b></td>
-                    <td style="font-size:11px;color:var(--mut)">${escapeHtml(h.created_at || '—')}</td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
-      `}
-    </div>
-  `;
-}
-
-function renderActiveVendoorTestOutput() {
-  if (!vendoorActiveTestResult) return '';
-
-  const r = vendoorActiveTestResult;
-  const isSucc = Boolean(r.success);
-
-  return `
-    <div class="panel" style="margin-bottom:20px;border-left:5px solid ${isSucc ? '#16A34A' : '#DC2626'};background:${isSucc ? '#F0FDF4' : '#FEF2F2'}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px">
-        <div>
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:18px">${isSucc ? '✓' : '⚠️'}</span>
-            <b style="font-size:15px;color:${isSucc ? '#166534' : '#991B1B'}">
-              ${isSucc ? 'Diagnostic Probe Passed' : 'Diagnostic Probe Failed'}
-            </b>
-            <span class="tag" style="background:#fff;border:1px solid #CBD5E1;font-size:11px;font-weight:700">
-              ${r.result?.adapter === 'MOCK' ? 'MOCK ADAPTER' : 'LIVE ENDPOINT'}
-            </span>
-          </div>
-          <p style="margin:4px 0 0 0;font-size:12.5px;color:${isSucc ? '#14532D' : '#7F1D1D'}">
-            ${escapeHtml(r.message || r.error || 'Test completed')}
-          </p>
-        </div>
-        <button class="btn sm" onclick="vendoorActiveTestResult=null;renderVendoorIntegrationUI()" style="padding:2px 8px">✕ Dismiss</button>
-      </div>
-
-      ${isSucc && r.result ? `
-        <div style="background:#fff;border:1px solid #E2E8F0;border-radius:8px;padding:14px;font-size:12.5px">
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:10px;margin-bottom:12px">
-            <div>
-              <span style="color:var(--mut);font-size:11px;display:block">HTTP Status</span>
-              <b>${r.result.http_status || 200} ${r.result.content_type ? `(${r.result.content_type})` : ''}</b>
-            </div>
-            <div>
-              <span style="color:var(--mut);font-size:11px;display:block">Duration</span>
-              <b>${r.result.duration_ms || 0}ms</b>
-            </div>
-            <div>
-              <span style="color:var(--mut);font-size:11px;display:block">Parsed Count</span>
-              <b>${fmt(r.result.summary?.received_orders_count || r.result.summary?.total_rows || 0)} items</b>
-            </div>
-            <div>
-              <span style="color:var(--mut);font-size:11px;display:block">Unique Entities</span>
-              <b>${r.result.summary?.unique_accounts_count ? `${r.result.summary.unique_accounts_count} Accounts` : `${r.result.summary?.unique_employees_count || 0} Employees`}</b>
-            </div>
-          </div>
-        </div>
-      ` : `
-        <div style="background:#fff;border:1px solid #FECACA;border-radius:8px;padding:12px;font-size:12px;color:#991B1B">
-          <b>Safe Diagnostic Error:</b> ${escapeHtml(r.error || 'Connection failed')}
-          ${r.code ? `<span class="tag" style="margin-left:8px;background:#FEE2E2;color:#991B1B">${escapeHtml(r.code)}</span>` : ''}
-        </div>
-      `}
-    </div>
-  `;
-}
-
-// -------------------------------------------------------------
-// VENDOOR ASYNC ACTIONS & API HANDLERS
-// -------------------------------------------------------------
-async function runVendoorSyncOrdersAction() {
-  const btn = document.getElementById('btnRunSyncOrders');
-  const fromDate = document.getElementById('vendoorSyncOrdersFromDate')?.value || null;
-  const toDate = document.getElementById('vendoorSyncOrdersToDate')?.value || null;
-  const maxPages = parseInt(document.getElementById('vendoorSyncOrdersMaxPages')?.value, 10) || 10;
-  const pageSize = parseInt(document.getElementById('vendoorSyncOrdersPageSize')?.value, 10) || 50;
-  const isMockChecked = document.getElementById('vendoorSyncOrdersMockToggle')?.checked;
-
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = 'Syncing Orders...';
-  }
-
-  try {
-    const res = await apiFetch('/api/integrations/vendoor/sync/orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fromDate,
-        toDate,
-        maxPages,
-        pageSize,
-        forceMode: isMockChecked ? 'mock' : null
-      })
-    });
-
-    vendoorActiveSyncResult = res;
-    if (res.success) {
-      showToast('✓ Vendoor Orders Synced', `Ingested ${res.summary?.total_fetched || 0} orders into persistent storage.`);
-    }
-  } catch (err) {
-    vendoorActiveSyncResult = { success: false, error: err.message };
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = '⚡ Ingest & Sync Orders';
-    }
-    await loadVendoorIntegrationView();
-  }
-}
-
-async function runVendoorSyncLogsAction() {
-  const btn = document.getElementById('btnRunSyncLogs');
-  const startDate = document.getElementById('vendoorSyncLogsStartDate')?.value || currentWorkDate;
-  const endDate = document.getElementById('vendoorSyncLogsEndDate')?.value || currentWorkDate;
-  const isMockChecked = document.getElementById('vendoorSyncLogsMockToggle')?.checked;
-
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = 'Syncing Logs...';
-  }
-
-  try {
-    const res = await apiFetch('/api/integrations/vendoor/sync/logs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        startDate,
-        endDate,
-        forceMode: isMockChecked ? 'mock' : null
-      })
-    });
-
-    vendoorActiveSyncResult = res;
-    if (res.success) {
-      showToast('✓ Vendoor Logs Synced', `Ingested logs for ${startDate}. Updated productivity profiles.`);
-    }
-  } catch (err) {
-    vendoorActiveSyncResult = { success: false, error: err.message };
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = '✓ Ingest & Sync Logs';
-    }
-    await loadVendoorIntegrationView();
-  }
-}
-
-async function submitVendoorIdentityMap(vendoorName, selectId) {
-  const select = document.getElementById(selectId);
-  const employeeId = select?.value;
-  if (!employeeId) {
-    alert('Please select a Master Employee to map this Vendoor name to.');
-    return;
-  }
-
-  try {
-    const res = await apiFetch('/api/integrations/vendoor/identity/map', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        vendoor_name: vendoorName,
-        employee_id: parseInt(employeeId, 10),
-        notes: 'Mapped via Vendoor Identity Resolution UI'
-      })
-    });
-
-    if (res.success) {
-      showToast('✓ Identity Linked', `"${vendoorName}" successfully linked to Master.`);
-      await loadVendoorIntegrationView();
-    } else {
-      alert('Mapping failed: ' + (res.error || 'Unknown error'));
-    }
-  } catch (err) {
-    alert('Failed to map identity: ' + err.message);
-  }
-}
-
-async function deleteVendoorIdentityMapping(mappingId) {
-  if (!confirm('Are you sure you want to remove this explicit identity mapping?')) return;
-  try {
-    const res = await apiFetch(`/api/integrations/vendoor/identity/${mappingId}`, {
-      method: 'DELETE'
-    });
-    if (res.success) {
-      showToast('🗑 Mapping Removed', 'Explicit identity mapping deleted.');
-      await loadVendoorIntegrationView();
-    }
-  } catch (err) {
-    alert('Failed to remove mapping: ' + err.message);
-  }
-}
-
-async function runVendoorOrdersTest() {
-  const btn = document.getElementById('btnTestOrders');
-  const isMockChecked = document.getElementById('vendoorForceMockToggle')?.checked;
-  const length = parseInt(document.getElementById('vendoorOrdersLength')?.value, 10) || 10;
-
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = 'Testing...';
-  }
-
-  try {
-    const res = await apiFetch('/api/integrations/vendoor/test/orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        length,
-        forceMode: isMockChecked ? 'mock' : null
-      })
-    });
-
-    vendoorActiveTestResult = res;
-    if (res.success) {
-      showToast('✓ Vendoor Orders Test Passed', `Retrieved ${res.result?.summary?.received_orders_count || 0} sample orders.`);
-    }
-  } catch (err) {
-    vendoorActiveTestResult = { success: false, error: err.message };
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = '⚡ Test Orders Access';
-    }
-    await loadVendoorIntegrationView();
-  }
-}
-
-async function runVendoorLogsTest(mode = 1) {
-  const isMockChecked = document.getElementById('vendoorForceMockToggle')?.checked;
-  let startDate = currentWorkDate;
-  let endDate = currentWorkDate;
-  let btn = null;
-
-  if (mode === 1) {
-    btn = document.getElementById('btnTestLogsSingle');
-    startDate = document.getElementById('vendoorLogSingleDate')?.value || currentWorkDate;
-    endDate = startDate;
-  } else {
-    btn = document.getElementById('btnTestLogsRange');
-    startDate = document.getElementById('vendoorLogRangeStart')?.value || currentWorkDate;
-    endDate = document.getElementById('vendoorLogRangeEnd')?.value || currentWorkDate;
-  }
-
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = 'Testing...';
-  }
-
-  try {
-    const res = await apiFetch('/api/integrations/vendoor/test/logs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        startDate,
-        endDate,
-        forceMode: isMockChecked ? 'mock' : null
-      })
-    });
-
-    vendoorActiveTestResult = res;
-    if (res.success) {
-      showToast('✓ Vendoor Logs Test Passed', `Retrieved logs for ${startDate}${startDate !== endDate ? ' to ' + endDate : ''}.`);
-    }
-  } catch (err) {
-    vendoorActiveTestResult = { success: false, error: err.message };
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = mode === 1 ? '✓ Test 1-Day Logs' : '⚡ Test 2-Day';
-    }
-    await loadVendoorIntegrationView();
-  }
-}
-
-// -------------------------------------------------------------
-// 2C. CONTINUOUS AUTO DISPATCHER & SMART REFILL (Phase 3)
-// -------------------------------------------------------------
-let autoDispatcherStatus = null;
-let autoDispatcherWorkloads = [];
-let autoDispatcherUnallocated = null;
-let autoDispatcherAuditHistory = [];
-let autoDispatcherAlerts = [];
-let autoDispatcherActiveCycleResult = null;
-let autoDispatcherIsRunningCycle = false;
-let autoDispatcherSettingsModalOpen = false;
-
-async function loadAutoDispatcherView() {
-  const c1 = document.getElementById('autoDispatcherContainer');
-  const c2 = document.getElementById('vendoorDispatcherSubtabContainer');
-  if (!c1 && !c2) return;
-
-  try {
-    const [statusRes, workloadsRes, unallocatedRes, auditRes, alertsRes] = await Promise.all([
-      apiFetch('/api/vendoor/dispatcher/status').catch(e => ({ success: false, error: e.message })),
-      apiFetch(`/api/vendoor/dispatcher/workloads?date=${currentWorkDate}`).catch(e => ({ success: false, workloads: [] })),
-      apiFetch(`/api/vendoor/dispatcher/unallocated?date=${currentWorkDate}&limit=50`).catch(e => ({ success: false, pool: null })),
-      apiFetch('/api/vendoor/dispatcher/audit?limit=25').catch(e => ({ success: false, history: [] })),
-      apiFetch('/api/vendoor/dispatcher/alerts').catch(e => ({ success: false, alerts: [] }))
-    ]);
-
-    autoDispatcherStatus = statusRes || {};
-    autoDispatcherWorkloads = Array.isArray(workloadsRes?.workloads) ? workloadsRes.workloads : [];
-    autoDispatcherUnallocated = unallocatedRes?.pool || null;
-    autoDispatcherAuditHistory = Array.isArray(auditRes?.history) ? auditRes.history : [];
-    autoDispatcherAlerts = Array.isArray(alertsRes?.alerts) ? alertsRes.alerts : [];
-
-    renderAutoDispatcherUI();
-  } catch (err) {
-    console.error('Error loading Auto Dispatcher view:', err);
-    const errorHtml = `
-      <div class="panel" style="text-align:center;padding:40px 20px">
-        <div style="font-size:36px;margin-bottom:12px">⚠️</div>
-        <h3 style="margin:0 0 8px 0;color:var(--ink)">Failed to load Auto Dispatcher Suite</h3>
-        <p style="color:var(--mut);font-size:13px">${escapeHtml(err.message || 'Unknown error')}</p>
-        <button class="btn primary" onclick="loadAutoDispatcherView()">↻ Retry</button>
-      </div>
-    `;
-    if (c1) c1.innerHTML = errorHtml;
-    if (c2) c2.innerHTML = errorHtml;
-  }
-}
-
-function renderAutoDispatcherUI() {
-  const c1 = document.getElementById('autoDispatcherContainer');
-  const c2 = document.getElementById('vendoorDispatcherSubtabContainer');
-  if (!c1 && !c2) return;
-
-  const st = autoDispatcherStatus || {};
-  const cfg = st.config || {};
-  const opStatus = st.operational_status || 'OFF';
-  const isRunning = Boolean(st.is_running);
-  const isLocked = Boolean(st.is_locked);
-  const isDryRun = Boolean(cfg.dryRunMode);
-  const isEnabled = Boolean(cfg.enabled);
-
-  const statusColors = {
-    'OFF': { bg: '#F1F5F9', text: '#475569', border: '#CBD5E1', label: 'OFF (DISABLED)' },
-    'DRY_RUN': { bg: '#FEF3C7', text: '#B45309', border: '#FCD34D', label: 'DRY RUN MODE (ZERO MUTATION)' },
-    'ACTIVE': { bg: '#DCFCE7', text: '#15803D', border: '#86EFAC', label: 'ACTIVE & REFILLING' },
-    'PAUSED': { bg: '#EFF6FF', text: '#1D4ED8', border: '#93C5FD', label: 'PAUSED' },
-    'SETUP_REQUIRED': { bg: '#FEE2E2', text: '#991B1B', border: '#FCA5A5', label: 'SETUP REQUIRED (NO WORKING TEAM)' }
-  };
-  const sc = statusColors[opStatus] || statusColors['OFF'];
-
-  const unallocatedCount = autoDispatcherUnallocated?.total_unallocated_orders || st.unallocated_pool_count || 0;
-  const unallocatedAccountsCount = autoDispatcherUnallocated?.unique_accounts_count || 0;
-  const wtCount = st.working_team_count || 0;
-  const needingRefill = autoDispatcherWorkloads.filter(w => w.refill_needed).length;
-
-  let html = `
-    <!-- 1. Operational Status & Master Controls Header -->
-    <div style="background:linear-gradient(135deg, #0F172A, #1E293B);color:#fff;border-radius:14px;padding:22px 24px;margin-bottom:20px;box-shadow:var(--shadow)">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
-        <div style="display:flex;gap:14px;align-items:center">
-          <div style="width:52px;height:52px;border-radius:14px;background:rgba(255,255,255,0.1);display:grid;place-items:center;font-size:26px">🚀</div>
-          <div>
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap">
-              <h2 style="font-size:18px;margin:0;color:#fff;font-weight:700">Continuous Auto Dispatcher & Smart Refill</h2>
-              <span class="tag" style="background:${sc.bg};color:${sc.text};border:1px solid ${sc.border};font-weight:800;font-size:11px;padding:4px 10px">
-                ● ${sc.label}
-              </span>
-              ${isLocked ? '<span class="tag" style="background:#FEE2E2;color:#991B1B;font-weight:800;font-size:11px">🔒 CYCLE IN PROGRESS</span>' : ''}
-              <span class="tag" style="background:rgba(255,255,255,0.15);color:#fff;font-size:11px">Target Date: ${currentWorkDate}</span>
-            </div>
-            <p style="margin:0;font-size:12.5px;opacity:0.85;max-width:760px;line-height:1.5">
-              Empirical continuous replenishment engine. Refills agents as orders complete while strictly respecting Working Team membership, sticky account ownership, capacity ceilings, and zero unrequested account split triggers.
-            </p>
-          </div>
-        </div>
-
-        <!-- Master Actions Bar -->
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <button class="btn sm" onclick="triggerDispatcherManualCycle(true)" ${autoDispatcherIsRunningCycle ? 'disabled' : ''} style="background:rgba(245,158,11,0.25);color:#FDE68A;border:1px solid rgba(245,158,11,0.4)">
-            ${autoDispatcherIsRunningCycle ? '⏳ Running...' : '▶ Run One Cycle (Dry Run)'}
-          </button>
-          <button class="btn sm primary" onclick="triggerDispatcherManualCycle(false)" ${autoDispatcherIsRunningCycle ? 'disabled' : ''} style="background:#16A34A;border:none">
-            ⚡ Run One Cycle (LIVE)
-          </button>
-          ${isRunning ? `
-            <button class="btn sm danger" onclick="stopContinuousPollingDispatcher()" style="background:#DC2626;border:none">
-              ⏹ Stop Polling
-            </button>
-          ` : `
-            <button class="btn sm" onclick="startContinuousPollingDispatcher()" style="background:#2563EB;color:#fff;border:none">
-              ▶ Start Polling (${Math.round((cfg.intervalMs || 600000)/60000)}m)
-            </button>
-          `}
-          <button class="btn sm" onclick="openDispatcherSettingsModal()" style="background:rgba(255,255,255,0.15);color:#fff;border:none">
-            ⚙ Settings
-          </button>
-          <button class="btn sm" onclick="loadAutoDispatcherView()" style="background:rgba(255,255,255,0.15);color:#fff;border:none" title="Refresh state">
-            ↻
-          </button>
-        </div>
-      </div>
-
-      <!-- Quick Toggles Toolbar -->
-      <div style="display:flex;gap:20px;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.1);font-size:12px;flex-wrap:wrap">
-        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="chkAutoDispatchEnabled" ${isEnabled ? 'checked' : ''} onchange="toggleDispatcherMasterEnabled(this.checked)">
-          <span>Auto Dispatcher Master Switch (${isEnabled ? 'ENABLED' : 'DISABLED'})</span>
-        </label>
-        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="chkAutoDispatchDryRun" ${isDryRun ? 'checked' : ''} onchange="toggleDispatcherDryRunMode(this.checked)">
-          <span>Dry Run Mode (Simulate Without Mutating Assignments: ${isDryRun ? 'ON' : 'OFF'})</span>
-        </label>
-        <span style="opacity:0.7">|</span>
-        <span style="opacity:0.9">Refill Trigger Threshold: <b>≤ ${cfg.refillThreshold || 5} orders remaining</b></span>
-        <span style="opacity:0.7">|</span>
-        <span style="opacity:0.9">Max per cycle: <b>${cfg.maxOrdersPerCycle || 40} orders / ${cfg.maxAssignmentsPerCycle || 2} agents</b></span>
-      </div>
-    </div>
-
-    <!-- 2. Operational Alerts Banner (if any) -->
-    ${autoDispatcherAlerts.length > 0 ? `
-      <div style="margin-bottom:20px;display:flex;flex-direction:column;gap:8px">
-        ${autoDispatcherAlerts.map(al => {
-          const isErr = al.severity === 'ERROR';
-          return `
-            <div style="background:${isErr ? '#FEF2F2' : '#FFFBEB'};border-left:4px solid ${isErr ? '#DC2626' : '#F59E0B'};padding:10px 14px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:${isErr ? '#991B1B' : '#92400E'}">
-              <div style="display:flex;align-items:center;gap:10px">
-                <span style="font-size:16px">${isErr ? '🚫' : '⚠️'}</span>
-                <span><b>${escapeHtml(al.code)}:</b> ${escapeHtml(al.message)}</span>
-              </div>
-              <span class="tag" style="background:${isErr ? '#FEE2E2' : '#FEF3C7'};color:${isErr ? '#991B1B' : '#B45309'};font-size:10px;font-weight:700">${al.severity}</span>
-            </div>
-          `;
-        }).join('')}
-      </div>
-    ` : ''}
-
-    <!-- 3. Active Cycle Result / Execution Toast Banner -->
-    <div id="dispatcherActiveResultContainer">
-      ${renderDispatcherCycleOutput(autoDispatcherActiveCycleResult)}
-    </div>
-
-    <!-- 4. Key Performance Indicators Row -->
-    <div class="kpis" style="margin-bottom:20px">
-      <div class="kpi">
-        <div class="lbl">Unallocated Orders Pool</div>
-        <div class="val" style="color:var(--blue)">${fmt(unallocatedCount)}</div>
-        <div class="sub">Across <b>${unallocatedAccountsCount}</b> active accounts</div>
-      </div>
-      <div class="kpi">
-        <div class="lbl">Active Working Team</div>
-        <div class="val" style="color:${wtCount > 0 ? 'var(--ink)' : '#DC2626'}">${fmt(wtCount)}</div>
-        <div class="sub">${wtCount > 0 ? 'Enrolled for ' + currentWorkDate : '⚠️ Zero working staff'}</div>
-      </div>
-      <div class="kpi">
-        <div class="lbl">Employees Needing Refill</div>
-        <div class="val" style="color:${needingRefill > 0 ? '#D97706' : '#16A34A'}">${fmt(needingRefill)}</div>
-        <div class="sub">${needingRefill > 0 ? 'Below refill threshold' : 'All working staff adequately loaded'}</div>
-      </div>
-      <div class="kpi">
-        <div class="lbl">Cycles Executed</div>
-        <div class="val">${fmt(st.cycle_count || 0)}</div>
-        <div class="sub">Last: ${st.last_cycle_at ? formatTimeAgo(st.last_cycle_at) : 'Never'}</div>
-      </div>
-      <div class="kpi">
-        <div class="lbl">Last Cycle Status</div>
-        <div class="val" style="font-size:18px;color:${st.last_cycle_result?.status === 'SUCCESS' ? '#16A34A' : 'var(--ink)'}">
-          ${st.last_cycle_result?.status || 'IDLE'}
-        </div>
-        <div class="sub">${st.last_cycle_result?.assignments_created !== undefined ? st.last_cycle_result.assignments_created + ' orders assigned' : 'Ready'}</div>
-      </div>
-    </div>
-
-    <!-- 5. Dynamic Employee Live Refill & Capacity Matrix -->
-    <div class="panel" style="margin-bottom:20px">
-      <div class="hd">
-        <div>
-          <h3>👥 Live Employee Refill & Capacity Matrix (${autoDispatcherWorkloads.length})</h3>
-          <p>Real-time capacity tracking computed from 10-minute median throughput and live completion tracking for ${currentWorkDate}.</p>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <span class="tag" style="background:#EFF6FF;color:var(--blue);font-size:11px">Refill Threshold: ≤ ${cfg.refillThreshold || 5}</span>
-        </div>
-      </div>
-
-      ${autoDispatcherWorkloads.length === 0 ? `
-        <div class="empty-alloc" style="padding:32px 16px;text-align:center">
-          <div style="font-size:28px;margin-bottom:8px">👥</div>
-          <b>No Working Team configured for ${currentWorkDate}</b>
-          <p style="font-size:12px;color:var(--mut);margin:4px 0 12px 0">Set up Today's Working Team to enable automatic workload tracking and smart refills.</p>
-          <a class="btn primary sm" href="#" onclick="showPageTab('operations', 'working-team')">⚡ Configure Working Team</a>
-        </div>
-      ` : `
-        <div class="table-wrap">
-          <table class="tbl">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Employee Name</th>
-                <th>Working Status</th>
-                <th>Refill State</th>
-                <th>Assigned Today</th>
-                <th>Completed</th>
-                <th>Active Workload</th>
-                <th>Typical Rate</th>
-                <th>Daily Capacity</th>
-                <th>Remaining Cap</th>
-                <th>Refill Diagnosis / Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${autoDispatcherWorkloads.map((emp, idx) => {
-                const isWorking = Boolean(emp.is_working);
-                const stInfo = getRefillStateBadge(emp.refill_state);
-                const isEligible = emp.is_refill_eligible;
-                const remCap = emp.remaining_capacity;
-
-                return `
-                  <tr style="${!isWorking ? 'opacity:0.6;background:#F8FAFC' : (isEligible ? 'background:#FEFCE8' : '')}">
-                    <td><span class="rk">${idx + 1}</span></td>
-                    <td>
-                      <b>${escapeHtml(emp.employee_name)}</b>
-                      <div style="font-size:10.5px;color:var(--mut)">ID #${emp.employee_id} · ${escapeHtml(emp.productivity_tier || 'TIER_STANDARD')}</div>
-                    </td>
-                    <td>
-                      <span class="tag" style="background:${isWorking ? '#DCFCE7' : '#F1F5F9'};color:${isWorking ? '#15803D' : '#64748B'};font-weight:700">
-                        ${isWorking ? '✓ Working' : '✕ Off Duty'}
-                      </span>
-                    </td>
-                    <td>
-                      <span class="tag" style="background:${stInfo.bg};color:${stInfo.color};font-weight:800;border:1px solid ${stInfo.border}">
-                        ${stInfo.label}
-                      </span>
-                    </td>
-                    <td><b>${fmt(emp.assigned_orders_today)}</b></td>
-                    <td><span style="color:#16A34A;font-weight:700">${fmt(emp.completed_orders_today)}</span></td>
-                    <td>
-                      <b style="font-size:13.5px;color:${emp.remaining_active_workload <= (cfg.refillThreshold || 5) ? '#D97706' : 'var(--ink)'}">
-                        ${fmt(emp.remaining_active_workload)}
-                      </b>
-                      <span style="font-size:10px;color:var(--mut)">/ ≤${cfg.refillThreshold || 5}</span>
-                    </td>
-                    <td>
-                      <span>${emp.throughput_per_10m ? emp.throughput_per_10m.toFixed(1) : '—'}</span>
-                      <span style="font-size:10px;color:var(--mut)">ord/10m</span>
-                    </td>
-                    <td><b>${fmt(emp.estimated_daily_capacity)}</b></td>
-                    <td>
-                      <span style="font-weight:700;color:${remCap <= 5 ? '#DC2626' : (remCap <= 15 ? '#D97706' : '#16A34A')}">
-                        ${fmt(remCap)}
-                      </span>
-                    </td>
-                    <td style="font-size:11.5px;max-width:280px;line-height:1.4">
-                      ${escapeHtml(emp.refill_reason || '—')}
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
-      `}
-    </div>
-
-    <!-- 6. Bottom Split Grid: Unallocated Pool Preview & Dispatcher Cycle Audit History -->
-    <div class="grid g2" style="margin-bottom:20px">
-      <!-- Unallocated Pool Summary -->
-      <div class="panel">
-        <div class="hd">
-          <div>
-            <h3>📦 Unallocated Pool by Account (${unallocatedAccountsCount})</h3>
-            <p>Available candidate orders ready for sticky replenishment or smart split allocation.</p>
-          </div>
-          <span class="tag" style="background:#F1F5F9;color:var(--ink);font-weight:700">${fmt(unallocatedCount)} Total</span>
-        </div>
-
-        ${!autoDispatcherUnallocated || autoDispatcherUnallocated.accounts_breakdown?.length === 0 ? `
-          <div style="text-align:center;padding:32px 16px;color:var(--mut);font-size:12.5px">
-            ✓ No unallocated orders remaining for ${currentWorkDate}.
-          </div>
-        ` : `
-          <div class="table-wrap">
-            <table class="tbl">
-              <thead>
-                <tr>
-                  <th>Account</th>
-                  <th>Unallocated Orders</th>
-                  <th>Sticky Owner</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${(autoDispatcherUnallocated.accounts_breakdown || []).slice(0, 15).map(acc => {
-                  return `
-                    <tr>
-                      <td><b>${escapeHtml(acc.account)}</b></td>
-                      <td><b>${fmt(acc.count)}</b> <span style="font-size:11px;color:var(--mut)">orders</span></td>
-                      <td>
-                        <span class="tag" style="background:#F1F5F9;color:#334155;font-size:11px">
-                          ${escapeHtml(acc.sticky_owner_name || 'Dynamic Smart Refill')}
-                        </span>
-                      </td>
-                      <td>
-                        <button class="btn sm" onclick="showPageTab('operations', 'orders-pool')" style="padding:2px 8px;font-size:11px">
-                          View
-                        </button>
-                      </td>
-                    </tr>
-                  `;
-                }).join('')}
-              </tbody>
-            </table>
-          </div>
-        `}
-      </div>
-
-      <!-- Recent Dispatcher Audit History -->
-      <div class="panel">
-        <div class="hd">
-          <div>
-            <h3>📋 Dispatcher Cycle Audit History</h3>
-            <p>Immutable log of automated replenishment cycles and simulated runs.</p>
-          </div>
-          <span class="tag" style="background:#F1F5F9;color:var(--ink);font-weight:700">${autoDispatcherAuditHistory.length} Cycles</span>
-        </div>
-
-        ${autoDispatcherAuditHistory.length === 0 ? `
-          <div style="text-align:center;padding:32px 16px;color:var(--mut);font-size:12.5px">
-            No cycles recorded yet. Run a cycle above to generate audit logs.
-          </div>
-        ` : `
-          <div class="table-wrap">
-            <table class="tbl">
-              <thead>
-                <tr>
-                  <th>Cycle ID</th>
-                  <th>Mode</th>
-                  <th>Trigger</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Skipped</th>
-                  <th>Observed</th>
-                  <th>Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${autoDispatcherAuditHistory.slice(0, 15).map(cyc => {
-                  const isDry = cyc.mode === 'DRY_RUN';
-                  const isSucc = cyc.status === 'SUCCESS' || cyc.status === 'NO_ASSIGNMENTS_MADE';
-                  return `
-                    <tr>
-                      <td><code style="font-size:10.5px">${escapeHtml(cyc.cycle_id)}</code></td>
-                      <td>
-                        <span class="tag" style="background:${isDry ? '#FEF3C7' : '#DCFCE7'};color:${isDry ? '#B45309' : '#15803D'};font-size:10px;font-weight:700">
-                          ${cyc.mode}
-                        </span>
-                      </td>
-                      <td style="font-size:11px">${escapeHtml(cyc.trigger)}</td>
-                      <td>
-                        <span class="tag" style="background:${isSucc ? '#DCFCE7' : '#FEE2E2'};color:${isSucc ? '#15803D' : '#991B1B'};font-size:10px;font-weight:700">
-                          ${escapeHtml(cyc.status)}
-                        </span>
-                      </td>
-                      <td><b>${fmt(cyc.assignments_created)}</b></td>
-                      <td><span style="color:var(--mut)">${fmt(cyc.assignments_skipped)}</span></td>
-                      <td><span style="color:#16A34A">${fmt(cyc.completed_orders_observed)}</span></td>
-                      <td style="font-size:10.5px;color:var(--mut)">${formatTimeAgo(cyc.started_at)}</td>
-                    </tr>
-                  `;
-                }).join('')}
-              </tbody>
-            </table>
-          </div>
-        `}
-      </div>
-    </div>
-
-    <!-- 7. Settings Modal (Conditional) -->
-    ${autoDispatcherSettingsModalOpen ? renderDispatcherSettingsModal(cfg) : ''}
-  `;
-
-  if (c1) c1.innerHTML = html;
-  if (c2) c2.innerHTML = html;
-}
-
-function getRefillStateBadge(state) {
-  switch (state) {
-    case 'NEEDS_WORK':
-      return { label: '🔴 NEEDS WORK', bg: '#FEE2E2', color: '#991B1B', border: '#FCA5A5' };
-    case 'REFILL_ELIGIBLE':
-      return { label: '⚡ REFILL ELIGIBLE', bg: '#FEF3C7', color: '#B45309', border: '#FCD34D' };
-    case 'NEAR_REFILL':
-      return { label: '⏳ NEAR REFILL', bg: '#FEF9C3', color: '#A16207', border: '#FDE047' };
-    case 'HEALTHY':
-      return { label: '✓ HEALTHY LOAD', bg: '#DCFCE7', color: '#15803D', border: '#86EFAC' };
-    case 'NO_CAPACITY':
-      return { label: '⛔ AT CAPACITY', bg: '#F1F5F9', color: '#475569', border: '#CBD5E1' };
-    case 'NOT_WORKING':
-      return { label: '— NOT WORKING', bg: '#F8FAFC', color: '#94A3B8', border: '#E2E8F0' };
-    case 'NEEDS_REVIEW':
-    default:
-      return { label: '⚠️ NEEDS REVIEW', bg: '#F3E8FF', color: '#7C3AED', border: '#D8B4FE' };
-  }
-}
-
-function renderDispatcherCycleOutput(r) {
-  if (!r) return '';
-  const isSucc = Boolean(r.success);
-  const isDry = r.mode === 'DRY_RUN';
-
-  return `
-    <div class="panel" style="margin-bottom:20px;border-left:5px solid ${isSucc ? (isDry ? '#F59E0B' : '#16A34A') : '#DC2626'};background:${isSucc ? (isDry ? '#FFFBEB' : '#F0FDF4') : '#FEF2F2'}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
-        <div>
-          <div style="display:flex;align-items:center;gap:8px">
-            <b style="font-size:14px;color:${isSucc ? (isDry ? '#92400E' : '#166534') : '#991B1B'}">
-              ${isDry ? '🔍 Dry Run Cycle Simulation Completed' : (isSucc ? '✓ Live Dispatch Cycle Completed' : '⚠️ Cycle Execution Failed')}
-            </b>
-            <span class="tag" style="background:#fff;border:1px solid #CBD5E1;font-size:10.5px">
-              Cycle: ${escapeHtml(r.cycle_id || '—')}
-            </span>
-          </div>
-          <p style="margin:4px 0 0 0;font-size:12.5px;color:${isSucc ? '#334155' : '#7F1D1D'}">
-            Status: <b>${escapeHtml(r.status || 'OK')}</b> · Target Date: <b>${escapeHtml(r.work_date || currentWorkDate)}</b>
-          </p>
-          <div style="display:flex;gap:16px;margin-top:8px;font-size:12px;flex-wrap:wrap">
-            <span><b>Assignments Created:</b> ${fmt(r.assignments_created || 0)}</span>
-            <span><b>Skipped / Blocked:</b> ${fmt(r.assignments_skipped || 0)}</span>
-            <span><b>Staff Working:</b> ${fmt(r.working_employees_count || 0)}</span>
-            <span><b>Staff Eligible:</b> ${fmt(r.eligible_employees_count || 0)}</span>
-            <span><b>Completed Observed:</b> ${fmt(r.completed_orders_observed || 0)}</span>
-          </div>
-          ${r.planned_assignments && r.planned_assignments.length > 0 ? `
-            <div style="margin-top:10px;padding:8px 12px;background:rgba(255,255,255,0.7);border-radius:6px;font-size:11.5px">
-              <b>Refill Breakdown:</b>
-              <ul style="margin:4px 0 0 0;padding-left:18px">
-                ${r.planned_assignments.slice(0, 8).map(pa => `
-                  <li>Order <b>${escapeHtml(pa.order_code)}</b> (${escapeHtml(pa.account)}) → <b>${escapeHtml(pa.employee_name)}</b> (${escapeHtml(pa.reason)})</li>
-                `).join('')}
-                ${r.planned_assignments.length > 8 ? `<li>...and ${r.planned_assignments.length - 8} more orders</li>` : ''}
-              </ul>
-            </div>
-          ` : ''}
-        </div>
-        <button class="btn sm" onclick="autoDispatcherActiveCycleResult=null;renderAutoDispatcherUI()" style="padding:2px 8px">✕ Dismiss</button>
-      </div>
-    </div>
-  `;
-}
-
-function renderDispatcherSettingsModal(cfg) {
-  return `
-    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px">
-      <div class="panel" style="width:100%;max-width:540px;background:#fff;border-radius:14px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.25);overflow:hidden">
-        <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
-          <h3 style="margin:0;font-size:16px">⚙ Auto Dispatcher Configuration</h3>
-          <button class="btn sm" onclick="autoDispatcherSettingsModalOpen=false;renderAutoDispatcherUI()" style="padding:2px 8px">✕</button>
-        </div>
-        <div style="padding:20px;display:flex;flex-direction:column;gap:14px;font-size:13px">
-          <div>
-            <label style="display:block;font-weight:700;margin-bottom:4px">Refill Trigger Threshold (Orders Remaining)</label>
-            <input type="number" id="settingRefillThreshold" value="${cfg.refillThreshold || 5}" min="1" max="25" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:6px">
-            <span style="font-size:11px;color:var(--mut)">An employee becomes eligible for a refill when their active unfinished workload drops to or below this threshold.</span>
-          </div>
-          <div>
-            <label style="display:block;font-weight:700;margin-bottom:4px">Continuous Polling Interval (Minutes)</label>
-            <input type="number" id="settingIntervalMinutes" value="${Math.round((cfg.intervalMs || 600000)/60000)}" min="1" max="60" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:6px">
-            <span style="font-size:11px;color:var(--mut)">Default is 10 minutes (600,000 ms). Must be a bounded integer.</span>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <div>
-              <label style="display:block;font-weight:700;margin-bottom:4px">Max Orders Per Cycle</label>
-              <input type="number" id="settingMaxOrders" value="${cfg.maxOrdersPerCycle || 40}" min="5" max="200" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:6px">
-            </div>
-            <div>
-              <label style="display:block;font-weight:700;margin-bottom:4px">Max Refills Per Cycle</label>
-              <input type="number" id="settingMaxAgents" value="${cfg.maxAssignmentsPerCycle || 2}" min="1" max="10" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:6px">
-            </div>
-          </div>
-        </div>
-        <div style="padding:14px 20px;background:#F8FAFC;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px">
-          <button class="btn sm" onclick="autoDispatcherSettingsModalOpen=false;renderAutoDispatcherUI()">Cancel</button>
-          <button class="btn sm primary" onclick="submitDispatcherSettingsForm()">Save Settings</button>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function openDispatcherSettingsModal() {
-  autoDispatcherSettingsModalOpen = true;
-  renderAutoDispatcherUI();
-}
-
-async function submitDispatcherSettingsForm() {
-  const threshold = parseInt(document.getElementById('settingRefillThreshold')?.value, 10);
-  const intervalMin = parseInt(document.getElementById('settingIntervalMinutes')?.value, 10);
-  const maxOrders = parseInt(document.getElementById('settingMaxOrders')?.value, 10);
-  const maxAgents = parseInt(document.getElementById('settingMaxAgents')?.value, 10);
-
-  try {
-    const res = await apiFetch('/api/vendoor/dispatcher/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        refill_threshold: threshold,
-        dispatcher_interval_ms: (intervalMin || 10) * 60000,
-        max_orders_per_cycle: maxOrders,
-        max_assignments_per_cycle: maxAgents
-      })
-    });
-
-    if (res.success) {
-      showToast('✓ Settings Saved', 'Auto Dispatcher configuration updated successfully.');
-      autoDispatcherSettingsModalOpen = false;
-      await loadAutoDispatcherView();
-    }
-  } catch (err) {
-    alert('Failed to save settings: ' + err.message);
-  }
-}
-
-async function triggerDispatcherManualCycle(dryRun = false) {
-  autoDispatcherIsRunningCycle = true;
-  renderAutoDispatcherUI();
-
-  try {
-    const res = await apiFetch('/api/vendoor/dispatcher/cycle', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        dryRun,
-        workDate: currentWorkDate,
-        forceRun: true
-      })
-    });
-
-    autoDispatcherActiveCycleResult = res;
-    if (res.success) {
-      showToast(
-        dryRun ? '🔍 Dry Run Cycle Done' : '⚡ Live Cycle Done',
-        `${res.assignments_created || 0} orders processed (${res.mode}).`
-      );
-    } else {
-      showToast('⚠️ Cycle Warning', res.message || res.status || 'Cycle skipped.');
-    }
-  } catch (err) {
-    autoDispatcherActiveCycleResult = { success: false, error: err.message };
-    alert('Dispatcher cycle error: ' + err.message);
-  } finally {
-    autoDispatcherIsRunningCycle = false;
-    await loadAutoDispatcherView();
-  }
-}
-
-async function toggleDispatcherMasterEnabled(enabled) {
-  try {
-    await apiFetch('/api/vendoor/dispatcher/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vendoor_auto_dispatch_enabled: enabled ? 'true' : 'false' })
-    });
-    showToast('✓ Config Updated', `Auto Dispatcher master switch: ${enabled ? 'ENABLED' : 'DISABLED'}`);
-    await loadAutoDispatcherView();
-  } catch (err) {
-    alert('Error updating master switch: ' + err.message);
-  }
-}
-
-async function toggleDispatcherDryRunMode(dryRun) {
-  try {
-    await apiFetch('/api/vendoor/dispatcher/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dry_run_mode: dryRun ? 'true' : 'false' })
-    });
-    showToast('✓ Config Updated', `Dry run simulation mode: ${dryRun ? 'ON (Zero Mutation)' : 'OFF (LIVE)'}`);
-    await loadAutoDispatcherView();
-  } catch (err) {
-    alert('Error updating dry run mode: ' + err.message);
-  }
-}
-
-async function startContinuousPollingDispatcher() {
-  try {
-    const res = await apiFetch('/api/vendoor/dispatcher/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
-    });
-    if (res.success) {
-      showToast('▶ Polling Started', 'Continuous auto dispatcher polling active.');
-      await loadAutoDispatcherView();
-    }
-  } catch (err) {
-    alert('Error starting polling: ' + err.message);
-  }
-}
-
-async function stopContinuousPollingDispatcher() {
-  try {
-    const res = await apiFetch('/api/vendoor/dispatcher/stop', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
-    });
-    if (res.success) {
-      showToast('⏹ Polling Stopped', 'Continuous auto dispatcher stopped.');
-      await loadAutoDispatcherView();
-    }
-  } catch (err) {
-    alert('Error stopping polling: ' + err.message);
-  }
-}
-
-function formatTimeAgo(ts) {
-  if (!ts) return '—';
-  try {
-    const diffSec = Math.floor((new Date().getTime() - new Date(ts).getTime()) / 1000);
-    if (diffSec < 60) return `${diffSec}s ago`;
-    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-    return `${Math.floor(diffSec / 3600)}h ago`;
-  } catch {
-    return ts;
-  }
-}
 let currentAccountsDirectory = [];
 let accDirectoryViewMode = 'grid'; // 'grid' | 'table'
 let currentAccDetailData = null;
@@ -4762,19 +3003,15 @@ async function loadCurrentOrdersView() {
   const accounts = (poolStatus && poolStatus.accounts) ? poolStatus.accounts : [];
   const totalOrders = poolStatus ? poolStatus.total_orders : 0;
 
-  const stagedFiles = (poolStatus && poolStatus.files && poolStatus.files.length > 0) 
-    ? poolStatus.files 
-    : ([f1, f2].filter(Boolean));
-
   let html = `
     <!-- Operational Source Separation Banner -->
     <div style="background:linear-gradient(135deg, #1E3A8A, #1D4ED8);color:#fff;border-radius:14px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:16px;box-shadow:var(--shadow)">
       <div style="font-size:32px">📦</div>
       <div style="flex:1">
-        <b style="font-size:15px;display:block;margin-bottom:3px">Operational Source: Specific Orders (Dynamic Batch Allocation Pool)</b>
+        <b style="font-size:15px;display:block;margin-bottom:3px">Operational Source B: Specific Orders (Today's Current Work Pool)</b>
         <p style="font-size:12px;opacity:0.9;margin:0;line-height:1.5">
-          Dedicated purely to today's active inventory and work allocation. Multiple files can be uploaded into this pool (e.g. 300 + 290 = 590 unique orders).
-          <b>Uploading saves and stages files. The pool remains open for more uploads until you click Generate Allocation.</b>
+          Dedicated purely to today's active inventory and manual work allocation. Two files per day (File #1 and File #2) are merged into one consolidated pool.
+          <b>Never</b> used as performance history. <b>Never</b> mixed with the Daily Log.
         </p>
       </div>
       <div style="text-align:right;background:rgba(255,255,255,0.15);padding:8px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.2)">
@@ -4783,76 +3020,71 @@ async function loadCurrentOrdersView() {
       </div>
     </div>
 
-    <!-- Dynamic Batch Staging Pool Panel -->
-    <div class="panel" style="margin-bottom:20px;border:1px solid var(--line);box-shadow:var(--shadow)">
-      <div class="hd" style="flex-wrap:wrap;gap:12px;border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:14px">
-        <div>
-          <h3 style="margin:0;display:flex;align-items:center;gap:8px">
-            📁 Staged Files in Pool (${stagedFiles.length} File${stagedFiles.length === 1 ? '' : 's'})
-            <span class="tag" style="background:#ECFDF5;color:#059669;font-weight:700">Ready for Allocation</span>
-          </h3>
-          <p style="margin:4px 0 0;font-size:12px;color:var(--slate)">
-            Uploads remain open until you click <b>Generate Allocation</b>. You can add more files at any time.
-          </p>
+    <!-- Two-File Staging Grid (Part 4, 30, 54) -->
+    <div class="grid g2e" style="margin-bottom:20px">
+      <!-- File 1 Card -->
+      <div class="panel" style="border: 2px ${f1 ? 'solid #10B981' : 'dashed var(--line)'}; background: ${f1 ? '#F0FDF4' : '#fff'}">
+        <div class="hd" style="margin-bottom:10px">
+          <div>
+            <h3 style="color:${f1 ? '#15803D' : 'var(--navy)'}">
+              ${f1 ? '✓' : '⭱'} Specific Orders File #1
+              ${f1 ? '<span class="tag" style="background:#DCFCE7;color:#15803D">Staged & Ready</span>' : '<span class="tag" style="background:#FEE2E2;color:#991B1B">Pending Upload</span>'}
+            </h3>
+            <p>${f1 ? f1.file_name : 'Upload the first Specific Orders Excel file for today'}</p>
+          </div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <label class="btn primary sm" style="cursor:pointer">
-            ⭱ Add File(s) to Pool
-            <input type="file" accept=".xlsx,.xls" multiple style="display:none" onchange="uploadSpecificOrdersBatch(this)">
+        ${f1 ? `
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;background:#fff;padding:10px;border-radius:8px;border:1px solid #E2E8F0;margin-bottom:12px;font-size:12px">
+            <div><span style="color:var(--mut);display:block;font-size:10.5px">Total Rows</span><b>${fmt(f1.row_count)}</b></div>
+            <div><span style="color:var(--mut);display:block;font-size:10.5px">Valid Orders</span><b style="color:#15803D">${fmt(f1.valid_orders_count)}</b></div>
+            <div><span style="color:var(--mut);display:block;font-size:10.5px">Uploaded</span><b>${f1.upload_date ? f1.upload_date.split(' ')[1] || f1.upload_date : '-'}</b></div>
+          </div>
+        ` : `
+          <p style="font-size:12px;color:var(--mut);margin-bottom:14px">Required to ensure all today's accounts are represented in the work pool.</p>
+        `}
+        <div style="display:flex;gap:8px">
+          <label class="btn ${f1 ? '' : 'primary'} sm" style="cursor:pointer">
+            ${f1 ? '↻ Replace File #1' : '⭱ Choose File #1'}
+            <input type="file" accept=".xlsx,.xls" style="display:none" onchange="uploadSpecificOrdersSlot(1, this)">
           </label>
-          <button class="btn success sm" onclick="show('work-allocation')">
-            ⚡ Generate Allocation →
-          </button>
         </div>
       </div>
 
-      <!-- Grid of Staged Files -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:12px;margin-bottom:14px">
-        ${stagedFiles.length === 0 ? `
-          <div style="grid-column:1/-1;padding:30px;text-align:center;background:var(--panel2);border:2px dashed var(--line);border-radius:12px">
-            <div style="font-size:28px;margin-bottom:6px">📂</div>
-            <b style="color:var(--navy);font-size:14px">No Specific Orders files staged yet for ${formatDisplayDate(currentWorkDate)}</b>
-            <p style="color:var(--mut);font-size:12px;margin:4px 0 12px">Upload one or multiple Excel files containing New and Pending orders.</p>
-            <label class="btn primary sm" style="cursor:pointer">
-              ⭱ Choose File(s) to Stage
-              <input type="file" accept=".xlsx,.xls" multiple style="display:none" onchange="uploadSpecificOrdersBatch(this)">
-            </label>
+      <!-- File 2 Card -->
+      <div class="panel" style="border: 2px ${f2 ? 'solid #10B981' : 'dashed var(--line)'}; background: ${f2 ? '#F0FDF4' : '#fff'}">
+        <div class="hd" style="margin-bottom:10px">
+          <div>
+            <h3 style="color:${f2 ? '#15803D' : 'var(--navy)'}">
+              ${f2 ? '✓' : '⭱'} Specific Orders File #2
+              ${f2 ? '<span class="tag" style="background:#DCFCE7;color:#15803D">Staged & Ready</span>' : '<span class="tag" style="background:#FEE2E2;color:#991B1B">Pending Upload</span>'}
+            </h3>
+            <p>${f2 ? f2.file_name : 'Upload the second Specific Orders Excel file for today'}</p>
           </div>
-        ` : stagedFiles.map(f => `
-          <div style="background:#fff;border:1.5px solid #10B981;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:var(--shadow-sm)">
-            <div>
-              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:6px">
-                <span class="tag" style="background:#DCFCE7;color:#15803D;font-weight:700">File #${f.file_slot}</span>
-                <span style="font-size:11px;color:var(--mut)">${f.upload_date ? (f.upload_date.split(' ')[1] || f.upload_date) : ''}</span>
-              </div>
-              <b style="font-size:13px;color:var(--ink);word-break:break-all;display:block;margin-bottom:6px" title="${escapeHtml(f.file_name)}">
-                📄 ${escapeHtml(f.file_name)}
-              </b>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11.5px;background:var(--panel2);padding:6px 10px;border-radius:6px;margin-bottom:10px">
-                <div><span style="color:var(--mut);display:block;font-size:10px">Total Rows</span><b>${fmt(f.row_count)}</b></div>
-                <div><span style="color:var(--mut);display:block;font-size:10px">Valid Orders</span><b style="color:#15803D">${fmt(f.valid_orders_count)}</b></div>
-              </div>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:6px;border-top:1px solid var(--line)">
-              <label class="btn sm" style="cursor:pointer;padding:2px 8px;font-size:11px">
-                ↻ Replace
-                <input type="file" accept=".xlsx,.xls" style="display:none" onchange="uploadSpecificOrdersSlot(${f.file_slot}, this)">
-              </label>
-              <button class="btn sm danger" style="padding:2px 8px;font-size:11px" onclick="removeStagedFile(${f.file_slot})">
-                🗑️ Remove
-              </button>
-            </div>
+        </div>
+        ${f2 ? `
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;background:#fff;padding:10px;border-radius:8px;border:1px solid #E2E8F0;margin-bottom:12px;font-size:12px">
+            <div><span style="color:var(--mut);display:block;font-size:10.5px">Total Rows</span><b>${fmt(f2.row_count)}</b></div>
+            <div><span style="color:var(--mut);display:block;font-size:10.5px">Valid Orders</span><b style="color:#15803D">${fmt(f2.valid_orders_count)}</b></div>
+            <div><span style="color:var(--mut);display:block;font-size:10.5px">Uploaded</span><b>${f2.upload_date ? f2.upload_date.split(' ')[1] || f2.upload_date : '-'}</b></div>
           </div>
-        `).join('')}
+        ` : `
+          <p style="font-size:12px;color:var(--mut);margin-bottom:14px">Upload File #2 to merge complementary order queues into today's pool.</p>
+        `}
+        <div style="display:flex;gap:8px">
+          <label class="btn ${f2 ? '' : 'primary'} sm" style="cursor:pointer">
+            ${f2 ? '↻ Replace File #2' : '⭱ Choose File #2'}
+            <input type="file" accept=".xlsx,.xls" style="display:none" onchange="uploadSpecificOrdersSlot(2, this)">
+          </label>
+        </div>
       </div>
     </div>
 
-    <!-- Multi-File Consolidation Summary -->
+    <!-- Merge & Consolidation Panel (Part 4, 30, 54) -->
     <div class="panel" style="margin-bottom:20px;border:1px solid var(--line);box-shadow:var(--shadow)">
       <div class="hd">
         <div>
-          <h3>⚡ Dynamic Multi-File Consolidation Pool</h3>
-          <p>Deterministic deduplication consolidating all staged files into one active work pool.</p>
+          <h3>⚡ Two-File Consolidation & Merged Pool</h3>
+          <p>Deterministic deduplication consolidating File #1 and File #2 into one active pool.</p>
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn success" onclick="triggerManualMergePool()">⚡ Re-Merge Pool</button>
@@ -4863,12 +3095,16 @@ async function loadCurrentOrdersView() {
       <!-- Metrics Breakdown -->
       <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px">
         <div style="background:var(--panel2);padding:12px;border-radius:10px;border:1px solid var(--line);text-align:center">
-          <span style="font-size:10.5px;color:var(--mut);text-transform:uppercase;font-weight:700">Files Staged</span>
-          <b style="font-size:20px;color:var(--navy);display:block;margin-top:4px">${stagedFiles.length}</b>
+          <span style="font-size:10.5px;color:var(--mut);text-transform:uppercase;font-weight:700">File 1 Orders</span>
+          <b style="font-size:20px;color:var(--navy);display:block;margin-top:4px">${fmt(summary ? summary.file1_orders : (f1 ? f1.valid_orders_count : 0))}</b>
+        </div>
+        <div style="background:var(--panel2);padding:12px;border-radius:10px;border:1px solid var(--line);text-align:center">
+          <span style="font-size:10.5px;color:var(--mut);text-transform:uppercase;font-weight:700">File 2 Orders</span>
+          <b style="font-size:20px;color:var(--navy);display:block;margin-top:4px">${fmt(summary ? summary.file2_orders : (f2 ? f2.valid_orders_count : 0))}</b>
         </div>
         <div style="background:var(--panel2);padding:12px;border-radius:10px;border:1px solid var(--line);text-align:center">
           <span style="font-size:10.5px;color:var(--mut);text-transform:uppercase;font-weight:700">Combined Raw</span>
-          <b style="font-size:20px;color:var(--slate);display:block;margin-top:4px">${fmt(summary ? summary.merged_orders_count : totalOrders)}</b>
+          <b style="font-size:20px;color:var(--slate);display:block;margin-top:4px">${fmt(summary ? summary.merged_orders_count : ((f1 ? f1.valid_orders_count : 0) + (f2 ? f2.valid_orders_count : 0)))}</b>
         </div>
         <div style="background:#ECFDF5;padding:12px;border-radius:10px;border:1px solid #A7F3D0;text-align:center">
           <span style="font-size:10.5px;color:#065F46;text-transform:uppercase;font-weight:700">Unique Pool Size</span>
@@ -4877,10 +3113,6 @@ async function loadCurrentOrdersView() {
         <div style="background:#FFFBEB;padding:12px;border-radius:10px;border:1px solid #FDE68A;text-align:center">
           <span style="font-size:10.5px;color:#92400E;text-transform:uppercase;font-weight:700">Duplicates Removed</span>
           <b style="font-size:20px;color:#D97706;display:block;margin-top:4px">${fmt(summary ? summary.duplicate_orders_count : 0)}</b>
-        </div>
-        <div style="background:var(--panel2);padding:12px;border-radius:10px;border:1px solid var(--line);text-align:center">
-          <span style="font-size:10.5px;color:var(--mut);text-transform:uppercase;font-weight:700">Active Accounts</span>
-          <b style="font-size:20px;color:var(--blue);display:block;margin-top:4px">${accounts.length}</b>
         </div>
       </div>
 
@@ -5023,56 +3255,6 @@ function toggleDuplicatesModal(show) {
   if (m) m.style.display = show ? 'grid' : 'none';
 }
 
-async function uploadSpecificOrdersBatch(input) {
-  if (!input.files || input.files.length === 0) return;
-  const files = Array.from(input.files);
-  showToast(`⏳ Staging ${files.length} File(s)...`, `Processing batch upload for ${currentWorkDate}...`);
-
-  try {
-    let successCount = 0;
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      const formData = new FormData();
-      formData.append('file', f);
-      formData.append('work_date', currentWorkDate);
-      const res = await apiFetch('/api/uploads/specific-orders', {
-        method: 'POST',
-        body: formData
-      });
-      if (res && res.success) successCount++;
-    }
-
-    showToast('✓ Batch Upload Complete!', `${successCount} file(s) staged and merged into today's work pool.`);
-    await loadCurrentOrdersView();
-    await loadWorkAllocationData();
-  } catch (err) {
-    alert('Upload error: ' + err.message);
-  } finally {
-    input.value = '';
-  }
-}
-
-async function removeStagedFile(slot) {
-  if (!confirm(`Are you sure you want to remove File #${slot} from today's pool?`)) return;
-  showToast('⏳ Removing File...', `Removing File #${slot} and recalculating pool...`);
-
-  try {
-    const res = await apiFetch(`/api/uploads/specific-orders/${currentWorkDate}/${slot}`, {
-      method: 'DELETE'
-    });
-
-    if (res && res.success) {
-      showToast('✓ File Removed', `File #${slot} removed. Remaining orders in pool: ${res.remaining_orders}.`);
-      await loadCurrentOrdersView();
-      await loadWorkAllocationData();
-    } else {
-      alert('Error: ' + ((res && res.error) || 'Failed to remove file'));
-    }
-  } catch (err) {
-    alert('Error: ' + err.message);
-  }
-}
-
 async function uploadSpecificOrdersSlot(slot, input) {
   if (!input.files || !input.files[0]) return;
   const file = input.files[0];
@@ -5104,7 +3286,7 @@ async function uploadSpecificOrdersSlot(slot, input) {
 }
 
 async function triggerManualMergePool() {
-  showToast('⏳ Merging Files...', 'Consolidating files into Work Pool...');
+  showToast('⏳ Merging Files...', 'Consolidating File 1 and File 2 into Work Pool...');
   try {
     const res = await apiFetch('/api/uploads/specific-orders/merge', {
       method: 'POST',
@@ -5122,179 +3304,6 @@ async function triggerManualMergePool() {
   } catch (err) {
     alert('Error: ' + err.message);
   }
-}
-
-// -------------------------------------------------------------
-// UNIVERSAL AUTO-DETECT UPLOAD ENGINE
-// -------------------------------------------------------------
-async function handleUniversalAutoUpload(inputOrFiles, forcedDate = null) {
-  const files = inputOrFiles.files ? Array.from(inputOrFiles.files) : (Array.isArray(inputOrFiles) ? inputOrFiles : [inputOrFiles]);
-  if (!files || files.length === 0) return;
-
-  const formData = new FormData();
-  files.forEach(f => formData.append('files', f));
-  if (forcedDate) {
-    formData.append('work_date', forcedDate);
-  }
-
-  showToast('⏳ Inspecting & Detecting Files...', `Analyzing ${files.length} file(s) for business dates and source structures...`);
-
-  try {
-    const res = await apiFetch('/api/uploads/auto-detect', {
-      method: 'POST',
-      body: formData
-    });
-
-    if (res.success) {
-      const datesCount = (res.detected_dates || []).length;
-      showToast('✓ Auto-Detection Successful!', `Routed ${res.processed_count} file(s) across ${datesCount} business date(s).`);
-
-      // Open detailed Auto-Detection Result Report
-      renderAutoDetectedUploadModal(res);
-
-      // If exactly 1 date was detected and it differs from current, prompt to jump or auto-jump
-      if (datesCount === 1 && res.detected_dates[0].business_date) {
-        const detectedDate = res.detected_dates[0].business_date;
-        if (detectedDate !== currentWorkDate) {
-          setGlobalSelectedDate(detectedDate);
-        }
-      }
-
-      // Refresh current view
-      await fetchPerformanceDataForDate(currentWorkDate);
-      await loadWorkAllocationData();
-      RENDERED = pages();
-      if (document.getElementById('uploadsManagementContainer')) {
-        loadUploadsManagementView();
-      }
-    } else {
-      alert('Upload failed: ' + (res.error || (res.errors ? res.errors.map(e => e.file_name + ': ' + e.error).join('\n') : 'Unknown error')));
-    }
-  } catch (err) {
-    alert('Upload error: ' + err.message);
-  } finally {
-    if (inputOrFiles.value !== undefined) inputOrFiles.value = '';
-  }
-}
-
-function renderAutoDetectedUploadModal(result) {
-  let modal = document.getElementById('autoDetectResultModal');
-  if (!modal) {
-    modal = document.createElement('div');
-    modal.id = 'autoDetectResultModal';
-    modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:9999;align-items:center;justify-content:center;padding:20px';
-    document.body.appendChild(modal);
-  }
-
-  const files = result.files || [];
-  const dates = result.detected_dates || [];
-
-  let html = `
-    <div style="background:#fff;border-radius:16px;max-width:850px;width:100%;box-shadow:var(--shadow-lg);overflow:hidden;display:flex;flex-direction:column;max-height:90vh">
-      <div style="padding:16px 22px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:#F8FAFC">
-        <div>
-          <h3 style="margin:0;font-size:17px;font-weight:800;color:var(--navy)">⚡ Automatic Content & Date Detection Report</h3>
-          <p style="margin:3px 0 0 0;font-size:12px;color:var(--mut)">Source inspection, detected business dates, and automatic queue routing</p>
-        </div>
-        <button class="btn sm" onclick="document.getElementById('autoDetectResultModal').style.display='none'" type="button" style="padding:4px 9px">✕ Close</button>
-      </div>
-
-      <div style="padding:20px;overflow-y:auto;display:flex;flex-direction:column;gap:16px">
-        <!-- Summary Banner -->
-        <div style="background:linear-gradient(135deg,#EFF6FF,#EEF2FF);border:1px solid #DBEAFE;border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:14px">
-          <div style="width:36px;height:36px;border-radius:9px;background:var(--blue);color:#fff;display:grid;place-items:center;font-size:18px;font-weight:800">✓</div>
-          <div style="flex:1">
-            <b style="font-size:13.5px;color:var(--navy)">${result.message}</b>
-            <p style="font-size:12px;color:var(--slate);margin:2px 0 0 0">Dates were derived strictly from the source data content, preserving real business context without overriding historical dates.</p>
-          </div>
-        </div>
-
-        <!-- Files Processed Breakdown -->
-        <div>
-          <h4 style="font-size:13px;color:var(--slate);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Uploaded Files Inspection</h4>
-          <div class="tbl-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>File Name</th>
-                  <th>Detected Source Type</th>
-                  <th>Primary Date</th>
-                  <th>Confidence</th>
-                  <th>Routed Records</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${files.map(f => {
-                  const det = f.detection || {};
-                  const typeLabel = f.source_type === 'NEW' ? 'New Orders (Slot 1)' : (f.source_type === 'PENDING' ? 'Pending Orders (Slot 2)' : (f.source_type === 'EOD_DAILY_LOG' ? 'EOD Daily Log' : 'Specific Orders'));
-                  const typeBg = f.source_type === 'NEW' ? '#DBEAFE' : (f.source_type === 'PENDING' ? '#F3E8FF' : '#DCFCE7');
-                  const typeCol = f.source_type === 'NEW' ? '#1D4ED8' : (f.source_type === 'PENDING' ? '#7C3AED' : '#15803D');
-                  const confBg = det.confidence === 'HIGH' ? '#DCFCE7' : (det.confidence === 'MEDIUM' ? '#FEF3C7' : '#FEE2E2');
-                  const confCol = det.confidence === 'HIGH' ? '#15803D' : (det.confidence === 'MEDIUM' ? '#B45309' : '#B91C1C');
-
-                  return `
-                    <tr>
-                      <td class="nm-cell"><b>${escapeHtml(f.file_name)}</b></td>
-                      <td><span class="tag" style="background:${typeBg};color:${typeCol};font-weight:700">${typeLabel}</span></td>
-                      <td><b>${escapeHtml(det.primary_date || 'Needs Review')}</b></td>
-                      <td><span class="tag" style="background:${confBg};color:${confCol}">${det.confidence || 'HIGH'}</span></td>
-                      <td>${(f.results_by_date || []).map(r => `<span class="tag" style="background:#F1F5F9;color:#334155;margin-right:4px">${r.business_date}: ${r.orders_count || r.records_count}</span>`).join('')}</td>
-                      <td>
-                        <button class="btn sm" onclick="document.getElementById('autoDetectResultModal').style.display='none';setGlobalSelectedDate('${det.primary_date}');show('operations','allocation')">Go to Date</button>
-                      </td>
-                    </tr>
-                  `;
-                }).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Detected Business Dates Registry -->
-        <div>
-          <h4 style="font-size:13px;color:var(--slate);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Detected Business Dates Status</h4>
-          <div class="tbl-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Business Date</th>
-                  <th>New Orders</th>
-                  <th>Pending Orders</th>
-                  <th>Unique Orders in Pool</th>
-                  <th>EOD Actions</th>
-                  <th>Status</th>
-                  <th style="text-align:right">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${dates.map(d => `
-                  <tr>
-                    <td class="nm-cell"><b style="font-size:13px">${d.business_date}</b></td>
-                    <td><span style="color:#1D4ED8;font-weight:700">${fmt(d.new_orders)}</span></td>
-                    <td><span style="color:#7C3AED;font-weight:700">${fmt(d.pending_orders)}</span></td>
-                    <td><b>${fmt(d.unique_orders)}</b></td>
-                    <td><span style="color:#15803D">${fmt(d.eod_actions)}</span></td>
-                    <td><span class="tag" style="background:#DCFCE7;color:#15803D;font-weight:700">${d.status}</span></td>
-                    <td style="text-align:right">
-                      <button class="btn primary sm" onclick="document.getElementById('autoDetectResultModal').style.display='none';setGlobalSelectedDate('${d.business_date}');show('operations','allocation')">⚡ Open Allocation</button>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <div style="padding:14px 22px;border-top:1px solid var(--line);background:#F8FAFC;display:flex;justify-content:flex-end">
-        <button class="btn primary" onclick="document.getElementById('autoDetectResultModal').style.display='none'">Done</button>
-      </div>
-    </div>
-  `;
-
-  modal.innerHTML = html;
-  modal.style.display = 'flex';
 }
 
 // -------------------------------------------------------------
@@ -6636,8 +4645,6 @@ function pages(){
     'tracking-overview': `<div id="trackingOverviewContainer"><div style="text-align:center;padding:40px;color:var(--mut)">Loading Tracking Overview...</div></div>`,
     'tracking-audit': `<div id="trackingAuditContainer"><div style="text-align:center;padding:40px;color:var(--mut)">Loading Tracking & Quality Audit...</div></div>`,
     'team-setup': `<div id="teamSetupContainer"><div style="text-align:center;padding:40px;color:var(--mut)">Loading Team Setup...</div></div>`,
-    'vendoor-integration': `<div id="vendoorIntegrationContainer"><div style="text-align:center;padding:40px;color:var(--mut)">Loading Vendoor Integration Diagnostics...</div></div>`,
-    'auto-dispatcher': `<div id="autoDispatcherContainer"><div style="text-align:center;padding:40px;color:var(--mut)">Loading Auto Dispatcher & Smart Refill...</div></div>`,
     'working-team': workingTeam,
     'team-members': teamMembers,
     daily: hasPerf ? daily : emptyPerf('Daily Trend', '📈'),
@@ -6720,541 +4727,68 @@ window.sortTable=function(col){
   rows.forEach(r=>tb.appendChild(r));
 };
 
-let RENDERED={},currentPage='allocation',currentMainPage='operations';
-
-const MAIN_PAGES_CONFIG = {
-  dashboard: {
-    title: 'Dashboard',
-    sub: 'Executive Overview, Daily Summary & Operational Alerts',
-    defaultTab: 'overview',
-    tabs: [
-      { id: 'overview', label: 'Overview', icon: '📊' },
-      { id: 'daily', label: 'Daily Summary', icon: '📈' },
-      { id: 'alerts', label: 'Alerts & Insights', icon: '◈' },
-      { id: 'upload-status', label: 'Upload Status', icon: '📁' }
-    ]
-  },
-  operations: {
-    title: 'Operations',
-    sub: 'Daily Work Allocation, Specific Orders Uploads & Team Setup',
-    defaultTab: 'allocation',
-    tabs: [
-      { id: 'allocation', label: 'Work Allocation', icon: '⚡' },
-      { id: 'dispatcher', label: 'Auto Dispatcher', icon: '🚀' },
-      { id: 'uploads', label: 'Uploads', icon: '⭱' },
-      { id: 'working-team', label: "Today's Working Team", icon: '👥' },
-      { id: 'orders-pool', label: 'Current Orders Pool', icon: '📦' },
-      { id: 'history', label: 'Allocation History', icon: '⏳' },
-      { id: 'overview', label: 'Overview', icon: '▤' }
-    ]
-  },
-  tracking: {
-    title: 'Tracking',
-    sub: 'Cross-Check Specific Orders vs Daily Logs Reality & Audits',
-    defaultTab: 'overview',
-    tabs: [
-      { id: 'overview', label: 'Overview', icon: '🛡️' },
-      { id: 'accounts', label: 'Accounts', icon: '📑' },
-      { id: 'employees', label: 'Employees', icon: '👤' },
-      { id: 'orders', label: 'Orders', icon: '🔍' },
-      { id: 'audit', label: 'Audit', icon: '📋' }
-    ]
-  },
-  management: {
-    title: 'Management',
-    sub: 'Employee Master Registry, Team Setup & Account Configuration',
-    defaultTab: 'employees',
-    tabs: [
-      { id: 'employees', label: 'Employees', icon: '⚙' },
-      { id: 'teams', label: 'Teams', icon: '👥' },
-      { id: 'accounts', label: 'Accounts', icon: '⚡' },
-      { id: 'vendoor', label: 'Vendoor Integration', icon: '🔌' }
-    ]
-  },
-  performance: {
-    title: 'Performance',
-    sub: 'Executive Scorecards, Profiles, Cancellation & Added Orders',
-    defaultTab: 'scorecard',
-    tabs: [
-      { id: 'scorecard', label: 'Scorecard', icon: '★' },
-      { id: 'employees', label: 'Employees', icon: '👥' },
-      { id: 'cancel', label: 'Cancellation', icon: '✕' },
-      { id: 'pending', label: 'Pending', icon: '⏳' },
-      { id: 'printed', label: 'Printed', icon: '✓' },
-      { id: 'phone', label: 'Alt Phone', icon: '☎' },
-      { id: 'orders', label: 'Added Orders', icon: '＋' },
-      { id: 'data', label: 'Detailed Data', icon: '▦' }
-    ]
-  }
+let RENDERED={},currentPage='overview';
+const TITLES={
+  overview:['Executive Overview','Customer Service — Deduplicated Performance & Quality'],
+  'work-allocation':['Manual Work Allocation','Controlled Daily Task Assignment (No Auto-Assignment)'],
+  'account-config':['Account Configuration','Account-Specific Eligibility Rules & Date Exceptions'],
+  'allocation-history':['Allocation History','Audit Trail of Assigned Accounts & Statuses'],
+  'current-orders':['Current Active Work Pool','Browse Accounts Extracted from Specific Orders'],
+  accounts:['Accounts Directory','Date-Aware Account Inventory, Actual Touches & Audit'],
+  'order-tracking':['Order Tracking & Lifecycle','Full Chronological Audit Trail & Multi-Employee Touches'],
+  'employee-tracking':['Employee Reality Tracking','Assigned Accounts vs Actually Worked Reality & Team Summary'],
+  'tracking-overview':['Tracking Overview','Global Work Date Status, Upload Integrity & Team Alignment'],
+  'tracking-audit':['Tracking & Quality Audit','Inventory Reconciliation, Opening Conflicts & Unmatched Logs'],
+  'team-setup':['Team Setup','Permanent CS Team Membership (New / Pending)'],
+  'working-team':["Today's Working Team",'Select Daily Active CS Team Members'],
+  'team-members':['Employee Master','Permanent Employee Registry & Active Status'],
+  daily:['Daily Trend','Volume and Conversion Rates Across Days'],
+  cancel:['Cancellation Analysis','Per-Agent Rates & Risk Tiers'],
+  pending:['Pending Analysis','Orders Left in Pending Queue'],
+  printed:['Printed Analysis','Printing Efficiency by Agent'],
+  phone:['Alt Phone Analysis','Alternative Number Modifications'],
+  employees:['Employee Profiles','In-Depth Agent Performance Cards'],
+  orders:['Added Orders','Top Contributors (CS Only) & Department Split'],
+  insights:['Executive Insights','Operational Recommendations'],
+  scorecard:['Executive Scorecard','Ranked by KPI Performance Score'],
+  data:['Detailed Data','Full Searchable Dataset']
 };
 
-let currentSubTabs = {
-  dashboard: 'overview',
-  operations: 'allocation',
-  tracking: 'overview',
-  management: 'employees',
-  performance: 'scorecard'
-};
-
-const LEGACY_ROUTE_MAP = {
-  overview: { page: 'dashboard', tab: 'overview' },
-  daily: { page: 'dashboard', tab: 'daily' },
-  insights: { page: 'dashboard', tab: 'alerts' },
-  'work-allocation': { page: 'operations', tab: 'allocation' },
-  'auto-dispatcher': { page: 'operations', tab: 'dispatcher' },
-  dispatcher: { page: 'operations', tab: 'dispatcher' },
-  'working-team': { page: 'operations', tab: 'working-team' },
-  'current-orders': { page: 'operations', tab: 'orders-pool' },
-  'allocation-history': { page: 'operations', tab: 'history' },
-  'account-config': { page: 'management', tab: 'accounts' },
-  'team-setup': { page: 'management', tab: 'teams' },
-  'team-members': { page: 'management', tab: 'employees' },
-  vendoor: { page: 'management', tab: 'vendoor' },
-  'vendoor-integration': { page: 'management', tab: 'vendoor' },
-  accounts: { page: 'tracking', tab: 'accounts' },
-  'employee-tracking': { page: 'tracking', tab: 'employees' },
-  'order-tracking': { page: 'tracking', tab: 'orders' },
-  'tracking-overview': { page: 'tracking', tab: 'overview' },
-  'tracking-audit': { page: 'tracking', tab: 'audit' },
-  scorecard: { page: 'performance', tab: 'scorecard' },
-  employees: { page: 'performance', tab: 'employees' },
-  cancel: { page: 'performance', tab: 'cancel' },
-  pending: { page: 'performance', tab: 'pending' },
-  printed: { page: 'performance', tab: 'printed' },
-  phone: { page: 'performance', tab: 'phone' },
-  orders: { page: 'performance', tab: 'orders' },
-  data: { page: 'performance', tab: 'data' }
-};
-
-function renderTabContent(mainPage, tab) {
-  if (mainPage === 'dashboard') {
-    if (tab === 'overview') return RENDERED.overview || '';
-    if (tab === 'daily') return RENDERED.daily || '';
-    if (tab === 'alerts') return RENDERED.insights || '';
-    if (tab === 'upload-status') return `<div id="dashboardUploadStatusContainer"></div>`;
-  } else if (mainPage === 'operations') {
-    if (tab === 'allocation') return RENDERED['work-allocation'] || '';
-    if (tab === 'dispatcher') return RENDERED['auto-dispatcher'] || '';
-    if (tab === 'uploads') return `<div id="uploadsManagementContainer"></div>`;
-    if (tab === 'working-team') return RENDERED['working-team'] || '';
-    if (tab === 'orders-pool') return RENDERED['current-orders'] || '';
-    if (tab === 'history') return RENDERED['allocation-history'] || '';
-    if (tab === 'overview') return `<div id="operationsOverviewContainer"></div>`;
-  } else if (mainPage === 'tracking') {
-    if (tab === 'overview') return RENDERED['tracking-overview'] || '';
-    if (tab === 'accounts') return RENDERED.accounts || '';
-    if (tab === 'employees') return RENDERED['employee-tracking'] || '';
-    if (tab === 'orders') return RENDERED['order-tracking'] || '';
-    if (tab === 'audit') return RENDERED['tracking-audit'] || '';
-  } else if (mainPage === 'management') {
-    if (tab === 'employees') return RENDERED['team-members'] || '';
-    if (tab === 'teams') return RENDERED['team-setup'] || '';
-    if (tab === 'accounts') return RENDERED['account-config'] || '';
-    if (tab === 'vendoor') return RENDERED['vendoor-integration'] || '';
-  } else if (mainPage === 'performance') {
-    if (tab === 'scorecard') return RENDERED.scorecard || '';
-    if (tab === 'employees') return RENDERED.employees || '';
-    if (tab === 'cancel') return RENDERED.cancel || '';
-    if (tab === 'pending') return RENDERED.pending || '';
-    if (tab === 'printed') return RENDERED.printed || '';
-    if (tab === 'phone') return RENDERED.phone || '';
-    if (tab === 'orders') return RENDERED.orders || '';
-    if (tab === 'data') return RENDERED.data || '';
-  }
-  return '<div class="panel empty-alloc">No content available for this section.</div>';
-}
-
-function triggerTabLoaders(mainPage, tab) {
-  if (mainPage === 'operations') {
-    if (tab === 'allocation') loadWorkAllocationData();
-    else if (tab === 'dispatcher') loadAutoDispatcherView();
-    else if (tab === 'uploads') loadUploadsManagementView();
-    else if (tab === 'working-team') loadWorkingTeamView();
-    else if (tab === 'orders-pool') loadCurrentOrdersView();
-    else if (tab === 'history') loadAllocationHistoryView();
-    else if (tab === 'overview') loadOperationsOverviewView();
-  } else if (mainPage === 'tracking') {
-    if (tab === 'overview') loadTrackingOverviewView();
-    else if (tab === 'accounts') loadAccountsDirectoryView();
-    else if (tab === 'employees') loadEmployeeTrackingView();
-    else if (tab === 'orders') loadOrderTrackingView();
-    else if (tab === 'audit') loadTrackingAuditView();
-  } else if (mainPage === 'management') {
-    if (tab === 'employees') loadTeamMembersView();
-    else if (tab === 'teams') loadTeamSetupView();
-    else if (tab === 'accounts') loadAccountConfigView();
-    else if (tab === 'vendoor') loadVendoorIntegrationView();
-  } else if (mainPage === 'dashboard') {
-    if (tab === 'upload-status') renderDashboardUploadStatusView();
-  }
-}
-
-async function loadUploadsManagementView() {
-  const container = document.getElementById('uploadsManagementContainer');
-  if (!container) return;
-
-  const totalOrders = currentAccountsList.reduce((acc, curr) => acc + (curr.total_orders || 0), 0);
-  let newOrders = 0, penOrders = 0;
-  currentAccountsList.forEach(a => {
-    newOrders += (a.new_orders || 0);
-    penOrders += (a.pending_orders || 0);
-  });
-
-  const hasLog = D && D.exists !== false && Array.isArray(D.employees) && D.employees.length > 0;
-
-  // Fetch all known detected business dates summary
-  let detectedDatesList = [];
-  try {
-    const dRes = await apiFetch('/api/uploads/detected-dates');
-    if (dRes && Array.isArray(dRes.dates)) {
-      detectedDatesList = dRes.dates;
-    }
-  } catch (e) {
-    console.warn('Failed to fetch detected dates:', e);
-  }
-
-  container.innerHTML = `
-    <!-- Top Auto-Detect Dropzone -->
-    <div class="panel" style="border:2px dashed var(--blue);background:linear-gradient(135deg,#EFF6FF,#F8FAFC);margin-bottom:24px;padding:24px;text-align:center"
-         ondragover="event.preventDefault();this.style.background='#DBEAFE'"
-         ondragleave="this.style.background='linear-gradient(135deg,#EFF6FF,#F8FAFC)'"
-         ondrop="event.preventDefault();this.style.background='linear-gradient(135deg,#EFF6FF,#F8FAFC)';if(event.dataTransfer.files.length)handleUniversalAutoUpload(event.dataTransfer.files)">
-      <div style="font-size:36px;margin-bottom:8px">⚡📁</div>
-      <h3 style="font-size:16px;font-weight:800;color:var(--navy);margin-bottom:4px">Automatic Business Date & File Type Detection</h3>
-      <p style="font-size:12.5px;color:var(--slate);max-width:680px;margin:0 auto 16px;line-height:1.5">
-        Drag & drop any Excel file(s) here (New Orders, Pending Orders, or EOD Daily Log). The system automatically inspects the internal columns to identify the true <b>Business Date</b> and routes orders directly without manual sorting.
-      </p>
-      <div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap">
-        <label class="btn primary" for="universalAutoUploadInput" style="cursor:pointer;padding:9px 18px;font-size:13px;background:linear-gradient(135deg,var(--blue),var(--purple));border:none">
-          ⭱ Select / Drop Excel Files (Auto-Detect)
-        </label>
-      </div>
-    </div>
-
-    <!-- Detected Business Dates Registry -->
-    <div class="panel" style="margin-bottom:24px">
-      <div class="hd">
-        <div>
-          <h3>📅 Detected Business Dates Registry</h3>
-          <p>History of all uploaded dates, independent pools, and allocation status</p>
-        </div>
-        <span class="tag" style="background:#EFF6FF;color:var(--blue);font-weight:700">${detectedDatesList.length} Active Date(s)</span>
-      </div>
-
-      ${detectedDatesList.length === 0 ? `
-        <div style="padding:20px;text-align:center;color:var(--mut);font-size:13px">
-          No files uploaded yet. Drop an Excel file above to begin.
-        </div>
-      ` : `
-        <div class="tbl-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Business Date</th>
-                <th>New Orders</th>
-                <th>Pending Orders</th>
-                <th>Unique Pool</th>
-                <th>EOD Log Status</th>
-                <th>Allocation Status</th>
-                <th style="text-align:right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${detectedDatesList.map(d => {
-                const isSelected = d.business_date === currentWorkDate;
-                return `
-                  <tr style="${isSelected ? 'background:#EFF6FF;font-weight:600' : ''}">
-                    <td>
-                      <b style="font-size:13px;color:var(--navy)">${d.business_date}</b>
-                      ${isSelected ? '<span class="tag" style="background:var(--blue);color:#fff;margin-left:6px">Selected</span>' : ''}
-                    </td>
-                    <td><span style="color:#1D4ED8;font-weight:700">${fmt(d.new_orders)}</span></td>
-                    <td><span style="color:#7C3AED;font-weight:700">${fmt(d.pending_orders)}</span></td>
-                    <td><b>${fmt(d.unique_orders)}</b></td>
-                    <td>
-                      ${d.eod_actions > 0 
-                        ? `<span class="tag" style="background:#DCFCE7;color:#15803D;font-weight:700">✓ ${fmt(d.eod_actions)} Actions</span>`
-                        : `<span class="tag" style="background:#F1F5F9;color:var(--mut)">Missing</span>`}
-                    </td>
-                    <td>
-                      <span class="tag" style="background:${d.status.includes('Allocated') ? '#DCFCE7' : '#FEF3C7'};color:${d.status.includes('Allocated') ? '#15803D' : '#B45309'};font-weight:700">${d.status}</span>
-                    </td>
-                    <td style="text-align:right">
-                      <button class="btn sm ${isSelected ? 'primary' : ''}" onclick="setGlobalSelectedDate('${d.business_date}');switchSubTab('operations', 'allocation')">
-                        ${isSelected ? '⚡ View Allocation' : 'Switch to Date →'}
-                      </button>
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
-      `}
-    </div>
-
-    <!-- Current Selected Date Summary -->
-    <div class="dedup-banner" style="margin-bottom:20px">
-      <div class="di">⭱</div>
-      <div class="dt">
-        <b>Specific Orders & Operational Uploads for ${formatDisplayDate(currentWorkDate)}</b>
-        <p>All uploads are persistent and cumulative. Uploading another batch appends to the day's pool without deleting previous allocations.</p>
-      </div>
-      <div class="dm">
-        <b>${fmt(totalOrders)}</b>
-        <span>Orders in Pool</span>
-      </div>
-    </div>
-
-    <div class="grid g2e" style="margin-bottom:20px">
-      <!-- Upload Specific Orders (New) -->
-      <div class="panel" style="border-top:3px solid #2563EB">
-        <div class="hd">
-          <h3>📦 Upload NEW Specific Orders</h3>
-          <span class="tag" style="background:#DBEAFE;color:#1E40AF">SpecificOrders.xlsx</span>
-        </div>
-        <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
-          Upload unallocated orders for new accounts. The engine automatically classifies these for the New CS team.
-        </p>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <label class="btn primary sm" for="specificOrdersInput" style="cursor:pointer">⭱ Upload Specific Orders (New)</label>
-          <span style="font-size:11.5px;color:var(--mut)">${newOrders > 0 ? `✓ ${fmt(newOrders)} New orders loaded` : 'No new orders uploaded yet'}</span>
-        </div>
-      </div>
-
-      <!-- Upload Specific Orders (Pending) -->
-      <div class="panel" style="border-top:3px solid #7C3AED">
-        <div class="hd">
-          <h3>⏳ Upload PENDING Specific Orders</h3>
-          <span class="tag" style="background:#F3E8FF;color:#6B21A8">PendingOrders.xlsx</span>
-        </div>
-        <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
-          Upload backlog orders requiring customer follow-up. Automatically prioritized for the Pending CS team.
-        </p>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <label class="btn primary sm" for="pendingSpecificOrdersInput" style="cursor:pointer;background:#7C3AED;border-color:#7C3AED">⭱ Upload Specific Orders (Pending)</label>
-          <span style="font-size:11.5px;color:var(--mut)">${penOrders > 0 ? `✓ ${fmt(penOrders)} Pending orders loaded` : 'No pending orders uploaded yet'}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="grid g2" style="margin-bottom:20px">
-      <!-- Upload Daily Performance Log -->
-      <div class="panel" style="border-top:3px solid #16A34A">
-        <div class="hd">
-          <h3>📊 Upload Daily Log</h3>
-          <span class="tag" style="background:#DCFCE7;color:#15803D">Master Log</span>
-        </div>
-        <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
-          Upload operational activity log (.xlsx) containing employee actions, printing, cancellation, and phone changes for scorecard tracking.
-        </p>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <label class="btn success sm" for="fileInput" style="cursor:pointer">⭱ Upload Daily Performance Log</label>
-          <span style="font-size:11.5px;color:var(--mut)">${hasLog ? `✓ Daily log active (${D.employees.length} agents)` : 'No daily log uploaded for this date'}</span>
-        </div>
-      </div>
-
-      <!-- Cumulative Status -->
-      <div class="panel">
-        <div class="hd">
-          <h3>📑 Cumulative Inventory Summary</h3>
-          <p>Work pool state for ${formatDisplayDate(currentWorkDate)}</p>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <div class="hstat">
-            <div class="d" style="background:#2563EB"></div>
-            <div class="t"><b>Total Work Pool Orders</b><span>Specific Orders in memory & DB</span></div>
-            <div class="v">${fmt(totalOrders)}</div>
-          </div>
-          <div class="hstat">
-            <div class="d" style="background:#7C3AED"></div>
-            <div class="t"><b>Active Accounts</b><span>Distinct accounts extracted</span></div>
-            <div class="v">${currentAccountsList.length}</div>
-          </div>
-          <div class="hstat">
-            <div class="d" style="background:#16A34A"></div>
-            <div class="t"><b>Today's Working Team</b><span>CS team members available</span></div>
-            <div class="v">${todayWorkingEmployees.length}</div>
-          </div>
-        </div>
-        <div style="margin-top:14px;text-align:right">
-          <button class="btn primary sm" onclick="switchSubTab('operations', 'allocation')">Go to Work Allocation →</button>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function loadOperationsOverviewView() {
-  const container = document.getElementById('operationsOverviewContainer');
-  if (!container) return;
-
-  const totalOrders = currentAccountsList.reduce((acc, curr) => acc + (curr.total_orders || 0), 0);
-  const teamCount = todayWorkingEmployees.length;
-
-  container.innerHTML = `
-    <div class="dedup-banner" style="margin-bottom:20px">
-      <div class="di">⚡</div>
-      <div class="dt">
-        <b>Daily Operations Workflow for ${formatDisplayDate(currentWorkDate)}</b>
-        <p>Follow the 4 simple operational steps to complete fair daily work allocation and tracking.</p>
-      </div>
-      <div class="dm">
-        <b>${teamCount}</b>
-        <span>Working Agents</span>
-      </div>
-    </div>
-
-    <div class="grid g3" style="margin-bottom:20px">
-      <div class="panel" style="display:flex;flex-direction:column;justify-content:space-between">
-        <div>
-          <div style="font-size:24px;margin-bottom:8px">1️⃣</div>
-          <h3 style="margin-bottom:6px">1. Upload Orders</h3>
-          <p style="font-size:12px;color:var(--slate);line-height:1.5">Upload Specific Orders for New and Pending accounts to populate today's work pool.</p>
-        </div>
-        <button class="btn sm primary" style="margin-top:14px" onclick="switchSubTab('operations', 'uploads')">Go to Uploads →</button>
-      </div>
-
-      <div class="panel" style="display:flex;flex-direction:column;justify-content:space-between">
-        <div>
-          <div style="font-size:24px;margin-bottom:8px">2️⃣</div>
-          <h3 style="margin-bottom:6px">2. Verify Working Team</h3>
-          <p style="font-size:12px;color:var(--slate);line-height:1.5">Confirm the list of CS team members present and working today before distributing tasks.</p>
-        </div>
-        <button class="btn sm" style="margin-top:14px" onclick="switchSubTab('operations', 'working-team')">Manage Working Team →</button>
-      </div>
-
-      <div class="panel" style="display:flex;flex-direction:column;justify-content:space-between">
-        <div>
-          <div style="font-size:24px;margin-bottom:8px">3️⃣</div>
-          <h3 style="margin-bottom:6px">3. Allocate & Copy</h3>
-          <p style="font-size:12px;color:var(--slate);line-height:1.5">Run Auto Fair Allocation with 1 Account → 1 CS small account minimization, save and copy messages.</p>
-        </div>
-        <button class="btn sm success" style="margin-top:14px" onclick="switchSubTab('operations', 'allocation')">Open Allocation Workspace →</button>
-      </div>
-    </div>
-  `;
-}
-
-function renderDashboardUploadStatusView() {
-  const container = document.getElementById('dashboardUploadStatusContainer');
-  if (!container) return;
-
-  const totalOrders = currentAccountsList.reduce((acc, curr) => acc + (curr.total_orders || 0), 0);
-  let newOrders = 0, penOrders = 0;
-  currentAccountsList.forEach(a => {
-    newOrders += (a.new_orders || 0);
-    penOrders += (a.pending_orders || 0);
-  });
-
-  const hasLog = D && D.exists !== false && Array.isArray(D.employees) && D.employees.length > 0;
-
-  container.innerHTML = `
-    <div class="grid g2" style="margin-bottom:20px">
-      <div class="panel">
-        <div class="hd">
-          <h3>📊 Daily Performance Log</h3>
-          <span class="tag" style="background:${hasLog ? '#DCFCE7' : '#FEE2E2'};color:${hasLog ? '#15803D' : '#B91C1C'}">
-            ${hasLog ? '✓ Active Snapshot' : '✕ Missing for Date'}
-          </span>
-        </div>
-        <p style="font-size:12.5px;color:var(--slate);line-height:1.5;margin-bottom:14px">
-          ${hasLog ? `Daily Log loaded with <b>${D.employees.length} active agents</b> and <b>${fmt(D.kpis?.total_actions || 0)} deduplicated actions</b>.` : `No Daily Log operational records have been loaded for ${formatDisplayDate(currentWorkDate)}.`}
-        </p>
-        <label class="btn primary sm" for="fileInput" style="cursor:pointer">⭱ Upload Daily Log (.xlsx)</label>
-      </div>
-
-      <div class="panel">
-        <div class="hd">
-          <h3>📦 Specific Orders Pool</h3>
-          <span class="tag" style="background:${totalOrders > 0 ? '#DCFCE7' : '#FEF3C7'};color:${totalOrders > 0 ? '#15803D' : '#B45309'}">
-            ${totalOrders > 0 ? `✓ ${fmt(totalOrders)} Orders Loaded` : '⚠ No Orders Loaded'}
-          </span>
-        </div>
-        <p style="font-size:12.5px;color:var(--slate);line-height:1.5;margin-bottom:14px">
-          ${totalOrders > 0 ? `Active work pool contains <b>${fmt(newOrders)} New</b> and <b>${fmt(penOrders)} Pending</b> orders across <b>${currentAccountsList.length} accounts</b>.` : `No Specific Orders files have been staged for ${formatDisplayDate(currentWorkDate)}.`}
-        </p>
-        <button class="btn primary sm" onclick="show('operations', 'uploads')">Manage Specific Orders Uploads →</button>
-      </div>
-    </div>
-  `;
-}
-
-function show(pageOrCategory, subTab){
-  let mainPage = pageOrCategory || 'operations';
-  let tab = subTab;
-
-  if (LEGACY_ROUTE_MAP[mainPage]) {
-    const mapped = LEGACY_ROUTE_MAP[mainPage];
-    mainPage = mapped.page;
-    tab = tab || mapped.tab;
-  }
-
-  if (!MAIN_PAGES_CONFIG[mainPage]) {
-    mainPage = 'operations';
-  }
-
-  currentMainPage = mainPage;
-  if (!tab) {
-    tab = currentSubTabs[mainPage] || MAIN_PAGES_CONFIG[mainPage].defaultTab;
-  }
-  currentSubTabs[mainPage] = tab;
-  currentPage = tab;
-
+function show(p){
+  currentPage=p;
   try {
     const url = new URL(window.location.href);
-    url.searchParams.set('page', mainPage);
-    url.searchParams.set('tab', tab);
+    url.searchParams.set('page', p);
     url.searchParams.set('date', currentWorkDate);
-    window.history.replaceState({ date: currentWorkDate, page: mainPage, tab: tab }, '', url.toString());
+    window.history.replaceState({ date: currentWorkDate, page: p }, '', url.toString());
   } catch (e) {}
 
-  const config = MAIN_PAGES_CONFIG[mainPage];
-  document.getElementById('pgTitle').textContent = config.title;
-  document.getElementById('pgSub').textContent = config.sub;
-
-  // Update sidebar navigation active state
-  document.querySelectorAll('.nav a').forEach(a => {
-    a.classList.toggle('active', a.dataset.p === mainPage);
-  });
-
-  // Render Subnav Tabs Bar
-  let tabsHtml = `<div class="subnav-tabs" id="subnavTabsBar">`;
-  config.tabs.forEach(t => {
-    const isActive = t.id === tab;
-    tabsHtml += `
-      <button class="subnav-tab ${isActive ? 'active' : ''}" onclick="switchSubTab('${mainPage}', '${t.id}')">
-        <span>${t.icon}</span> ${t.label}
-      </button>
-    `;
-  });
-  tabsHtml += `</div>`;
-
-  // Render Page Content
-  const root = document.getElementById('root');
-  const tabContent = renderTabContent(mainPage, tab);
-  root.innerHTML = `
-    <div class="page active">
-      ${tabsHtml}
-      <div id="tabContentContainer">${tabContent}</div>
-    </div>
-  `;
-
+  const root=document.getElementById('root');
+  root.innerHTML=`<div class="page active">${RENDERED[p]||''}</div>`;
+  document.getElementById('pgTitle').textContent=TITLES[p]?TITLES[p][0]:'';
+  document.getElementById('pgSub').textContent=TITLES[p]?TITLES[p][1]:'';
+  document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active',a.dataset.p===p));
   animateBars();
-  window.scrollTo(0, 0);
+  window.scrollTo(0,0);
   document.getElementById('side').classList.remove('open');
 
-  // Trigger data loaders for subtabs
-  triggerTabLoaders(mainPage, tab);
-}
-
-function switchSubTab(mainPage, tabId) {
-  show(mainPage, tabId);
+  if (p === 'work-allocation') loadWorkAllocationData();
+  else if (p === 'working-team') loadWorkingTeamView();
+  else if (p === 'team-members') loadTeamMembersView();
+  else if (p === 'team-setup') loadTeamSetupView();
+  else if (p === 'account-config') loadAccountConfigView();
+  else if (p === 'accounts') loadAccountsDirectoryView();
+  else if (p === 'allocation-history') loadAllocationHistoryView();
+  else if (p === 'current-orders') loadCurrentOrdersView();
+  else if (p === 'order-tracking') loadOrderTrackingView();
+  else if (p === 'employee-tracking') loadEmployeeTrackingView();
+  else if (p === 'tracking-overview') loadTrackingOverviewView();
+  else if (p === 'tracking-audit') loadTrackingAuditView();
 }
 
 function render(){
   RENDERED=pages();
-  show(currentMainPage, currentSubTabs[currentMainPage]);
+  show(currentPage);
 }
 
 document.querySelectorAll('.nav a').forEach(a=>{
@@ -7281,17 +4815,7 @@ async function initApp() {
   try {
     const params = new URLSearchParams(window.location.search);
     const p = params.get('page');
-    const t = params.get('tab');
-    if (p) {
-      if (MAIN_PAGES_CONFIG[p]) {
-        currentMainPage = p;
-        if (t) currentSubTabs[p] = t;
-      } else if (LEGACY_ROUTE_MAP[p]) {
-        const mapped = LEGACY_ROUTE_MAP[p];
-        currentMainPage = mapped.page;
-        currentSubTabs[mapped.page] = mapped.tab;
-      }
-    }
+    if (p && TITLES[p]) currentPage = p;
   } catch (e) {}
 
   updateUrlDate(currentWorkDate);
