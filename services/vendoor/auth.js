@@ -1,8 +1,9 @@
 /**
- * Vendoor Authentication & Configuration Management (Phase 1 Access Proof)
+ * Vendoor Authentication & Configuration Management (Autonomous Live Operations)
  *
  * Responsibilities:
  * - Reads environment configuration securely (VENDOOR_EMPLOYEE_EMAIL, VENDOOR_EMPLOYEE_PASSWORD)
+ * - Supports server-side in-memory runtime credentials (never stored in DB or localStorage)
  * - Automated session establishment via internal employee portal (/dashboard/login)
  * - In-memory session & CSRF state management with zero-leakage guarantee
  * - Provides masked/sanitized diagnostic state
@@ -14,10 +15,49 @@ let inMemoryCsrfToken = null;
 let inMemorySessionExpiry = 0;
 let activeLoginPromise = null;
 
+// Server-side in-memory runtime credential overrides (never persisted to disk/DB)
+let runtimeEmployeeEmail = '';
+let runtimeEmployeePassword = '';
+let runtimeBaseUrl = '';
+
+/**
+ * Configure in-memory runtime credentials (server memory only, never saved to DB or localStorage)
+ */
+export function setRuntimeVendoorCredentials({ email, password, baseUrl }) {
+  if (typeof email === 'string') {
+    runtimeEmployeeEmail = email.trim();
+  }
+  if (typeof password === 'string') {
+    runtimeEmployeePassword = password.trim();
+  }
+  if (typeof baseUrl === 'string' && baseUrl.trim()) {
+    let clean = baseUrl.trim();
+    try {
+      const parsed = new URL(clean);
+      runtimeBaseUrl = parsed.origin;
+    } catch {
+      runtimeBaseUrl = clean.replace(/\/dashboard\/login\/?$/i, '').replace(/\/+$/, '');
+    }
+  }
+  // Invalidate any old session when credentials change
+  invalidateActiveSession();
+}
+
+/**
+ * Clear in-memory runtime credentials
+ */
+export function clearRuntimeVendoorCredentials() {
+  runtimeEmployeeEmail = '';
+  runtimeEmployeePassword = '';
+  runtimeBaseUrl = '';
+  invalidateActiveSession();
+}
+
 export function getVendoorConfig() {
-  const isEnabled = process.env.VENDOOR_INTEGRATION_ENABLED === 'true';
+  const isEnabled = process.env.VENDOOR_INTEGRATION_ENABLED === 'true' || Boolean(runtimeEmployeeEmail && runtimeEmployeePassword);
   const isMockMode = process.env.VENDOOR_MOCK_MODE === 'true';
-  let rawBaseUrl = process.env.VENDOOR_BASE_URL || 'https://aff.ven-door.com';
+  let rawBaseUrl = runtimeBaseUrl || process.env.VENDOOR_BASE_URL || 'https://aff.ven-door.com';
+  
   // If user configured the full login URL as base URL, normalize it to origin
   try {
     const parsed = new URL(rawBaseUrl);
@@ -27,8 +67,8 @@ export function getVendoorConfig() {
   }
   const baseUrl = rawBaseUrl.replace(/\/+$/, '');
   
-  const employeeEmail = process.env.VENDOOR_EMPLOYEE_EMAIL || process.env.VENDOOR_EMAIL || '';
-  const employeePassword = process.env.VENDOOR_EMPLOYEE_PASSWORD || process.env.VENDOOR_PASSWORD || '';
+  const employeeEmail = runtimeEmployeeEmail || process.env.VENDOOR_EMPLOYEE_EMAIL || process.env.VENDOOR_EMAIL || '';
+  const employeePassword = runtimeEmployeePassword || process.env.VENDOOR_EMPLOYEE_PASSWORD || process.env.VENDOOR_PASSWORD || '';
   
   const staticSessionCookie = process.env.VENDOOR_SESSION_COOKIE || '';
   const staticCsrfToken = process.env.VENDOOR_CSRF_TOKEN || process.env.VENDOOR_XSRF_TOKEN || '';
@@ -288,6 +328,113 @@ export async function performVendoorAutoLogin() {
 }
 
 /**
+ * Explicit test of the live Vendoor login process returning safe diagnostic proof
+ */
+export async function testVendoorLiveLogin() {
+  const cfg = getVendoorConfig();
+  if (!cfg.hasAutoLoginCredentials) {
+    return {
+      success: false,
+      login_page_live: false,
+      csrf_extraction_live: false,
+      login_live: false,
+      session_live: false,
+      error: 'Vendoor credentials (email/password) are not configured.'
+    };
+  }
+
+  const startTime = Date.now();
+  try {
+    const loginUrl = `${cfg.baseUrl}/dashboard/login`;
+    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+
+    const getRes = await fetch(loginUrl, {
+      method: 'GET',
+      headers: { 'User-Agent': userAgent, 'Accept': 'text/html' },
+      signal: AbortSignal.timeout(cfg.timeoutMs)
+    });
+
+    const loginPageLive = getRes.ok || getRes.status === 200;
+    const htmlText = await getRes.text();
+    const initialCookies = parseCookiesFromResponse(getRes);
+    const csrfToken = extractCsrfTokenFromHtml(htmlText);
+    const csrfExtractionLive = Boolean(csrfToken);
+
+    if (!csrfExtractionLive) {
+      return {
+        success: false,
+        duration_ms: Date.now() - startTime,
+        login_page_live: loginPageLive,
+        csrf_extraction_live: false,
+        login_live: false,
+        session_live: false,
+        error: 'Could not extract CSRF token from Vendoor login page.'
+      };
+    }
+
+    const formData = new URLSearchParams();
+    formData.append('_token', csrfToken);
+    formData.append('email', cfg.employeeEmail);
+    formData.append('password', cfg.employeePassword);
+    formData.append('remember', 'on');
+
+    const postHeaders = {
+      'User-Agent': userAgent,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Accept': 'text/html',
+      'Origin': cfg.baseUrl,
+      'Referer': loginUrl
+    };
+    if (initialCookies) postHeaders['Cookie'] = initialCookies;
+
+    const postRes = await fetch(loginUrl, {
+      method: 'POST',
+      headers: postHeaders,
+      body: formData.toString(),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(cfg.timeoutMs)
+    });
+
+    const postCookies = parseCookiesFromResponse(postRes);
+    const mergedCookies = mergeCookieStrings(initialCookies, postCookies);
+    const status = postRes.status;
+    const location = postRes.headers.get('location') || '';
+
+    const isRedirectToLogin = location.includes('/dashboard/login') || location.endsWith('/login');
+    const isRedirectToApp = (status === 302 || status === 301) && !isRedirectToLogin;
+    const hasSessionCookie = mergedCookies.includes('laravel_session');
+    const loginLive = !isRedirectToLogin && (isRedirectToApp || hasSessionCookie || status === 200);
+
+    if (loginLive) {
+      inMemorySessionCookie = mergedCookies;
+      inMemoryCsrfToken = csrfToken;
+      inMemorySessionExpiry = Date.now() + (2 * 60 * 60 * 1000);
+    }
+
+    return {
+      success: loginLive,
+      duration_ms: Date.now() - startTime,
+      login_page_live: loginPageLive,
+      csrf_extraction_live: csrfExtractionLive,
+      login_live: loginLive,
+      session_live: Boolean(hasSessionCookie && loginLive),
+      http_status: status,
+      error: loginLive ? null : (isRedirectToLogin ? 'Invalid email or password.' : `HTTP ${status}`)
+    };
+  } catch (err) {
+    return {
+      success: false,
+      duration_ms: Date.now() - startTime,
+      login_page_live: false,
+      csrf_extraction_live: false,
+      login_live: false,
+      session_live: false,
+      error: err.message
+    };
+  }
+}
+
+/**
  * Ensure active authenticated session before dispatching or querying Vendoor
  */
 export async function ensureAuthenticatedVendoorSession() {
@@ -342,4 +489,3 @@ export function buildVendoorHeaders(customHeaders = {}) {
 
   return headers;
 }
-

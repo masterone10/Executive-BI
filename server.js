@@ -74,6 +74,10 @@ import {
   getSafeVendoorStatus,
   testVendoorOrdersAccess,
   testVendoorLogsAccess,
+  testVendoorAuthAccess,
+  setRuntimeVendoorCredentials,
+  clearRuntimeVendoorCredentials,
+  testVendoorLiveLogin,
   getRecentConnectionTests,
   syncVendoorOrders,
   syncVendoorLogs,
@@ -1851,6 +1855,36 @@ app.get('/api/integrations/vendoor/status', (req, res) => {
   }
 });
 
+app.post('/api/integrations/vendoor/credentials', (req, res) => {
+  try {
+    const { email, password, baseUrl, action } = req.body || {};
+    if (action === 'clear') {
+      clearRuntimeVendoorCredentials();
+      return res.json({ success: true, message: 'Runtime Vendoor credentials cleared.', status: getSafeVendoorStatus() });
+    }
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'Both email and password are required.' });
+    }
+    setRuntimeVendoorCredentials({ email, password, baseUrl });
+    return res.json({
+      success: true,
+      message: 'Runtime Vendoor credentials configured in memory securely.',
+      status: getSafeVendoorStatus()
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/integrations/vendoor/test/login', async (req, res) => {
+  try {
+    const result = await testVendoorAuthAccess();
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/api/integrations/vendoor/test/orders', async (req, res) => {
   try {
     const { length, fromDate, toDate, statusFilter, search, forceMode } = req.body || {};
@@ -1921,6 +1955,37 @@ app.post('/api/integrations/vendoor/sync/logs', async (req, res) => {
       forceMode
     });
     return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/integrations/vendoor/sync/all', async (req, res) => {
+  try {
+    const { workDate, fromDate, toDate, forceMode } = req.body || {};
+    const targetDate = workDate || fromDate || new Date().toISOString().slice(0, 10);
+    const targetEndDate = toDate || targetDate;
+
+    // 1. Sync orders
+    const ordersResult = await syncVendoorOrders({
+      fromDate: targetDate,
+      toDate: targetEndDate,
+      forceMode
+    });
+
+    // 2. Sync logs
+    const logsResult = await syncVendoorLogs({
+      startDate: targetDate,
+      endDate: targetEndDate,
+      forceMode
+    });
+
+    return res.json({
+      success: ordersResult.success && logsResult.success,
+      work_date: targetDate,
+      orders_sync: ordersResult,
+      logs_sync: logsResult
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }

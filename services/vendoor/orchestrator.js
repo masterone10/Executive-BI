@@ -1,34 +1,34 @@
 /**
- * Explicit Vendoor Orders & Logs Sync Orchestrator (Phase 2 Requirements 1, 2, 3, 4)
+ * Phase 2 Vendoor Explicit Sync & Data Bridge Orchestrator
  *
  * Responsibilities:
- * - Bounded, pagination-safe Orders Sync from Vendoor API
- * - Date-range bounded Logs Sync from Vendoor Excel exports
- * - Idempotent insertion into `vendoor_orders`, `vendoor_logs`, and audit tracking in `vendoor_sync_runs`
- * - Feeds normalized activity records into `raw_log_records` with automatic identity resolution
- * - Strict isolation: Zero modification of Employee Master, Working Team, or existing Work Allocations
+ * - Deterministic, manual and autonomous sync pipelines for Orders and Logs
+ * - Inserts into isolated `vendoor_orders` and `vendoor_logs` tables
+ * - Populates `raw_log_records` for feeding unified productivity metrics
+ * - Tracks execution history with strict audit logging in `vendoor_sync_runs`
+ * - Guarantees data integrity: Idempotent inserts with UPSERT/deduplication
+ * - Zero automatic creation of employees into Master table
  */
 
+import { db } from '../../db/index.js';
 import { getVendoorDataSource } from './adapter.js';
-import { getVendoorConfig } from './auth.js';
-import { normalizeEmployeeName, getOperationalBusinessDate } from '../parser.js';
-import { classifyVendoorAction, ACTION_CLASSIFICATIONS } from './actions.js';
-import { resolveEmployeeIdentity, MATCH_STATUS } from './identity.js';
-import db from '../../db/index.js';
+import { classifyVendoorAction } from './actions.js';
+import { getOperationalBusinessDate } from './normalize.js';
+import { resolveEmployeeIdentity } from './identity.js';
 
 /**
- * Generate a unique sync run ID
+ * Generate a unique run ID for the sync batch
  */
-function createSyncRunId(resource) {
+export function createSyncRunId(prefix = 'sync') {
   const ts = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
-  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `sync_${resource}_${ts}_${rand}`;
+  const rand = Math.random().toString(36).slice(2, 6);
+  return `${prefix}-${ts}-${rand}`;
 }
 
 /**
- * Record a sync run in `vendoor_sync_runs`
+ * Record a sync run audit trail
  */
-function recordSyncRun({
+export function recordSyncRun({
   sync_run_id,
   resource,
   start_date = null,
@@ -47,8 +47,8 @@ function recordSyncRun({
       INSERT INTO vendoor_sync_runs (
         sync_run_id, resource, start_date, end_date, status,
         records_fetched, records_accepted, records_duplicated, records_rejected,
-        duration_ms, summary_json, error_safe, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        duration_ms, summary_json, error_safe
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -66,17 +66,17 @@ function recordSyncRun({
       error_safe ? String(error_safe).slice(0, 500) : null
     );
   } catch (err) {
-    console.error('[Vendoor Sync Audit] Failed to record sync run:', err.message);
+    console.error('[Vendoor Orchestrator] Failed to record sync run audit:', err.message);
   }
 }
 
 /**
- * Explicit Orders Sync (Bounded & Paginated)
+ * Explicit Orders Sync (Bounded & Paginated, Complete Dataset)
  *
  * @param {Object} options
  * @param {string} [options.fromDate] - YYYY-MM-DD
  * @param {string} [options.toDate] - YYYY-MM-DD
- * @param {number} [options.maxPages=5] - Safeguard to bound pagination
+ * @param {number} [options.maxPages=50] - Safeguard to bound pagination
  * @param {number} [options.pageSize=50] - Number of records per page (max 100)
  * @param {string} [options.statusFilter] - Optional status filter
  * @param {string} [options.forceMode] - 'mock' or 'live'
@@ -89,7 +89,7 @@ export async function syncVendoorOrders(options = {}) {
   const fromDate = options.fromDate || '';
   const toDate = options.toDate || fromDate || '';
   const pageSize = Math.min(100, Math.max(10, parseInt(options.pageSize, 10) || 50));
-  const maxPages = Math.min(20, Math.max(1, parseInt(options.maxPages, 10) || 5));
+  const maxPages = Math.min(100, Math.max(1, parseInt(options.maxPages, 10) || 50));
 
   let totalFetched = 0;
   let totalAccepted = 0;
@@ -129,7 +129,7 @@ export async function syncVendoorOrders(options = {}) {
         search: options.search || ''
       });
 
-      const orders = res.orders_sample || [];
+      const orders = res.orders || res.orders_sample || [];
       if (orders.length === 0) break;
 
       pagesProcessed++;
@@ -260,7 +260,7 @@ export async function syncVendoorLogs(options = {}) {
 
   try {
     const res = await ds.fetchLogs({ startDate, endDate });
-    const logs = res.sample_rows || [];
+    const logs = res.logs || res.sample_rows || [];
     totalFetched = logs.length;
 
     // Prepared statements for idempotent insertion into both vendoor_logs and raw_log_records

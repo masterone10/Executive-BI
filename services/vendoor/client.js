@@ -1,11 +1,12 @@
 /**
- * Isolated Vendoor HTTP Client (Phase 1 Access Proof)
+ * Isolated Vendoor HTTP Client (Phase 1 Access Proof & Autonomous Operations)
  *
  * Responsibilities:
  * - Low-level HTTP communication via fetch
  * - Timeout handling
  * - Limited retry policy (max 1 retry with exponential backoff)
- * - Safe response validation and error sanitization (never leaking tokens/cookies)
+ * - Safe response validation and error sanitization (never leaking tokens/cookies/passwords)
+ * - Automated session recovery on 401/419/HTML login redirects
  */
 
 import {
@@ -27,7 +28,19 @@ export class VendoorClientError extends Error {
 }
 
 /**
- * Execute HTTP request to Vendoor with timeout and limited retry
+ * Sanitize error text to remove any potential secret values
+ */
+function sanitizeResponseBody(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text
+    .replace(/(password|token|_token|cookie|laravel_session|authorization)=[^&\s]+/gi, '$1=[REDACTED]')
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .slice(0, 300)
+    .trim();
+}
+
+/**
+ * Execute HTTP request to Vendoor with timeout, auto-login, and single reauth retry
  */
 export async function vendoorFetch(endpointPath, options = {}) {
   const cfg = getVendoorConfig();
@@ -151,11 +164,23 @@ export async function vendoorFetch(endpointPath, options = {}) {
       }
 
       if (!response.ok) {
+        let errSnippet = '';
+        try {
+          const rawText = await response.text();
+          errSnippet = sanitizeResponseBody(rawText);
+        } catch {
+          // Ignore read error
+        }
+
+        const msg = errSnippet
+          ? `Vendoor returned HTTP ${status} error: ${errSnippet}`
+          : `Vendoor returned HTTP ${status} error.`;
+
         throw new VendoorClientError(
-          `Vendoor returned HTTP ${status} error.`,
+          msg,
           status,
           'HTTP_ERROR',
-          { durationMs, status, contentType }
+          { durationMs, status, contentType, preview: errSnippet }
         );
       }
 

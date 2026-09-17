@@ -1,15 +1,15 @@
 /**
- * Vendoor Integration Test Orchestrator & Diagnostic Logger (Phase 1 Access Proof)
+ * Vendoor Integration Test Orchestrator & Diagnostic Logger (Autonomous Operations)
  *
  * Responsibilities:
- * - Executes diagnostic test runs on-demand
+ * - Executes diagnostic test runs on-demand for Orders, Logs (1-day, 3-day, 30-day), and Live Login
  * - Logs test outcomes to `vendoor_connection_tests` DB table
  * - Formats proof summaries for API responses and UI dashboards
  * - Zero modification of Smart Allocation or Employee Master state
  */
 
 import { getVendoorDataSource } from './adapter.js';
-import { getVendoorConfig } from './auth.js';
+import { getVendoorConfig, testVendoorLiveLogin } from './auth.js';
 import db from '../../db/index.js';
 
 /**
@@ -75,15 +75,41 @@ export function getRecentConnectionTests(limit = 20) {
 }
 
 /**
- * Run diagnostic test for Orders access
+ * Run diagnostic test for Login access
+ */
+export async function testVendoorAuthAccess() {
+  const result = await testVendoorLiveLogin();
+  recordConnectionTest({
+    resource: 'auth',
+    test_type: 'live_login',
+    start_date: null,
+    end_date: null,
+    status: result.success ? 'SUCCESS' : (result.error?.includes('not configured') ? 'NOT_CONFIGURED' : 'AUTH_FAILED'),
+    http_status: result.http_status || (result.success ? 200 : 401),
+    content_type: 'text/html',
+    rows_received: result.success ? 1 : 0,
+    duration_ms: result.duration_ms || 0,
+    summary_json: {
+      login_page_live: result.login_page_live,
+      csrf_extraction_live: result.csrf_extraction_live,
+      login_live: result.login_live,
+      session_live: result.session_live
+    },
+    error_safe: result.error || null
+  });
+  return result;
+}
+
+/**
+ * Run diagnostic test for Orders access (>50 and multi-page capable)
  */
 export async function testVendoorOrdersAccess(options = {}) {
-  const cfg = getVendoorConfig();
   const forceMode = options.forceMode || null;
   const ds = getVendoorDataSource(forceMode);
-  const length = parseInt(options.length, 10) || 10;
+  const length = parseInt(options.length, 10) || 50;
   const fromDate = options.fromDate || '';
   const toDate = options.toDate || '';
+  const fetchAll = options.fetchAll === true || options.fetchAll === 'true';
 
   const startTime = Date.now();
   try {
@@ -93,7 +119,8 @@ export async function testVendoorOrdersAccess(options = {}) {
       fromDate,
       toDate,
       statusFilter: options.statusFilter || '',
-      search: options.search || ''
+      search: options.search || '',
+      fetchAll
     });
 
     const durationMs = Date.now() - startTime;
@@ -101,7 +128,7 @@ export async function testVendoorOrdersAccess(options = {}) {
 
     recordConnectionTest({
       resource: 'orders',
-      test_type: 'small_page',
+      test_type: fetchAll ? 'full_dataset' : (length > 50 ? 'large_page' : 'standard_page'),
       start_date: fromDate || null,
       end_date: toDate || null,
       status: 'SUCCESS',
@@ -115,7 +142,7 @@ export async function testVendoorOrdersAccess(options = {}) {
 
     return {
       success: true,
-      message: `Successfully connected to Vendoor orders endpoint. Retrieved ${rowsCount} sample orders in ${durationMs}ms.`,
+      message: `Successfully connected to Vendoor orders endpoint. Retrieved ${rowsCount} orders in ${durationMs}ms.`,
       result
     };
   } catch (err) {
@@ -124,7 +151,7 @@ export async function testVendoorOrdersAccess(options = {}) {
 
     recordConnectionTest({
       resource: 'orders',
-      test_type: 'small_page',
+      test_type: fetchAll ? 'full_dataset' : 'standard_page',
       start_date: fromDate || null,
       end_date: toDate || null,
       status: statusText,
@@ -148,7 +175,7 @@ export async function testVendoorOrdersAccess(options = {}) {
 }
 
 /**
- * Run diagnostic test for Logs access (1-2 days range)
+ * Run diagnostic test for Logs access (Supports 1-day, 3-day, 30-day, etc.)
  */
 export async function testVendoorLogsAccess(options = {}) {
   const forceMode = options.forceMode || null;
@@ -156,7 +183,7 @@ export async function testVendoorLogsAccess(options = {}) {
   const startDate = options.startDate || options.start_date || new Date().toISOString().slice(0, 10);
   const endDate = options.endDate || options.end_date || startDate;
   const isMultiDay = startDate !== endDate;
-  const testType = isMultiDay ? 'two_day' : 'one_day';
+  const testType = isMultiDay ? 'multi_day' : 'one_day';
 
   const startTime = Date.now();
   try {

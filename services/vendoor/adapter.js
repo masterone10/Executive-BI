@@ -1,5 +1,5 @@
 /**
- * Vendoor Data Source Adapter Interface (Phase 1 Access Proof)
+ * Vendoor Data Source Adapter Interface (Autonomous Live & Mock Operations)
  *
  * Pattern:
  * VendoorDataSource (Abstract Interface)
@@ -7,7 +7,7 @@
  * └── MockVendoorDataSource (Deterministic mock data for development & tests)
  */
 
-import { fetchVendoorOrdersPage } from './orders.js';
+import { fetchVendoorOrdersPage, fetchAllVendoorOrders } from './orders.js';
 import { fetchVendoorLogsRange, isValidISODate } from './logs.js';
 import { getVendoorConfig, getSafeVendoorStatus } from './auth.js';
 import { summarizeNormalizedLogs } from './normalize.js';
@@ -41,6 +41,9 @@ export class LiveVendoorDataSource extends VendoorDataSource {
   }
 
   async fetchOrders(options = {}) {
+    if (options.fetchAll) {
+      return await fetchAllVendoorOrders(options);
+    }
     return await fetchVendoorOrdersPage(options);
   }
 
@@ -65,23 +68,32 @@ export class MockVendoorDataSource extends VendoorDataSource {
 
   async fetchOrders(options = {}) {
     const start = parseInt(options.start, 10) || 0;
-    const length = parseInt(options.length, 10) || 10;
+    const length = parseInt(options.length, 10) || 50;
     const fromDate = options.fromDate || '2026-03-01';
     const toDate = options.toDate || '2026-03-02';
     const statusFilter = options.statusFilter || '';
 
-    const mockPool = [
-      { order_code: 'VD-100234', status: 'New', account: 'Vendoor Express', date: fromDate, city: 'Cairo', total_price: 340 },
-      { order_code: 'VD-100235', status: 'New', account: 'Vendoor Express', date: fromDate, city: 'Giza', total_price: 190 },
-      { order_code: 'VD-100236', status: 'Pending', account: 'Alpha Merchant', date: fromDate, city: 'Alexandria', total_price: 520 },
-      { order_code: 'VD-100237', status: 'Printed', account: 'Alpha Merchant', date: fromDate, city: 'Mansoura', total_price: 430 },
-      { order_code: 'VD-100238', status: 'Cancelled', account: 'Beta Logistics', date: fromDate, city: 'Tanta', total_price: 260 },
-      { order_code: 'VD-100239', status: 'New', account: 'Beta Logistics', date: fromDate, city: 'Cairo', total_price: 610 },
-      { order_code: 'VD-100240', status: 'New', account: 'Vendoor Express', date: toDate, city: 'Giza', total_price: 150 },
-      { order_code: 'VD-100241', status: 'Pending', account: 'Alpha Merchant', date: toDate, city: 'Suez', total_price: 380 },
-      { order_code: 'VD-100242', status: 'New', account: 'Delta Direct', date: toDate, city: 'Cairo', total_price: 490 },
-      { order_code: 'VD-100243', status: 'Printed', account: 'Delta Direct', date: toDate, city: 'Alexandria', total_price: 320 }
-    ];
+    // Rich mock pool supporting >50 orders for multi-page tests
+    const accounts = ['Vendoor Express', 'Alpha Merchant', 'Beta Logistics', 'Delta Direct', 'Gamma Trade'];
+    const statuses = ['New', 'Pending', 'Printed', 'Confirmed'];
+    const cities = ['Cairo', 'Giza', 'Alexandria', 'Mansoura', 'Tanta', 'Suez'];
+
+    const mockPool = [];
+    for (let i = 1; i <= 150; i++) {
+      const padId = String(100000 + i);
+      const acc = accounts[(i - 1) % accounts.length];
+      const st = statuses[(i - 1) % statuses.length];
+      const city = cities[(i - 1) % cities.length];
+      const d = (i % 2 === 0) ? toDate : fromDate;
+      mockPool.push({
+        order_code: `VD-${padId}`,
+        status: st,
+        account: acc,
+        date: d,
+        city,
+        total_price: 100 + ((i * 37) % 800)
+      });
+    }
 
     let filtered = mockPool;
     if (statusFilter) {
@@ -119,7 +131,8 @@ export class MockVendoorDataSource extends VendoorDataSource {
         statuses_sample: Array.from(statusesSet),
         sample_order_codes: pageSlice.map(o => o.order_code)
       },
-      orders_sample: pageSlice
+      orders_sample: pageSlice,
+      orders: pageSlice
     };
   }
 
@@ -134,27 +147,33 @@ export class MockVendoorDataSource extends VendoorDataSource {
       throw new Error(`startDate "${startDate}" cannot be after endDate "${endDate}".`);
     }
 
-    const startMs = new Date(startDate).getTime();
-    const endMs = new Date(endDate).getTime();
-    const diffDays = Math.round((endMs - startMs) / (1000 * 60 * 60 * 24)) + 1;
-    if (diffDays > 2) {
-      throw new Error(`Phase 1 access test is restricted to a maximum of 2 days range. Requested ${diffDays} days (${startDate} to ${endDate}).`);
+    const employees = ['Ahmed Hassan', 'Sara Mahmoud', 'Mohamed Ali', 'Nour Ibrahim', 'Khaled Omar'];
+    const actions = ['Order Printed', 'Status Updated: Pending', 'Alt Phone Added', 'Confirmed with Customer'];
+
+    const mockLogs = [];
+    const sDate = new Date(startDate + 'T00:00:00Z');
+    const eDate = new Date(endDate + 'T00:00:00Z');
+
+    let curr = new Date(sDate.getTime());
+    let counter = 100;
+    while (curr <= eDate) {
+      const dStr = curr.toISOString().slice(0, 10);
+      for (let j = 0; j < 6; j++) {
+        counter++;
+        const emp = employees[j % employees.length];
+        const act = actions[j % actions.length];
+        mockLogs.push({
+          employee_name: emp,
+          order_code: `VD-${counter}`,
+          action: act,
+          date: dStr,
+          timestamp: `${dStr}T09:${String(10 + (j * 8)).padStart(2, '0')}:00.000Z`
+        });
+      }
+      curr.setUTCDate(curr.getUTCDate() + 1);
     }
 
-    const sampleMockLogs = [
-      { employee_name: 'Ahmed Hassan', order_code: 'VD-100234', action: 'Order Printed', date: startDate, timestamp: `${startDate}T09:15:22.000Z` },
-      { employee_name: 'Ahmed Hassan', order_code: 'VD-100235', action: 'Status Updated: Pending', date: startDate, timestamp: `${startDate}T09:22:10.000Z` },
-      { employee_name: 'Sara Mahmoud', order_code: 'VD-100236', action: 'Alt Phone Added', date: startDate, timestamp: `${startDate}T09:45:00.000Z` },
-      { employee_name: 'Sara Mahmoud', order_code: 'VD-100237', action: 'Order Printed', date: startDate, timestamp: `${startDate}T10:05:14.000Z` },
-      { employee_name: 'Mohamed Ali', order_code: 'VD-100238', action: 'Cancelled by Customer', date: startDate, timestamp: `${startDate}T10:30:45.000Z` },
-      { employee_name: 'Nour Ibrahim', order_code: 'VD-100239', action: 'Order Printed', date: startDate, timestamp: `${startDate}T11:12:00.000Z` },
-      { employee_name: 'Ahmed Hassan', order_code: 'VD-100240', action: 'Order Printed', date: endDate, timestamp: `${endDate}T09:05:00.000Z` },
-      { employee_name: 'Sara Mahmoud', order_code: 'VD-100241', action: 'Status Updated: Pending', date: endDate, timestamp: `${endDate}T09:30:00.000Z` },
-      { employee_name: 'Mohamed Ali', order_code: 'VD-100242', action: 'Order Printed', date: endDate, timestamp: `${endDate}T10:15:00.000Z` }
-    ];
-
-    const logsInRange = sampleMockLogs.filter(l => l.date >= startDate && l.date <= endDate);
-    const summary = summarizeNormalizedLogs(logsInRange);
+    const summary = summarizeNormalizedLogs(mockLogs);
 
     return {
       success: true,
@@ -163,13 +182,14 @@ export class MockVendoorDataSource extends VendoorDataSource {
       http_status: 200,
       duration_ms: 18,
       content_type: 'application/vnd.ms-excel (mocked)',
-      file_size_bytes: 4096,
+      file_size_bytes: mockLogs.length * 200,
       requested_range: {
         start_date: startDate,
         end_date: endDate
       },
       summary,
-      sample_rows: logsInRange
+      sample_rows: mockLogs.slice(0, 10),
+      logs: mockLogs
     };
   }
 }

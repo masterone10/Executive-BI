@@ -18,7 +18,7 @@ import { getCompletedOrdersForDate } from './completion.js';
  *
  * @param {string} workDate - YYYY-MM-DD
  * @param {Object} [options]
- * @param {number} [options.limit=100] - Max orders to return per query
+ * @param {number|string} [options.limit=1000] - Max orders to return per query ('ALL' or number)
  * @param {string} [options.accountFilter] - Optional account filter
  * @returns {{
  *   total_unallocated_orders: number,
@@ -33,7 +33,8 @@ export function getUnallocatedOrdersPool(workDate, options = {}) {
     throw new Error('workDate is required for getUnallocatedOrdersPool');
   }
 
-  const limit = Math.min(500, Math.max(1, parseInt(options.limit, 10) || 100));
+  const rawLimit = options.limit;
+  const isAll = rawLimit === 'ALL' || rawLimit === Infinity || rawLimit === 0;
 
   // 1. Fetch already completed orders for today
   const completionData = getCompletedOrdersForDate(workDate);
@@ -121,8 +122,8 @@ export function getUnallocatedOrdersPool(workDate, options = {}) {
   for (const o of vendoorCandidates) evaluateCandidate(o);
   for (const o of currentWorkCandidates) evaluateCandidate(o);
 
-  // Apply batch limit to returned pool
-  const limitedPool = poolList.slice(0, limit);
+  const effectiveLimit = isAll ? poolList.length : Math.min(10000, Math.max(1, parseInt(rawLimit, 10) || 1000));
+  const limitedPool = poolList.slice(0, effectiveLimit);
 
   return {
     total_unallocated_orders: poolList.length,

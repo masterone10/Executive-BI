@@ -1,5 +1,5 @@
 /**
- * Neutral Data Normalizer for Vendoor Payloads (Phase 1 Access Proof)
+ * Neutral Data Normalizer for Vendoor Payloads (Autonomous Operations)
  *
  * Responsibilities:
  * - Safely normalize raw Vendoor Order objects to standard metadata
@@ -62,121 +62,67 @@ export function normalizeVendoorOrder(rawOrder) {
     }
   }
 
-  // Extract customer / city if present
+  // Extract customer and destination
   const city = String(rawOrder.city || rawOrder.governorate || rawOrder.zone || '').trim();
-  const totalPrice = Number(rawOrder.total_price || rawOrder.total || rawOrder.price || 0) || 0;
+  const totalPrice = parseFloat(rawOrder.grand_total || rawOrder.total || rawOrder.price || rawOrder.total_price || 0) || 0;
 
   return {
     order_code: orderCode,
     status,
     account,
     date: dateStr,
-    city: city || null,
+    city,
     total_price: totalPrice,
-    raw_keys_sample: Object.keys(rawOrder).slice(0, 8)
+    raw_source: {
+      client_name: rawOrder.client_name || rawOrder.customer_name || null,
+      phone: rawOrder.phone || null,
+      alt_phone: rawOrder.alt_phone || null
+    }
   };
 }
 
 /**
- * Normalizes an individual log row from Vendoor export worksheets
+ * Normalizes a single row from Vendoor Activity / Logs export (HTML, CSV, JSON)
  */
 export function normalizeVendoorLogRow(rawRow) {
   if (!rawRow || typeof rawRow !== 'object') return null;
 
-  // Extract candidate employee name
+  // Identify keys case-insensitively
+  const findValue = (possibleKeys) => {
+    for (const key of Object.keys(rawRow)) {
+      const clean = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+      for (const pk of possibleKeys) {
+        if (clean === pk.toLowerCase().replace(/[^a-z0-9]/g, '')) {
+          return rawRow[key];
+        }
+      }
+    }
+    return null;
+  };
+
+  // Find Employee Name
   const empCandidate = String(
-    rawRow['الاسم'] ||
-    rawRow['اسم الموظف'] ||
-    rawRow['الموظف'] ||
-    rawRow['اسم المستخدم'] ||
-    rawRow['المستخدم'] ||
-    rawRow['Employee'] ||
-    rawRow['employee'] ||
-    rawRow['User'] ||
-    rawRow['user'] ||
-    rawRow['User Name'] ||
-    rawRow['user_name'] ||
-    rawRow['Agent'] ||
-    rawRow['agent'] ||
-    rawRow['Created By'] ||
-    rawRow['created_by'] ||
-    rawRow['Name'] ||
-    rawRow['name'] ||
-    rawRow['action_by'] ||
-    ''
+    findValue(['User', 'Employee', 'Agent', 'Created By', 'Admin', 'Employee Name', 'user_name', 'username']) || ''
   ).trim();
 
-  // Extract order code
+  // Find Order Code
   const codeCandidate = String(
-    rawRow['كود الطلب'] ||
-    rawRow['كود الاوردر'] ||
-    rawRow['رقم الاوردر'] ||
-    rawRow['رقم الطلب'] ||
-    rawRow['Order Code'] ||
-    rawRow['order_code'] ||
-    rawRow['Code'] ||
-    rawRow['code'] ||
-    rawRow['Order ID'] ||
-    rawRow['order_id'] ||
-    rawRow['Order'] ||
-    rawRow['order'] ||
-    ''
+    findValue(['Order Code', 'Order ID', 'Code', 'Order', 'order_code', 'reference', 'tracking_number']) || ''
   ).trim();
 
-  // Extract action / status
+  // Find Action Description
   const actionCandidate = String(
-    rawRow['الاكشن'] ||
-    rawRow['الإجراء'] ||
-    rawRow['الاجراء'] ||
-    rawRow['الحالة'] ||
-    rawRow['حالة الطلب'] ||
-    rawRow['Action'] ||
-    rawRow['action'] ||
-    rawRow['Status'] ||
-    rawRow['status'] ||
-    rawRow['Event'] ||
-    rawRow['event'] ||
-    rawRow['Operation'] ||
-    rawRow['operation'] ||
-    rawRow['Note'] ||
-    rawRow['note'] ||
-    'Action Recorded'
+    findValue(['Action', 'Status', 'Event', 'Action Type', 'Operation', 'Title', 'activity']) || 'Action Recorded'
   ).trim();
 
-  // Extract timestamp
-  const rawTs =
-    rawRow['التاريخ'] ||
-    rawRow['تاريخ الاكشن'] ||
-    rawRow['الوقت'] ||
-    rawRow['Timestamp'] ||
-    rawRow['timestamp'] ||
-    rawRow['Created At'] ||
-    rawRow['created_at'] ||
-    rawRow['Date'] ||
-    rawRow['date'] ||
-    rawRow['Time'] ||
-    rawRow['time'] ||
-    null;
-
+  // Find Timestamp / Date
+  const dateCandidate = findValue(['Date', 'Timestamp', 'Created At', 'Time', 'created_at', 'date_time']);
   let timestampStr = null;
   let dateStr = null;
 
-  if (rawTs) {
-    if (typeof rawTs === 'number') {
-      // Excel serial date format or epoch ms
-      if (rawTs > 1000000000000) {
-        const d = new Date(rawTs);
-        timestampStr = d.toISOString();
-        dateStr = timestampStr.slice(0, 10);
-      } else {
-        // Excel serial days
-        const excelEpoch = new Date(Date.UTC(1899, 11, 30));
-        const d = new Date(excelEpoch.getTime() + rawTs * 86400000);
-        timestampStr = d.toISOString();
-        dateStr = timestampStr.slice(0, 10);
-      }
-    } else {
-      const s = String(rawTs).trim();
+  if (dateCandidate) {
+    const s = String(dateCandidate).trim();
+    if (s) {
       const d = new Date(s);
       if (!isNaN(d.getTime())) {
         timestampStr = d.toISOString();
@@ -200,6 +146,26 @@ export function normalizeVendoorLogRow(rawRow) {
     date: dateStr,
     source_fields: Object.keys(rawRow).slice(0, 6)
   };
+}
+
+/**
+ * Resolves the operational business date for a given timestamp
+ */
+export function getOperationalBusinessDate(timestampStr) {
+  if (!timestampStr) return { business_date: new Date().toISOString().slice(0, 10) };
+  try {
+    const s = String(timestampStr).trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+      return { business_date: s.slice(0, 10) };
+    }
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      return { business_date: d.toISOString().slice(0, 10) };
+    }
+  } catch {
+    // ignore
+  }
+  return { business_date: new Date().toISOString().slice(0, 10) };
 }
 
 /**

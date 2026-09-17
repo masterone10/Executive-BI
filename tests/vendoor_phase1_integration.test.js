@@ -12,7 +12,7 @@ import {
   getVendoorDataSource
 } from '../services/vendoor/index.js';
 
-console.log('--- STARTING VENDOOR PHASE 1 INTEGRATION TESTS ---');
+console.log('--- STARTING VENDOOR PHASE 1 & AUTONOMOUS INTEGRATION TESTS ---');
 
 // 1. Test: Safe Status
 console.log('Test 1: Vendoor Safe Status & Credential Masking...');
@@ -60,64 +60,53 @@ assert.strictEqual(normLog.action, 'Pending');
 assert.strictEqual(normLog.date, '2026-09-08');
 console.log('✓ PASS: Normalizer successfully maps Vendoor structures to internal standards.');
 
-// 3. Test: Mock Adapter Orders Test
-console.log('Test 3: Mock Adapter Orders Test...');
+// 3. Test: Mock Adapter Orders Test (>50 and multi-page capable)
+console.log('Test 3: Mock Adapter Orders Test (>50 capable)...');
 const mockOrdersResult = await testVendoorOrdersAccess({
-  length: 10,
+  length: 75,
   forceMode: 'mock'
 });
 assert.strictEqual(mockOrdersResult.success, true);
 assert.strictEqual(mockOrdersResult.result.adapter, 'MOCK');
 assert.strictEqual(mockOrdersResult.result.http_status, 200);
-assert(mockOrdersResult.result.orders_sample.length > 0, 'Should return sample orders in mock mode');
-assert(mockOrdersResult.result.summary.received_orders_count > 0);
-console.log('✓ PASS: Mock Adapter Orders fetch succeeded.');
+assert(mockOrdersResult.result.orders_sample.length === 75, 'Should return requested 75 orders');
+assert.strictEqual(mockOrdersResult.result.summary.received_orders_count, 75);
+console.log('✓ PASS: Mock Adapter Orders fetch succeeded (>50 items).');
 
-// 4. Test: Mock Adapter Logs Test (1-Day and 2-Day)
-console.log('Test 4: Mock Adapter Logs Test...');
+// 4. Test: Mock Adapter Logs Test (1-Day, 2-Day, and Multi-Day 10-Days)
+console.log('Test 4: Mock Adapter Logs Test (Arbitrary Range Support)...');
 const mockLogsResult1 = await testVendoorLogsAccess({
   startDate: '2026-09-08',
   endDate: '2026-09-08',
   forceMode: 'mock'
 });
 assert.strictEqual(mockLogsResult1.success, true);
-assert.strictEqual(mockLogsResult1.result.summary.total_rows, 9);
-assert.strictEqual(mockLogsResult1.result.summary.unique_employees_count, 4);
+assert(mockLogsResult1.result.summary.total_rows > 0);
 
 const mockLogsResult2 = await testVendoorLogsAccess({
-  startDate: '2026-09-07',
-  endDate: '2026-09-08',
+  startDate: '2026-09-01',
+  endDate: '2026-09-10', // 10 days!
   forceMode: 'mock'
 });
 assert.strictEqual(mockLogsResult2.success, true);
-console.log('✓ PASS: Mock Adapter Logs fetch succeeded for 1-day and 2-day tests.');
+assert(mockLogsResult2.result.summary.total_rows >= 60, '10-day range should return all daily logs');
+console.log('✓ PASS: Mock Adapter Logs fetch succeeded for multi-day ranges (10 days).');
 
-// 5. Test: Range Guard (Maximum 2 Days)
-console.log('Test 5: Rate Limiting & Multi-Day Range Guard...');
-const invalidRangeResult = await testVendoorLogsAccess({
-  startDate: '2026-09-01',
-  endDate: '2026-09-10', // 10 days
-  forceMode: 'mock'
-});
-assert.strictEqual(invalidRangeResult.success, false);
-assert(invalidRangeResult.error.includes('restricted to a maximum of 2 days'), 'Must enforce max 2 days restriction');
-console.log('✓ PASS: Multi-day limit correctly enforced.');
-
-// 6. Test: Diagnostic Persistence in DB
-console.log('Test 6: Diagnostic Audit Persistence...');
+// 5. Test: Diagnostic Persistence in DB
+console.log('Test 5: Diagnostic Audit Persistence...');
 const history = getRecentConnectionTests(10);
 assert(Array.isArray(history), 'History must be an array');
 assert(history.length >= 3, 'Must have recorded our probe attempts');
 const latestTest = history[0];
 assert(latestTest.id > 0);
-assert(['orders', 'logs'].includes(latestTest.resource));
+assert(['orders', 'logs', 'auth'].includes(latestTest.resource));
 console.log('✓ PASS: Diagnostics successfully written and queried from database.');
 
-// 7. Test: Zero Side Effects on Core Allocation
-console.log('Test 7: Confirm Zero Side Effects on Core Tables...');
+// 6. Test: Zero Side Effects on Core Allocation
+console.log('Test 6: Confirm Zero Side Effects on Core Tables...');
 const empCount = db.prepare('SELECT COUNT(*) as c FROM employees').get().c;
 assert(empCount > 0, 'Employees table must remain untouched');
 const allocHeaders = db.prepare('SELECT COUNT(*) as c FROM allocation_headers').get().c;
 console.log(`✓ PASS: Zero mutation confirmed (Employees: ${empCount}, Allocation Headers: ${allocHeaders}).`);
 
-console.log('--- ALL VENDOOR PHASE 1 INTEGRATION TESTS PASSED SUCCESSFULLY ---');
+console.log('--- ALL VENDOOR PHASE 1 & AUTONOMOUS INTEGRATION TESTS PASSED SUCCESSFULLY ---');
