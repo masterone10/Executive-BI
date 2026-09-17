@@ -52,15 +52,15 @@ export async function vendoorFetch(endpointPath, options = {}) {
     );
   }
 
-  // Auto-ensure active session if auto-login credentials exist
-  if (!options.skipAuthCheck && !cfg.mockMode && cfg.hasAutoLoginCredentials && !cfg.hasActiveSession) {
+  // Auto-ensure active session before performing any Vendoor operations
+  if (!options.skipAuthCheck && !cfg.mockMode) {
     try {
       await ensureAuthenticatedVendoorSession();
     } catch (authErr) {
       throw new VendoorClientError(
-        `Vendoor authentication failed: ${authErr.message}`,
+        authErr.code === 'VENDOOR_NOT_CONFIGURED' ? authErr.message : `Vendoor authentication failed: ${authErr.message}`,
         401,
-        'AUTH_FAILED',
+        authErr.code || 'AUTH_FAILED',
         { rawMessage: authErr.message }
       );
     }

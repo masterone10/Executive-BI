@@ -115,14 +115,33 @@ export function maskSecret(val) {
 export function getSafeVendoorStatus() {
   const cfg = getVendoorConfig();
   let authMethod = 'NONE';
+  let connectionState = 'NOT_CONFIGURED';
+  let sessionState = 'NOT_AUTHENTICATED';
+
   if (cfg.mockMode) {
     authMethod = 'MOCK_ADAPTER';
+    connectionState = 'CONNECTED';
+    sessionState = 'ACTIVE';
   } else if (cfg.hasAutoLoginCredentials) {
     authMethod = 'AUTO_LOGIN';
+    if (inMemorySessionCookie && inMemorySessionExpiry > Date.now()) {
+      connectionState = 'CONNECTED';
+      sessionState = 'ACTIVE';
+    } else if (inMemorySessionCookie && inMemorySessionExpiry <= Date.now()) {
+      connectionState = 'NOT_CONNECTED';
+      sessionState = 'EXPIRED';
+    } else {
+      connectionState = 'NOT_CONNECTED';
+      sessionState = 'NOT_AUTHENTICATED';
+    }
   } else if (cfg.apiToken) {
     authMethod = 'BEARER_TOKEN';
+    connectionState = 'CONNECTED';
+    sessionState = 'ACTIVE';
   } else if (cfg.sessionCookie) {
-    authMethod = 'SESSION_COOKIE';
+    authMethod = 'INTERNAL_SESSION';
+    connectionState = 'CONNECTED';
+    sessionState = 'ACTIVE';
   }
 
   return {
@@ -133,15 +152,11 @@ export function getSafeVendoorStatus() {
     has_auto_login_credentials: cfg.hasAutoLoginCredentials,
     has_active_session: cfg.hasActiveSession,
     auth_method: authMethod,
+    connection_state: connectionState, // CONNECTED / NOT CONNECTED / LOGIN_FAILED / NOT_CONFIGURED
+    session_state: sessionState, // ACTIVE / EXPIRED / NOT_AUTHENTICATED
     email_configured: Boolean(cfg.employeeEmail),
     email_preview: cfg.employeeEmail ? `${cfg.employeeEmail.slice(0, 2)}•••@•••` : 'NOT_CONFIGURED',
     password_configured: Boolean(cfg.employeePassword),
-    session_cookie_configured: Boolean(cfg.sessionCookie),
-    session_cookie_preview: cfg.sessionCookie ? maskSecret(cfg.sessionCookie) : 'NOT_CONFIGURED',
-    csrf_token_configured: Boolean(cfg.csrfToken),
-    csrf_token_preview: cfg.csrfToken ? maskSecret(cfg.csrfToken) : 'NOT_CONFIGURED',
-    api_token_configured: Boolean(cfg.apiToken),
-    api_token_preview: cfg.apiToken ? maskSecret(cfg.apiToken) : 'NOT_CONFIGURED',
     timeout_ms: cfg.timeoutMs
   };
 }
@@ -452,7 +467,9 @@ export async function ensureAuthenticatedVendoorSession() {
   if (cfg.staticSessionCookie) {
     return true;
   }
-  throw new Error('Vendoor integration requires authentication. Neither auto-login credentials nor session cookies are configured.');
+  const err = new Error('Configure Vendoor Email and Password in Management.');
+  err.code = 'VENDOOR_NOT_CONFIGURED';
+  throw err;
 }
 
 /**

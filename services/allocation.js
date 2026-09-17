@@ -802,13 +802,39 @@ export function getCurrentWorkOverview(workDate) {
     }
   }
 
+  let allocatedCount = 0;
+  try {
+    const allocRow = db.prepare(`
+      SELECT COUNT(*) as c
+      FROM order_level_allocations
+      WHERE allocation_date = ? AND employee_name IS NOT NULL AND employee_name != 'UNASSIGNED'
+    `).get(workDate);
+    allocatedCount = allocRow ? (allocRow.c || 0) : 0;
+  } catch (err) {}
+
+  const totalOrders = orderRow ? (orderRow.total_orders || 0) : 0;
+  const unallocatedCount = Math.max(0, totalOrders - allocatedCount);
+
+  let completedCount = 0;
+  try {
+    const compRow = db.prepare(`
+      SELECT COUNT(DISTINCT order_code) as c
+      FROM raw_log_records
+      WHERE log_date = ? AND action_type IN ('PRINTED', 'STATUS_CHANGE', 'PROCESSING', 'DELIVERED')
+    `).get(workDate);
+    completedCount = compRow ? (compRow.c || 0) : 0;
+  } catch (err) {}
+
   return {
     work_date: workDate,
-    total_orders: orderRow ? (orderRow.total_orders || 0) : 0,
+    total_orders: totalOrders,
     accounts_count: orderRow ? (orderRow.accounts_count || 0) : 0,
     new_count: orderRow ? (orderRow.new_count || 0) : 0,
     pending_count: orderRow ? (orderRow.pending_count || 0) : 0,
     working_team_count: teamCount,
+    allocated_count: allocatedCount,
+    unallocated_count: unallocatedCount,
+    completed_count: completedCount,
   };
 }
 
@@ -1574,12 +1600,41 @@ export function generateOrderLevelAllocation(workDate, options = {}) {
   const isRegenerate = options.regenerate === true;
 
   // 1. Fetch all opening inventory orders for this date
-  const orders = db.prepare(`
+  let orders = db.prepare(`
     SELECT id, order_code, account, status, order_date, source_file_slot
     FROM current_work_orders
     WHERE work_date = ?
     ORDER BY account ASC, order_code ASC
   `).all(workDate);
+
+  if (orders.length === 0) {
+    // Check if vendoor_orders has records for this date or in general
+    const vOrders = db.prepare(`
+      SELECT order_code, account, status, source_date as order_date
+      FROM vendoor_orders
+      WHERE source_date = ? OR source_date IS NULL OR source_date = ''
+      ORDER BY account ASC, order_code ASC
+    `).all(workDate);
+
+    if (vOrders.length > 0) {
+      const insertStmt = db.prepare(`
+        INSERT OR IGNORE INTO current_work_orders (work_date, order_code, account, status, order_date, source_file_slot)
+        VALUES (?, ?, ?, ?, ?, 1)
+      `);
+      db.transaction(() => {
+        for (const vo of vOrders) {
+          insertStmt.run(workDate, vo.order_code, vo.account || 'Unassigned', vo.status || 'New', vo.order_date || workDate);
+        }
+      })();
+
+      orders = db.prepare(`
+        SELECT id, order_code, account, status, order_date, source_file_slot
+        FROM current_work_orders
+        WHERE work_date = ?
+        ORDER BY account ASC, order_code ASC
+      `).all(workDate);
+    }
+  }
 
   if (orders.length === 0) {
     throw new Error(`No current work orders found for date: ${workDate}. Please upload New and/or Pending Orders first.`);

@@ -228,6 +228,44 @@ input:checked + .slider:before{transform:translateX(16px)}
   background: rgba(255, 255, 255, 0.2);
 }
 
+/* GLOBAL COMPACT CONTEXT BAR */
+.global-ctx-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+  overflow-x: auto;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.global-ctx-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--panel2);
+  border-radius: 8px;
+  color: var(--slate);
+  font-weight: 600;
+}
+.global-ctx-item b {
+  color: var(--ink);
+  font-weight: 700;
+}
+.global-ctx-pill {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
 @media(max-width:1100px){
   .kpis{grid-template-columns:repeat(2,1fr)}
   .g2,.g2e,.g3{grid-template-columns:1fr}
@@ -259,7 +297,7 @@ input:checked + .slider:before{transform:translateX(16px)}
     </nav>
     <div class="foot">
       Deduplicated · SQLite Persistent<br>
-      <span style="color:#16A34A;font-weight:700">✓ Manual Allocation & Audit Ready</span>
+      <span style="color:#16A34A;font-weight:700">✓ Auto Fair Allocation Ready</span>
     </div>
   </aside>
 
@@ -276,7 +314,7 @@ input:checked + .slider:before{transform:translateX(16px)}
       <!-- GLOBAL PERSISTENT DATE SELECTOR -->
       <div class="global-date-selector" id="globalDateSelector">
         <div class="gds-label-group">
-          <span class="gds-caption">Selected Date</span>
+          <span class="gds-caption">Business Date</span>
           <div class="gds-badge" id="globalDateDisplay">08 Sep 2026</div>
         </div>
         <div class="gds-controls">
@@ -299,27 +337,52 @@ input:checked + .slider:before{transform:translateX(16px)}
       </div>
 
       <div class="actions">
-        <label class="btn primary" for="universalAutoUploadInput" title="Auto-detect Business Date & File Type (New, Pending, or Daily Log) without manual sorting" style="background:linear-gradient(135deg,var(--blue),var(--purple));border:none">
-          ⚡ Auto-Detect Upload
-        </label>
-        <input class="file-in" type="file" id="universalAutoUploadInput" multiple accept=".xlsx,.xls" style="display:none" onchange="handleUniversalAutoUpload(this)">
-
-        <label class="btn" for="dailyLogInput" title="Upload Daily Log (.xlsx) at end of day to record performance snapshot">
-          ⭱ Daily Log
-        </label>
-        <input class="file-in" type="file" id="dailyLogInput" accept=".xlsx,.xls" style="display:none" onchange="uploadDailyLog(this)">
-
-        <label class="btn" for="specificOrdersInput" title="Upload Specific Orders (.xlsx) to update active accounts and manual work pool">
-          ⭱ Specific Orders
-        </label>
-        <input class="file-in" type="file" id="specificOrdersInput" accept=".xlsx,.xls" style="display:none" onchange="uploadSpecificOrders(this)">
-
-        <button class="btn" onclick="document.getElementById('shareModal').style.display='flex'">⇪ Share</button>
-        <a class="btn" href="/api/export/excel" download>⭳ Excel</a>
-        <button class="btn" onclick="window.print()">⭳ PDF</button>
+        <button class="btn primary sm" onclick="show('operations', 'allocation')" style="background:var(--blue);color:#fff">
+          ⚡ Auto Fair Allocation
+        </button>
+        <button class="btn sm" onclick="document.getElementById('shareModal').style.display='flex'">⇪ Share</button>
+        <a class="btn sm" href="/api/export/excel" download>⭳ Excel</a>
+        <button class="btn sm" onclick="window.print()">⭳ PDF</button>
       </div>
     </div>
-    <div class="wrap" id="root"></div>
+
+    <div class="wrap">
+      <!-- GLOBAL OPERATIONAL CONTEXT BAR -->
+      <div class="global-ctx-bar" id="globalContextBar">
+        <div class="global-ctx-item" title="Vendoor Employee Portal Live Status" style="cursor:pointer" onclick="show('management', 'vendoor')">
+          <span>Vendoor:</span>
+          <span class="global-ctx-pill" id="gctxVendoorStatus" style="background:#F1F5F9;color:#64748B">CHECKING...</span>
+        </div>
+        <div class="global-ctx-item" title="Today's Working Team Active Count" style="cursor:pointer" onclick="show('operations', 'working-team')">
+          <span>👥 Team:</span>
+          <b id="gctxTeamCount">0</b>
+        </div>
+        <div class="global-ctx-item" title="Current Orders Pool" style="cursor:pointer" onclick="show('operations', 'orders-pool')">
+          <span>📦 Orders:</span>
+          <b id="gctxOrdersCount">0</b>
+        </div>
+        <div class="global-ctx-item" title="Active Accounts">
+          <span>📑 Accounts:</span>
+          <b id="gctxAccountsCount">0</b>
+        </div>
+        <div class="global-ctx-item" title="Assigned vs Unallocated" style="cursor:pointer" onclick="show('operations', 'allocation')">
+          <span>⚡ Allocated:</span>
+          <b id="gctxAllocatedCount" style="color:var(--blue)">0</b>
+          <span style="opacity:0.6">/</span>
+          <span style="font-size:11px;color:var(--slate)">Unalloc: <b id="gctxUnallocatedCount">0</b></span>
+        </div>
+        <div class="global-ctx-item" title="Completed Actions Today" style="cursor:pointer" onclick="show('tracking', 'overview')">
+          <span>✓ Completed:</span>
+          <b id="gctxCompletedCount" style="color:#16A34A">0</b>
+        </div>
+        <div class="global-ctx-item" title="Continuous Auto Dispatcher Status" style="cursor:pointer" onclick="show('operations', 'dispatcher')">
+          <span>🚀 Dispatcher:</span>
+          <span class="global-ctx-pill" id="gctxDispatcherStatus" style="background:#F1F5F9;color:#64748B">IDLE</span>
+        </div>
+      </div>
+
+      <div id="root"></div>
+    </div>
   </div>
 </div>
 
@@ -461,6 +524,58 @@ function updateGlobalDateUI() {
 
   const curOrdersDate = document.getElementById('curOrdersDateInput');
   if (curOrdersDate && curOrdersDate.value !== currentWorkDate) curOrdersDate.value = currentWorkDate;
+
+  updateGlobalContextBar();
+}
+
+async function updateGlobalContextBar() {
+  try {
+    const res = await apiFetch(`/api/global-context?date=${currentWorkDate}`).catch(() => null);
+    if (!res) return;
+
+    // Vendoor status
+    const vEl = document.getElementById('gctxVendoorStatus');
+    if (vEl) {
+      const conn = res.vendoor?.connection_state || 'NOT_CONFIGURED';
+      const isConn = conn === 'CONNECTED';
+      vEl.textContent = conn;
+      vEl.style.background = isConn ? '#DCFCE7' : (conn === 'NOT_CONFIGURED' ? '#F1F5F9' : '#FEE2E2');
+      vEl.style.color = isConn ? '#15803D' : (conn === 'NOT_CONFIGURED' ? '#64748B' : '#DC2626');
+    }
+
+    // Team
+    const tEl = document.getElementById('gctxTeamCount');
+    if (tEl) tEl.textContent = fmt(res.working_team_count || 0);
+
+    // Orders
+    const oEl = document.getElementById('gctxOrdersCount');
+    if (oEl) oEl.textContent = `${fmt(res.total_orders || 0)} (${fmt(res.new_orders || 0)}N / ${fmt(res.pending_orders || 0)}P)`;
+
+    // Accounts
+    const aEl = document.getElementById('gctxAccountsCount');
+    if (aEl) aEl.textContent = fmt(res.accounts_count || 0);
+
+    // Allocated / Unallocated
+    const alEl = document.getElementById('gctxAllocatedCount');
+    if (alEl) alEl.textContent = fmt(res.allocated_count || 0);
+    const unEl = document.getElementById('gctxUnallocatedCount');
+    if (unEl) unEl.textContent = fmt(res.unallocated_count || 0);
+
+    // Completed
+    const cEl = document.getElementById('gctxCompletedCount');
+    if (cEl) cEl.textContent = fmt(res.completed_count || 0);
+
+    // Dispatcher
+    const dEl = document.getElementById('gctxDispatcherStatus');
+    if (dEl) {
+      const isRunning = Boolean(res.dispatcher?.is_running);
+      dEl.textContent = isRunning ? 'ACTIVE' : 'IDLE';
+      dEl.style.background = isRunning ? '#DCFCE7' : '#F1F5F9';
+      dEl.style.color = isRunning ? '#15803D' : '#64748B';
+    }
+  } catch (err) {
+    console.warn('Error updating global context bar:', err);
+  }
 }
 
 function navigateDateOffset(offset) {
@@ -491,7 +606,7 @@ async function setGlobalSelectedDate(newDate) {
 
   // Re-render
   RENDERED = pages();
-  show(currentPage);
+  show(currentMainPage, currentPage);
 }
 
 async function fetchPerformanceDataForDate(dateStr) {
@@ -2589,7 +2704,8 @@ let vendoorProductivityData = { profiles: [] };
 let vendoorMasterEmployeesList = [];
 let vendoorActiveTestResult = null;
 let vendoorActiveSyncResult = null;
-let currentVendoorSubTab = 'sync'; // 'sync' | 'identity' | 'productivity' | 'probes'
+let vendoorActiveLoginTestResult = null;
+let currentVendoorSubTab = 'connection'; // 'connection' | 'sync' | 'dispatcher' | 'identity' | 'productivity' | 'probes'
 
 async function loadVendoorIntegrationView() {
   const container = document.getElementById('vendoorIntegrationContainer');
@@ -2655,10 +2771,10 @@ function renderVendoorIntegrationUI() {
           <span class="tag" style="background:${isEnabled ? '#DCFCE7' : (isMock ? '#FEF3C7' : '#FEE2E2')};color:${isEnabled ? '#15803D' : (isMock ? '#B45309' : '#991B1B')};font-weight:800;font-size:11px">
             ${isEnabled ? '✓ LIVE ENABLED' : (isMock ? '⚡ MOCK ADAPTER ACTIVE' : '✕ DISABLED IN CONFIG')}
           </span>
-          <span class="tag" style="background:rgba(255,255,255,0.2);color:#fff;font-size:11px">Phase 2 Ingestion & Real-Log Profiles</span>
+          <span class="tag" style="background:rgba(255,255,255,0.2);color:#fff;font-size:11px">Autonomous Auth & Live Feed</span>
         </div>
         <p style="font-size:12px;opacity:0.9;margin:0;line-height:1.5">
-          Ingests orders & logs directly into SQLite tables, maps agent identities with full supervisor overrides, and derives empirical 10-minute tumbling window median throughput to fuel the Smart Allocation engine.
+          Autonomous employee authentication, automatic CSRF extraction, and live session management powering real-time orders ingestion and productivity profiling.
         </p>
       </div>
       <div style="display:flex;gap:8px">
@@ -2668,6 +2784,9 @@ function renderVendoorIntegrationUI() {
 
     <!-- Inner Subnav Tabs -->
     <div class="subnav-tabs" style="margin-bottom:20px">
+      <button class="subnav-tab ${currentVendoorSubTab === 'connection' ? 'active' : ''}" onclick="setVendoorSubTab('connection')">
+        <span>🔐</span> Vendoor Connection
+      </button>
       <button class="subnav-tab ${currentVendoorSubTab === 'sync' ? 'active' : ''}" onclick="setVendoorSubTab('sync')">
         <span>⚡</span> Data Sync & Ingestion
       </button>
@@ -2692,7 +2811,9 @@ function renderVendoorIntegrationUI() {
     </div>
   `;
 
-  if (currentVendoorSubTab === 'sync') {
+  if (currentVendoorSubTab === 'connection') {
+    html += renderVendoorConnectionTab(st);
+  } else if (currentVendoorSubTab === 'sync') {
     html += renderVendoorSyncTab();
   } else if (currentVendoorSubTab === 'dispatcher') {
     html += '<div id="vendoorDispatcherSubtabContainer"><div style="text-align:center;padding:40px;color:var(--mut)">Loading Auto Dispatcher...</div></div>';
@@ -2708,6 +2829,248 @@ function renderVendoorIntegrationUI() {
 
   if (currentVendoorSubTab === 'dispatcher') {
     loadAutoDispatcherView();
+  }
+}
+
+function renderVendoorConnectionTab(st) {
+  const isMock = Boolean(st.mock_mode);
+  const isEnabled = Boolean(st.enabled);
+  const emailConfigured = Boolean(st.email_configured);
+  const passwordConfigured = Boolean(st.password_configured);
+  const connState = st.connection_state || (st.has_credentials ? 'CONNECTED' : 'NOT_CONFIGURED');
+  const sessState = st.session_state || (st.has_active_session ? 'ACTIVE' : 'NOT_AUTHENTICATED');
+
+  const connColor = connState === 'CONNECTED' ? '#16A34A' : (connState === 'NOT_CONFIGURED' ? '#64748B' : '#DC2626');
+  const connBg = connState === 'CONNECTED' ? '#DCFCE7' : (connState === 'NOT_CONFIGURED' ? '#F1F5F9' : '#FEE2E2');
+
+  const sessColor = sessState === 'ACTIVE' ? '#16A34A' : (sessState === 'EXPIRED' ? '#D97706' : '#64748B');
+  const sessBg = sessState === 'ACTIVE' ? '#DCFCE7' : (sessState === 'EXPIRED' ? '#FEF3C7' : '#F1F5F9');
+
+  return `
+    <div class="grid g2" style="margin-bottom:20px">
+      <!-- Connection Form Box -->
+      <div class="panel" style="border-top:3px solid var(--navy)">
+        <div class="hd">
+          <div>
+            <h3>🔐 Vendoor Employee Authentication</h3>
+            <p>Connect using employee credentials. Automatic CSRF extraction and in-memory session management.</p>
+          </div>
+          <span class="tag" style="background:${connBg};color:${connColor};font-weight:700">
+            ${escapeHtml(connState)}
+          </span>
+        </div>
+
+        <form onsubmit="handleVendoorCredentialsSave(event)" style="margin:0;display:flex;flex-direction:column;gap:14px">
+          <div>
+            <label style="display:block;font-size:12px;font-weight:700;color:var(--slate);margin-bottom:4px">
+              Vendoor Employee Email <span style="color:#DC2626">*</span>
+            </label>
+            <input type="email" id="vendoorConnEmail" placeholder="employee@domain.com" required
+                   style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
+          </div>
+
+          <div>
+            <label style="display:block;font-size:12px;font-weight:700;color:var(--slate);margin-bottom:4px">
+              Vendoor Employee Password <span style="color:#DC2626">*</span>
+            </label>
+            <input type="password" id="vendoorConnPassword" placeholder="••••••••" required
+                   style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
+          </div>
+
+          <div>
+            <label style="display:block;font-size:12px;font-weight:700;color:var(--slate);margin-bottom:4px">
+              Vendoor Base URL (Optional)
+            </label>
+            <input type="url" id="vendoorConnBaseUrl" placeholder="https://aff.ven-door.com" value="${escapeHtml(st.base_url || 'https://aff.ven-door.com')}"
+                   style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
+          </div>
+
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px">
+            <button type="submit" class="btn primary sm" id="btnSaveVendoorCreds">
+              💾 Save Credentials
+            </button>
+            <button type="button" class="btn success sm" id="btnTestVendoorLogin" onclick="runVendoorTestLoginAction()">
+              ⚡ Test Login
+            </button>
+            <button type="button" class="btn sm" id="btnClearVendoorCreds" onclick="runVendoorClearCredentialsAction()" style="color:#DC2626;border-color:#FCA5A5">
+              🗑 Clear Credentials
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Safe Connection Diagnostic Status Box -->
+      <div class="panel" style="border-top:3px solid var(--blue)">
+        <div class="hd">
+          <div>
+            <h3>🛡️ Connection & Session Security</h3>
+            <p>Real-time server-side authentication status. Zero cookies stored in DB or client.</p>
+          </div>
+          <span class="tag" style="background:#EFF6FF;color:var(--blue);font-weight:700">In-Memory Protected</span>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#F8FAFC;border-radius:8px">
+            <span style="font-size:12.5px;color:var(--slate);font-weight:600">Vendoor Connection</span>
+            <span class="tag" style="background:${connBg};color:${connColor};font-weight:800">${escapeHtml(connState)}</span>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#F8FAFC;border-radius:8px">
+            <span style="font-size:12.5px;color:var(--slate);font-weight:600">Email Configured</span>
+            <span class="tag" style="background:${emailConfigured ? '#DCFCE7' : '#F1F5F9'};color:${emailConfigured ? '#15803D' : '#64748B'};font-weight:700">
+              ${emailConfigured ? `YES (${escapeHtml(st.email_preview || 'Masked')})` : 'NO'}
+            </span>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#F8FAFC;border-radius:8px">
+            <span style="font-size:12.5px;color:var(--slate);font-weight:600">Password Configured</span>
+            <span class="tag" style="background:${passwordConfigured ? '#DCFCE7' : '#F1F5F9'};color:${passwordConfigured ? '#15803D' : '#64748B'};font-weight:700">
+              ${passwordConfigured ? 'YES (••••••••)' : 'NO'}
+            </span>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#F8FAFC;border-radius:8px">
+            <span style="font-size:12.5px;color:var(--slate);font-weight:600">In-Memory Laravel Session</span>
+            <span class="tag" style="background:${sessBg};color:${sessColor};font-weight:800">${escapeHtml(sessState)}</span>
+          </div>
+        </div>
+
+        <p style="font-size:11.5px;color:var(--mut);line-height:1.5;margin:0">
+          🔒 <b>Security Guarantee:</b> Credentials and resulting sessions are held strictly in server RAM. Neither passwords nor session cookies are ever written to SQLite, localStorage, or frontend responses.
+        </p>
+      </div>
+    </div>
+
+    <!-- Active Live Login Test Output -->
+    <div id="vendoorActiveLoginTestResult">
+      ${renderActiveVendoorLoginTestOutput()}
+    </div>
+  `;
+}
+
+function renderActiveVendoorLoginTestOutput() {
+  if (!vendoorActiveLoginTestResult) return '';
+  const r = vendoorActiveLoginTestResult;
+  const isSucc = Boolean(r.success);
+
+  return `
+    <div class="panel" style="margin-bottom:20px;border-left:5px solid ${isSucc ? '#16A34A' : '#DC2626'};background:${isSucc ? '#F0FDF4' : '#FEF2F2'}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px">
+        <div>
+          <b style="font-size:14px;color:${isSucc ? '#166534' : '#991B1B'}">
+            ${isSucc ? '✓ Vendoor Live Login Test Succeeded' : '⚠️ Vendoor Live Login Test Failed'}
+          </b>
+          <p style="margin:4px 0 0 0;font-size:12.5px;color:${isSucc ? '#14532D' : '#7F1D1D'}">
+            ${escapeHtml(r.error ? r.error : 'Employee authentication verified. Laravel session generated automatically in memory.')}
+          </p>
+        </div>
+        <button class="btn sm" onclick="vendoorActiveLoginTestResult=null;renderVendoorIntegrationUI()" style="padding:2px 8px">✕ Dismiss</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:8px;font-size:12px">
+        <div style="background:#fff;padding:8px 10px;border-radius:6px;border:1px solid ${isSucc ? '#BBF7D0' : '#FECACA'}">
+          <span style="color:var(--mut);font-size:11px;display:block">Login Page GET</span>
+          <b>${r.login_page_live ? '✓ PASS' : '✕ FAIL'}</b>
+        </div>
+        <div style="background:#fff;padding:8px 10px;border-radius:6px;border:1px solid ${isSucc ? '#BBF7D0' : '#FECACA'}">
+          <span style="color:var(--mut);font-size:11px;display:block">CSRF Extraction</span>
+          <b>${r.csrf_extraction_live ? '✓ PASS' : '✕ FAIL'}</b>
+        </div>
+        <div style="background:#fff;padding:8px 10px;border-radius:6px;border:1px solid ${isSucc ? '#BBF7D0' : '#FECACA'}">
+          <span style="color:var(--mut);font-size:11px;display:block">Authentication POST</span>
+          <b>${r.login_live ? '✓ PASS' : '✕ FAIL'}</b>
+        </div>
+        <div style="background:#fff;padding:8px 10px;border-radius:6px;border:1px solid ${isSucc ? '#BBF7D0' : '#FECACA'}">
+          <span style="color:var(--mut);font-size:11px;display:block">Session Created</span>
+          <b>${r.session_live ? '✓ PASS (In-Memory)' : '✕ FAIL'}</b>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function handleVendoorCredentialsSave(event) {
+  event.preventDefault();
+  const email = document.getElementById('vendoorConnEmail')?.value;
+  const password = document.getElementById('vendoorConnPassword')?.value;
+  const baseUrl = document.getElementById('vendoorConnBaseUrl')?.value;
+  const btn = document.getElementById('btnSaveVendoorCreds');
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+  }
+
+  try {
+    const res = await apiFetch('/api/integrations/vendoor/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, baseUrl })
+    });
+    if (res.success) {
+      showToast('✓ Credentials Saved', 'Vendoor credentials configured in server memory securely.');
+      if (document.getElementById('vendoorConnPassword')) {
+        document.getElementById('vendoorConnPassword').value = '';
+      }
+    } else {
+      showToast('⚠️ Error', res.error || 'Failed to configure credentials.');
+    }
+  } catch (err) {
+    showToast('⚠️ Error', err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '💾 Save Credentials';
+    }
+    await loadVendoorIntegrationView();
+  }
+}
+
+async function runVendoorTestLoginAction() {
+  const btn = document.getElementById('btnTestVendoorLogin');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Testing Login...';
+  }
+
+  try {
+    const res = await apiFetch('/api/integrations/vendoor/test/login', {
+      method: 'POST'
+    });
+    vendoorActiveLoginTestResult = res;
+    if (res.success) {
+      showToast('✓ Login Successful', 'Authenticated against Vendoor employee portal and created session.');
+    } else {
+      showToast('⚠️ Login Failed', res.error || 'Authentication rejected by Vendoor.');
+    }
+  } catch (err) {
+    vendoorActiveLoginTestResult = { success: false, error: err.message };
+    showToast('⚠️ Error', err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '⚡ Test Login';
+    }
+    await loadVendoorIntegrationView();
+  }
+}
+
+async function runVendoorClearCredentialsAction() {
+  if (!confirm('Are you sure you want to clear runtime Vendoor credentials and session from memory?')) {
+    return;
+  }
+  try {
+    const res = await apiFetch('/api/integrations/vendoor/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clear' })
+    });
+    if (res.success) {
+      showToast('✓ Credentials Cleared', 'Runtime Vendoor credentials and active session cleared.');
+    }
+  } catch (err) {
+    showToast('⚠️ Error', err.message);
+  } finally {
+    await loadVendoorIntegrationView();
   }
 }
 
@@ -7246,6 +7609,9 @@ function show(pageOrCategory, subTab){
 
   // Trigger data loaders for subtabs
   triggerTabLoaders(mainPage, tab);
+
+  // Keep global context bar fresh
+  updateGlobalContextBar();
 }
 
 function switchSubTab(mainPage, tabId) {

@@ -837,8 +837,8 @@ export function getSystemAlerts(workDate = getEffectiveWorkDate()) {
       severity: 'WARNING',
       title: 'Vendoor Credentials Missing',
       scope: 'Integrations',
-      message: 'Vendoor session cookie or credentials are not configured.',
-      operator_action: 'Configure VENDOOR_SESSION_COOKIE and VENDOOR_CSRF_TOKEN in settings or environment.'
+      message: 'Vendoor employee credentials are not configured.',
+      operator_action: 'Configure Vendoor Email and Password in Management.'
     });
   }
 

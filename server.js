@@ -518,6 +518,43 @@ app.delete('/api/account-exceptions/:id', (req, res) => {
 // -------------------------------------------------------------
 // 4. WORK ALLOCATION & CURRENT WORK (Parts 13 to 25, 39, 40)
 // -------------------------------------------------------------
+app.get('/api/global-context', (req, res) => {
+  try {
+    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const overview = getCurrentWorkOverview(date);
+    const vendoor = getSafeVendoorStatus();
+    const dispatcher = getDispatcherStatus ? getDispatcherStatus() : { is_running: false };
+
+    res.json({
+      work_date: date,
+      vendoor: {
+        connection_state: vendoor.connection_state || (vendoor.has_credentials ? 'CONNECTED' : 'NOT_CONFIGURED'),
+        session_state: vendoor.session_state || (vendoor.has_active_session ? 'ACTIVE' : 'NOT_AUTHENTICATED'),
+        has_credentials: Boolean(vendoor.has_credentials),
+        has_active_session: Boolean(vendoor.has_active_session),
+        auth_method: vendoor.auth_method || 'AUTO_LOGIN',
+        email_preview: vendoor.email_preview || null
+      },
+      working_team_count: overview.working_team_count || 0,
+      total_orders: overview.total_orders || 0,
+      accounts_count: overview.accounts_count || 0,
+      new_orders: overview.new_count || 0,
+      pending_orders: overview.pending_count || 0,
+      allocated_count: overview.allocated_count || 0,
+      unallocated_count: overview.unallocated_count || 0,
+      completed_count: overview.completed_count || 0,
+      dispatcher: {
+        is_running: Boolean(dispatcher && dispatcher.is_running),
+        status: dispatcher && dispatcher.is_running ? 'ACTIVE' : 'IDLE',
+        polling_interval_ms: dispatcher ? dispatcher.polling_interval_ms : 60000
+      }
+    });
+  } catch (err) {
+    console.error('Error in /api/global-context:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/work/current', (req, res) => {
   try {
     const date = req.query.date || new Date().toISOString().split('T')[0];

@@ -31,6 +31,28 @@ describe('VENDOOR AUTHENTICATION & SECURITY FORENSIC SUITE', () => {
     const masked = maskSecret('super_secret_session_cookie_value_12345');
     assert.ok(masked.includes('••••••'));
     assert.ok(!masked.includes('session_cookie_value'));
+    assert.equal(typeof status.connection_state, 'string');
+    assert.equal(typeof status.session_state, 'string');
+  });
+
+  test('1b. Autonomous Auth Mode: Only Email & Password needed, no manual cookie required', () => {
+    delete process.env.VENDOOR_SESSION_COOKIE;
+    delete process.env.VENDOOR_CSRF_TOKEN;
+    delete process.env.LARAVEL_SESSION;
+    process.env.VENDOOR_EMPLOYEE_EMAIL = 'agent@vendoor.com';
+    process.env.VENDOOR_EMPLOYEE_PASSWORD = 'StrongPassword123';
+
+    const cfg = getVendoorConfig();
+    assert.equal(cfg.hasAutoLoginCredentials, true);
+    assert.equal(cfg.employeeEmail, 'agent@vendoor.com');
+
+    const status = getSafeVendoorStatus();
+    assert.equal(status.email_configured, true);
+    assert.equal(status.password_configured, true);
+    assert.equal(status.auth_method, 'AUTO_LOGIN');
+    // Ensure no cookie properties leaked
+    assert.equal(status.session_cookie_configured, undefined);
+    assert.equal(status.session_cookie_preview, undefined);
   });
 
   test('2. Dynamic CSRF Extraction: Extracts token from input or meta tags accurately', () => {
