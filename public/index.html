@@ -326,7 +326,7 @@ input:checked + .slider:before{transform:translateX(16px)}
       <div class="global-date-selector" id="globalDateSelector">
         <div class="gds-label-group">
           <span class="gds-caption">Business Date</span>
-          <div class="gds-badge" id="globalDateDisplay">08 Sep 2026</div>
+          <div class="gds-badge" id="globalDateDisplay">Loading...</div>
         </div>
         <div class="gds-controls">
           <button type="button" class="gds-btn" id="btnPrevDay" onclick="navigateDateOffset(-1)" title="Previous Day">
@@ -398,7 +398,7 @@ input:checked + .slider:before{transform:translateX(16px)}
 </div>
 
 <script>
-let D = {"hr":{"days":22,"tot_new":40410,"tot_printed":34990,"tot_add":12101,"tot_cancel":8065,"avg_new":1837,"avg_printed_pct":86.9,"avg_cancel_pct":20.1,"avg_add_pct":30,"best_print_day":"Jul 20","best_print_pct":101.8,"worst_cancel_day":"Jul 20","worst_cancel_pct":27.3,"peak_day":"Jul 11","peak_new":2123,"low_day":"Jul 20","low_new":1366,"date_min":"Jul 01","date_max":"Jul 22"},"daily":[{"day":"Jul 01","dow":"Wed","new":1851,"printed":1744,"cancel":323,"add":604,"printed_pct":94.2,"cancel_pct":17.5,"add_pct":32.6},{"day":"Jul 02","dow":"Thu","new":2028,"printed":1633,"cancel":433,"add":558,"printed_pct":80.5,"cancel_pct":21.4,"add_pct":27.5},{"day":"Jul 03","dow":"Fri","new":2099,"printed":1608,"cancel":347,"add":587,"printed_pct":76.6,"cancel_pct":16.5,"add_pct":28},{"day":"Jul 04","dow":"Sat","new":1930,"printed":1789,"cancel":433,"add":662,"printed_pct":92.7,"cancel_pct":22.4,"add_pct":34.3},{"day":"Jul 05","dow":"Sun","new":2024,"printed":1690,"cancel":479,"add":626,"printed_pct":83.5,"cancel_pct":23.7,"add_pct":30.9},{"day":"Jul 06","dow":"Mon","new":1955,"printed":1667,"cancel":459,"add":619,"printed_pct":85.3,"cancel_pct":23.5,"add_pct":31.7},{"day":"Jul 07","dow":"Tue","new":1777,"printed":1440,"cancel":346,"add":582,"printed_pct":81,"cancel_pct":19.5,"add_pct":32.8},{"day":"Jul 08","dow":"Wed","new":2111,"printed":1782,"cancel":433,"add":596,"printed_pct":84.4,"cancel_pct":20.5,"add_pct":28.2},{"day":"Jul 09","dow":"Thu","new":2079,"printed":1800,"cancel":313,"add":616,"printed_pct":86.6,"cancel_pct":15.1,"add_pct":29.6},{"day":"Jul 10","dow":"Fri","new":1999,"printed":1684,"cancel":312,"add":585,"printed_pct":84.2,"cancel_pct":15.6,"add_pct":29.3},{"day":"Jul 11","dow":"Sat","new":2123,"printed":1795,"cancel":450,"add":612,"printed_pct":84.6,"cancel_pct":21.2,"add_pct":28.8},{"day":"Jul 12","dow":"Sun","new":2008,"printed":1846,"cancel":412,"add":649,"printed_pct":91.9,"cancel_pct":20.5,"add_pct":32.3},{"day":"Jul 13","dow":"Mon","new":1908,"printed":1697,"cancel":399,"add":583,"printed_pct":88.9,"cancel_pct":20.9,"add_pct":30.6},{"day":"Jul 14","dow":"Tue","new":1899,"printed":1619,"cancel":363,"add":536,"printed_pct":85.3,"cancel_pct":19.1,"add_pct":28.2},{"day":"Jul 15","dow":"Wed","new":1521,"printed":1459,"cancel":376,"add":491,"printed_pct":95.9,"cancel_pct":24.7,"add_pct":32.3},{"day":"Jul 16","dow":"Thu","new":1522,"printed":1311,"cancel":327,"add":434,"printed_pct":86.1,"cancel_pct":21.5,"add_pct":28.5},{"day":"Jul 17","dow":"Fri","new":1486,"printed":1274,"cancel":273,"add":427,"printed_pct":85.7,"cancel_pct":18.4,"add_pct":28.7},{"day":"Jul 18","dow":"Sat","new":1905,"printed":1567,"cancel":295,"add":539,"printed_pct":82.3,"cancel_pct":15.5,"add_pct":28.3},{"day":"Jul 19","dow":"Sun","new":1677,"printed":1457,"cancel":327,"add":473,"printed_pct":86.9,"cancel_pct":19.5,"add_pct":28.2},{"day":"Jul 20","dow":"Mon","new":1366,"printed":1390,"cancel":373,"add":478,"printed_pct":101.8,"cancel_pct":27.3,"add_pct":35},{"day":"Jul 21","dow":"Tue","new":1599,"printed":1293,"cancel":316,"add":372,"printed_pct":80.9,"cancel_pct":19.8,"add_pct":23.3},{"day":"Jul 22","dow":"Wed","new":1543,"printed":1445,"cancel":276,"add":472,"printed_pct":93.6,"cancel_pct":17.9,"add_pct":30.6}],"log_totals":{"actions":29671,"printed":16437,"pending":8525,"processing":946,"cancelled":3763,"alt":5981},"team_cancel_rate":12.7,"team_pending_rate":28.7,"dedup":{"raw_cs_status":88583,"dedup_cs_status":29671,"removed":58912,"removed_pct":66.5},"employees":[{"name":"BASMA CS","printed":1173,"pending":515,"processing":137,"cancelled":142,"alt":381,"added":226,"actions":1967,"contribution_pct":6.6,"canc_share_pct":3.8,"pending_share_pct":6,"printed_share_pct":7.1,"alt_share_pct":6.4,"own_cancel_rate":7.2,"own_pending_rate":26.2,"own_printed_rate":59.6,"own_proc_rate":7,"own_alt_rate":19.4,"activity_score":100,"efficiency_score":66.6,"performance_score":90,"rank":1,"pctile":100,"grade":"A+","segment":"Top Performer","cancel_risk":"Normal"},{"name":"MOHAMED OSAMA CS","printed":901,"pending":236,"processing":35,"cancelled":289,"alt":269,"added":55,"actions":1461,"contribution_pct":4.9,"canc_share_pct":7.7,"pending_share_pct":2.8,"printed_share_pct":5.5,"alt_share_pct":4.5,"own_cancel_rate":19.8,"own_pending_rate":16.2,"own_printed_rate":61.7,"own_proc_rate":2.4,"own_alt_rate":18.4,"activity_score":74.3,"efficiency_score":64.1,"performance_score":71.2,"rank":2,"pctile":97.8,"grade":"A+","segment":"Top Performer","cancel_risk":"High"},{"name":"Sanaa CS","printed":616,"pending":474,"processing":65,"cancelled":55,"alt":148,"added":53,"actions":1210,"contribution_pct":4.1,"canc_share_pct":1.5,"pending_share_pct":5.6,"printed_share_pct":3.7,"alt_share_pct":2.5,"own_cancel_rate":4.5,"own_pending_rate":39.2,"own_printed_rate":50.9,"own_proc_rate":5.4,"own_alt_rate":12.2,"activity_score":61.5,"efficiency_score":56.3,"performance_score":60.1,"rank":3,"pctile":93.3,"grade":"A+","segment":"Top Performer","cancel_risk":"Normal"},{"name":"Zahraa CS","printed":668,"pending":263,"processing":56,"cancelled":210,"alt":247,"added":54,"actions":1197,"contribution_pct":4,"canc_share_pct":5.6,"pending_share_pct":3.1,"printed_share_pct":4.1,"alt_share_pct":4.1,"own_cancel_rate":17.5,"own_pending_rate":22,"own_printed_rate":55.8,"own_proc_rate":4.7,"own_alt_rate":20.6,"activity_score":60.9,"efficiency_score":60.5,"performance_score":60.7,"rank":4,"pctile":95.6,"grade":"A+","segment":"Top Performer","cancel_risk":"Elevated"},{"name":"Abdulrahman mohamed (pen) CS","printed":625,"pending":171,"processing":34,"cancelled":194,"alt":231,"added":49,"actions":1024,"contribution_pct":3.5,"canc_share_pct":5.2,"pending_share_pct":2,"printed_share_pct":3.8,"alt_share_pct":3.9,"own_cancel_rate":18.9,"own_pending_rate":16.7,"own_printed_rate":61,"own_proc_rate":3.3,"own_alt_rate":22.6,"activity_score":52.1,"efficiency_score":64.4,"performance_score":56,"rank":5,"pctile":91.1,"grade":"A+","segment":"Top Performer","cancel_risk":"Elevated"},{"name":"Eman Elkomy CS","printed":498,"pending":376,"processing":30,"cancelled":113,"alt":194,"added":23,"actions":1017,"contribution_pct":3.4,"canc_share_pct":3,"pending_share_pct":4.4,"printed_share_pct":3,"alt_share_pct":3.2,"own_cancel_rate":11.1,"own_pending_rate":37,"own_printed_rate":49,"own_proc_rate":2.9,"own_alt_rate":19.1,"activity_score":51.7,"efficiency_score":51.9,"performance_score":51.7,"rank":6,"pctile":84.4,"grade":"A","segment":"Top Performer","cancel_risk":"Normal"},{"name":"Esraa Reda CS","printed":623,"pending":305,"processing":4,"cancelled":77,"alt":195,"added":46,"actions":1009,"contribution_pct":3.4,"canc_share_pct":2,"pending_share_pct":3.6,"printed_share_pct":3.8,"alt_share_pct":3.3,"own_cancel_rate":7.6,"own_pending_rate":30.2,"own_printed_rate":61.7,"own_proc_rate":0.4,"own_alt_rate":19.3,"activity_score":51.3,"efficiency_score":62.1,"performance_score":54.6,"rank":7,"pctile":88.9,"grade":"A","segment":"Top Performer","cancel_risk":"Normal"},{"name":"Marwa new Cs","printed":315,"pending":600,"processing":36,"cancelled":32,"alt":128,"added":25,"actions":983,"contribution_pct":3.3,"canc_share_pct":0.9,"pending_share_pct":7,"printed_share_pct":1.9,"alt_share_pct":2.1,"own_cancel_rate":3.3,"own_pending_rate":61,"own_printed_rate":32,"own_proc_rate":3.7,"own_alt_rate":13,"activity_score":50,"efficiency_score":35.7,"performance_score":45.7,"rank":8,"pctile":75.6,"grade":"B+","segment":"Core Contributor","cancel_risk":"Normal"},{"name":"Asmaa Fathy CS","printed":456,"pending":333,"processing":8,"cancelled":68,"alt":144,"added":17,"actions":865,"contribution_pct":2.9,"canc_share_pct":1.8,"pending_share_pct":3.9,"printed_share_pct":2.8,"alt_share_pct":2.4,"own_cancel_rate":7.9,"own_pending_rate":38.5,"own_printed_rate":52.7,"own_proc_rate":0.9,"own_alt_rate":16.6,"activity_score":44,"efficiency_score":53.6,"performance_score":46.9,"rank":9,"pctile":80,"grade":"A","segment":"Top Performer","cancel_risk":"Normal"},{"name":"EMAN CS","printed":555,"pending":106,"processing":30,"cancelled":145,"alt":291,"added":56,"actions":836,"contribution_pct":2.8,"canc_share_pct":3.9,"pending_share_pct":1.2,"printed_share_pct":3.4,"alt_share_pct":4.9,"own_cancel_rate":17.3,"own_pending_rate":12.7,"own_printed_rate":66.4,"own_proc_rate":3.6,"own_alt_rate":34.8,"activity_score":42.5,"efficiency_score":70,"performance_score":50.7,"rank":10,"pctile":82.2,"grade":"A","segment":"Top Performer","cancel_risk":"Elevated"},{"name":"Alyaa CS","printed":608,"pending":57,"processing":36,"cancelled":131,"alt":191,"added":52,"actions":832,"contribution_pct":2.8,"canc_share_pct":3.5,"pending_share_pct":0.7,"printed_share_pct":3.7,"alt_share_pct":3.2,"own_cancel_rate":15.7,"own_pending_rate":6.9,"own_printed_rate":73.1,"own_proc_rate":4.3,"own_alt_rate":23,"activity_score":42.3,"efficiency_score":77.4,"performance_score":52.9,"rank":11,"pctile":86.7,"grade":"A","segment":"Top Performer","cancel_risk":"Elevated"},{"name":"Ahmed Ataa ( pen ) CS","printed":455,"pending":143,"processing":16,"cancelled":179,"alt":189,"added":32,"actions":793,"contribution_pct":2.7,"canc_share_pct":4.8,"pending_share_pct":1.7,"printed_share_pct":2.8,"alt_share_pct":3.2,"own_cancel_rate":22.6,"own_pending_rate":18,"own_printed_rate":57.4,"own_proc_rate":2,"own_alt_rate":23.8,"activity_score":40.3,"efficiency_score":59.4,"performance_score":46.2,"rank":12,"pctile":77.8,"grade":"B+","segment":"Core Contributor","cancel_risk":"High"},{"name":"REEM ELSAEED CS","printed":387,"pending":299,"processing":11,"cancelled":87,"alt":80,"added":19,"actions":784,"contribution_pct":2.6,"canc_share_pct":2.3,"pending_share_pct":3.5,"printed_share_pct":2.4,"alt_share_pct":1.3,"own_cancel_rate":11.1,"own_pending_rate":38.1,"own_printed_rate":49.4,"own_proc_rate":1.4,"own_alt_rate":10.2,"activity_score":39.9,"efficiency_score":50.8,"performance_score":43.1,"rank":13,"pctile":64.4,"grade":"B","segment":"Core Contributor","cancel_risk":"Normal"},{"name":"Hayam CS","printed":400,"pending":292,"processing":11,"cancelled":64,"alt":208,"added":15,"actions":767,"contribution_pct":2.6,"canc_share_pct":1.7,"pending_share_pct":3.4,"printed_share_pct":2.4,"alt_share_pct":3.5,"own_cancel_rate":8.3,"own_pending_rate":38.1,"own_printed_rate":52.2,"own_proc_rate":1.4,"own_alt_rate":27.1,"activity_score":39,"efficiency_score":53.6,"performance_score":43.5,"rank":14,"pctile":66.7,"grade":"B","segment":"Core Contributor","cancel_risk":"Normal"},{"name":"Hanan CS","printed":365,"pending":295,"processing":20,"cancelled":67,"alt":135,"added":10,"actions":747,"contribution_pct":2.5,"canc_share_pct":1.8,"pending_share_pct":3.5,"printed_share_pct":2.2,"alt_share_pct":2.3,"own_cancel_rate":9,"own_pending_rate":39.5,"own_printed_rate":48.9,"own_proc_rate":2.7,"own_alt_rate":18.1,"activity_score":38,"efficiency_score":51.5,"performance_score":42,"rank":15,"pctile":60,"grade":"B","segment":"Core Contributor","cancel_risk":"Normal"},{"name":"Hussen Ibrahim CS","printed":422,"pending":217,"processing":48,"cancelled":38,"alt":154,"added":70,"actions":725,"contribution_pct":2.4,"canc_share_pct":1,"pending_share_pct":2.5,"printed_share_pct":2.6,"alt_share_pct":2.6,"own_cancel_rate":5.2,"own_pending_rate":29.9,"own_printed_rate":58.2,"own_proc_rate":6.6,"own_alt_rate":21.2,"activity_score":36.9,"efficiency_score":64.8,"performance_score":45.2,"rank":16,"pctile":73.3,"grade":"B+","segment":"Core Contributor","cancel_risk":"Normal"},{"name":"Abrar CS","printed":418,"pending":204,"processing":31,"cancelled":55,"alt":201,"added":28,"actions":708,"contribution_pct":2.4,"canc_share_pct":1.5,"pending_share_pct":2.4,"printed_share_pct":2.5,"alt_share_pct":3.4,"own_cancel_rate":7.8,"own_pending_rate":28.8,"own_printed_rate":59,"own_proc_rate":4.4,"own_alt_rate":28.4,"activity_score":36,"efficiency_score":63.4,"performance_score":44.3,"rank":17,"pctile":71.1,"grade":"B+","segment":"Core Contributor","cancel_risk":"Normal"},{"name":"Ali Hamada CS","printed":394,"pending":220,"processing":9,"cancelled":77,"alt":308,"added":16,"actions":700,"contribution_pct":2.4,"canc_share_pct":2,"pending_share_pct":2.6,"printed_share_pct":2.4,"alt_share_pct":5.1,"own_cancel_rate":11,"own_pending_rate":31.4,"own_printed_rate":56.3,"own_proc_rate":1.3,"own_alt_rate":44,"activity_score":35.6,"efficiency_score":57.6,"performance_score":42.4,"rank":18,"pctile":62.2,"grade":"B","segment":"Core Contributor","cancel_risk":"Normal"},{"name":"Ali CS","printed":426,"pending":135,"processing":14,"cancelled":112,"alt":92,"added":31,"actions":687,"contribution_pct":2.3,"canc_share_pct":3,"pending_share_pct":1.6,"printed_share_pct":2.6,"alt_share_pct":1.5,"own_cancel_rate":16.3,"own_pending_rate":19.7,"own_printed_rate":62,"own_proc_rate":2,"own_alt_rate":13.4,"activity_score":34.9,"efficiency_score":64,"performance_score":43.6,"rank":19,"pctile":68.9,"grade":"B","segment":"Core Contributor","cancel_risk":"Elevated"},{"name":"Sahar cs","printed":365,"pending":97,"processing":23,"cancelled":189,"alt":135,"added":22,"actions":674,"contribution_pct":2.3,"canc_share_pct":5,"pending_share_pct":1.1,"printed_share_pct":2.2,"alt_share_pct":2.3,"own_cancel_rate":28,"own_pending_rate":14.4,"own_printed_rate":54.2,"own_proc_rate":3.4,"own_alt_rate":20,"activity_score":34.3,"efficiency_score":57.6,"performance_score":41.4,"rank":20,"pctile":55.6,"grade":"C+","segment":"Core Contributor","cancel_risk":"High"},{"name":"Menna Sherif cs","printed":399,"pending":214,"processing":8,"cancelled":44,"alt":115,"added":22,"actions":665,"contribution_pct":2.2,"canc_share_pct":1.2,"pending_share_pct":2.5,"printed_share_pct":2.4,"alt_share_pct":1.9,"own_cancel_rate":6.6,"own_pending_rate":32.2,"own_printed_rate":60,"own_proc_rate":1.2,"own_alt_rate":17.3,"activity_score":33.8,"efficiency_score":61.2,"performance_score":41.9,"rank":21,"pctile":57.8,"grade":"C+","segment":"Core Contributor","cancel_risk":"Normal"},{"name":"MARIAM Aaber CS","printed":339,"pending":219,"processing":16,"cancelled":68,"alt":133,"added":29,"actions":642,"contribution_pct":2.2,"canc_share_pct":1.8,"pending_share_pct":2.6,"printed_share_pct":2.1,"alt_share_pct":2.2,"own_cancel_rate":10.6,"own_pending_rate":34.1,"own_printed_rate":52.8,"own_proc_rate":2.5,"own_alt_rate":20.7,"activity_score":32.6,"efficiency_score":55.3,"performance_score":39.6,"rank":22,"pctile":53.3,"grade":"C+","segment":"Core Contributor","cancel_risk":"Normal"},{"name":"Nour CS","printed":252,"pending":283,"processing":21,"cancelled":43,"alt":63,"added":4,"actions":599,"contribution_pct":2,"canc_share_pct":1.1,"pending_share_pct":3.3,"printed_share_pct":1.5,"alt_share_pct":1.1,"own_cancel_rate":7.2,"own_pending_rate":47.2,"own_printed_rate":42.1,"own_proc_rate":3.5,"own_alt_rate":10.5,"activity_score":30.5,"efficiency_score":45.6,"performance_score":35,"rank":23,"pctile":31.1,"grade":"C","segment":"Developing","cancel_risk":"Normal"},{"name":"Mostafa Ehab CS","printed":342,"pending":186,"processing":7,"cancelled":57,"alt":180,"added":8,"actions":592,"contribution_pct":2,"canc_share_pct":1.5,"pending_share_pct":2.2,"printed_share_pct":2.1,"alt_share_pct":3,"own_cancel_rate":9.6,"own_pending_rate":31.4,"own_printed_rate":57.8,"own_proc_rate":1.2,"own_alt_rate":30.4,"activity_score":30.1,"efficiency_score":59,"performance_score":38.8,"rank":24,"pctile":51.1,"grade":"C+","segment":"Core Contributor","cancel_risk":"Normal"},{"name":"Esraa Salah cs","printed":325,"pending":100,"processing":16,"cancelled":135,"alt":88,"added":22,"actions":576,"contribution_pct":1.9,"canc_share_pct":3.6,"pending_share_pct":1.2,"printed_share_pct":2,"alt_share_pct":1.5,"own_cancel_rate":23.4,"own_pending_rate":17.4,"own_printed_rate":56.4,"own_proc_rate":2.8,"own_alt_rate":15.3,"activity_score":29.3,"efficiency_score":59.2,"performance_score":38.2,"rank":25,"pctile":44.4,"grade":"C","segment":"Developing","cancel_risk":"High"},{"name":"Menna atef cs","printed":329,"pending":162,"processing":15,"cancelled":52,"alt":113,"added":18,"actions":558,"contribution_pct":1.9,"canc_share_pct":1.4,"pending_share_pct":1.9,"printed_share_pct":2,"alt_share_pct":1.9,"own_cancel_rate":9.3,"own_pending_rate":29,"own_printed_rate":59,"own_proc_rate":2.7,"own_alt_rate":20.3,"activity_score":28.4,"efficiency_score":61.6,"performance_score":38.4,"rank":26,"pctile":46.7,"grade":"C+","segment":"Developing","cancel_risk":"Normal"},{"name":"Malak Tamer CS","printed":286,"pending":178,"processing":29,"cancelled":58,"alt":96,"added":17,"actions":551,"contribution_pct":1.9,"canc_share_pct":1.5,"pending_share_pct":2.1,"printed_share_pct":1.7,"alt_share_pct":1.6,"own_cancel_rate":10.5,"own_pending_rate":32.3,"own_printed_rate":51.9,"own_proc_rate":5.3,"own_alt_rate":17.4,"activity_score":28,"efficiency_score":57.2,"performance_score":36.9,"rank":27,"pctile":37.8,"grade":"C","segment":"Developing","cancel_risk":"Normal"},{"name":"HABIBA FAHMY (pen) CS","printed":239,"pending":204,"processing":6,"cancelled":99,"alt":96,"added":5,"actions":548,"contribution_pct":1.8,"canc_share_pct":2.6,"pending_share_pct":2.4,"printed_share_pct":1.5,"alt_share_pct":1.6,"own_cancel_rate":18.1,"own_pending_rate":37.2,"own_printed_rate":43.6,"own_proc_rate":1.1,"own_alt_rate":17.5,"activity_score":27.9,"efficiency_score":44.7,"performance_score":32.8,"rank":28,"pctile":24.4,"grade":"D","segment":"Needs Attention","cancel_risk":"Elevated"},{"name":"Rania ahmed CS","printed":313,"pending":103,"processing":26,"cancelled":101,"alt":112,"added":19,"actions":543,"contribution_pct":1.8,"canc_share_pct":2.7,"pending_share_pct":1.2,"printed_share_pct":1.9,"alt_share_pct":1.9,"own_cancel_rate":18.6,"own_pending_rate":19,"own_printed_rate":57.6,"own_proc_rate":4.8,"own_alt_rate":20.6,"activity_score":27.6,"efficiency_score":62.4,"performance_score":38,"rank":29,"pctile":42.2,"grade":"C","segment":"Developing","cancel_risk":"Elevated"},{"name":"Ali Bahlol CS","printed":314,"pending":135,"processing":13,"cancelled":33,"alt":136,"added":12,"actions":495,"contribution_pct":1.7,"canc_share_pct":0.9,"pending_share_pct":1.6,"printed_share_pct":1.9,"alt_share_pct":2.3,"own_cancel_rate":6.7,"own_pending_rate":27.3,"own_printed_rate":63.4,"own_proc_rate":2.6,"own_alt_rate":27.5,"activity_score":25.2,"efficiency_score":66.1,"performance_score":37.6,"rank":30,"pctile":40,"grade":"C","segment":"Developing","cancel_risk":"Normal"},{"name":"Fagr CS","printed":322,"pending":52,"processing":25,"cancelled":87,"alt":85,"added":30,"actions":486,"contribution_pct":1.6,"canc_share_pct":2.3,"pending_share_pct":0.6,"printed_share_pct":2,"alt_share_pct":1.4,"own_cancel_rate":17.9,"own_pending_rate":10.7,"own_printed_rate":66.3,"own_proc_rate":5.1,"own_alt_rate":17.5,"activity_score":24.7,"efficiency_score":71.4,"performance_score":38.6,"rank":31,"pctile":48.9,"grade":"C+","segment":"Developing","cancel_risk":"Elevated"},{"name":"Malak Abdelfattah CS","printed":198,"pending":158,"processing":11,"cancelled":92,"alt":65,"added":9,"actions":459,"contribution_pct":1.5,"canc_share_pct":2.4,"pending_share_pct":1.9,"printed_share_pct":1.2,"alt_share_pct":1.1,"own_cancel_rate":20,"own_pending_rate":34.4,"own_printed_rate":43.1,"own_proc_rate":2.4,"own_alt_rate":14.2,"activity_score":23.3,"efficiency_score":45.5,"performance_score":29.8,"rank":32,"pctile":15.6,"grade":"D","segment":"Needs Attention","cancel_risk":"High"},{"name":"Ali Mohamed cs","printed":294,"pending":39,"processing":12,"cancelled":108,"alt":100,"added":10,"actions":453,"contribution_pct":1.5,"canc_share_pct":2.9,"pending_share_pct":0.5,"printed_share_pct":1.8,"alt_share_pct":1.7,"own_cancel_rate":23.8,"own_pending_rate":8.6,"own_printed_rate":64.9,"own_proc_rate":2.6,"own_alt_rate":22.1,"activity_score":23,"efficiency_score":67.5,"performance_score":36.3,"rank":33,"pctile":35.6,"grade":"C","segment":"Developing","cancel_risk":"High"},{"name":"SHIMAA HUSSEIN CS","printed":277,"pending":128,"processing":12,"cancelled":31,"alt":104,"added":23,"actions":448,"contribution_pct":1.5,"canc_share_pct":0.8,"pending_share_pct":1.5,"printed_share_pct":1.7,"alt_share_pct":1.7,"own_cancel_rate":6.9,"own_pending_rate":28.6,"own_printed_rate":61.8,"own_proc_rate":2.7,"own_alt_rate":23.2,"activity_score":22.8,"efficiency_score":64.5,"performance_score":35.3,"rank":34,"pctile":33.3,"grade":"C","segment":"Developing","cancel_risk":"Normal"},{"name":"RANIA CS","printed":247,"pending":173,"processing":10,"cancelled":12,"alt":58,"added":3,"actions":442,"contribution_pct":1.5,"canc_share_pct":0.3,"pending_share_pct":2,"printed_share_pct":1.5,"alt_share_pct":1,"own_cancel_rate":2.7,"own_pending_rate":39.1,"own_printed_rate":55.9,"own_proc_rate":2.3,"own_alt_rate":13.1,"activity_score":22.5,"efficiency_score":58.1,"performance_score":33.2,"rank":35,"pctile":26.7,"grade":"D","segment":"Developing","cancel_risk":"Normal"},{"name":"Salwa Cs","printed":260,"pending":103,"processing":6,"cancelled":50,"alt":111,"added":14,"actions":419,"contribution_pct":1.4,"canc_share_pct":1.3,"pending_share_pct":1.2,"printed_share_pct":1.6,"alt_share_pct":1.9,"own_cancel_rate":11.9,"own_pending_rate":24.6,"own_printed_rate":62.1,"own_proc_rate":1.4,"own_alt_rate":26.5,"activity_score":21.3,"efficiency_score":63.5,"performance_score":33.9,"rank":36,"pctile":28.9,"grade":"D","segment":"Developing","cancel_risk":"Normal"},{"name":"MARWA AHMED CS","printed":167,"pending":9,"processing":21,"cancelled":219,"alt":40,"added":20,"actions":416,"contribution_pct":1.4,"canc_share_pct":5.8,"pending_share_pct":0.1,"printed_share_pct":1,"alt_share_pct":0.7,"own_cancel_rate":52.6,"own_pending_rate":2.2,"own_printed_rate":40.1,"own_proc_rate":5,"own_alt_rate":9.6,"activity_score":21.1,"efficiency_score":45.2,"performance_score":28.4,"rank":37,"pctile":11.1,"grade":"D","segment":"Needs Attention","cancel_risk":"High"},{"name":"Donia CS","printed":218,"pending":144,"processing":15,"cancelled":37,"alt":104,"added":15,"actions":414,"contribution_pct":1.4,"canc_share_pct":1,"pending_share_pct":1.7,"printed_share_pct":1.3,"alt_share_pct":1.7,"own_cancel_rate":8.9,"own_pending_rate":34.8,"own_printed_rate":52.7,"own_proc_rate":3.6,"own_alt_rate":25.1,"activity_score":21,"efficiency_score":56.3,"performance_score":31.6,"rank":38,"pctile":22.2,"grade":"D","segment":"Needs Attention","cancel_risk":"Normal"},{"name":"Nourhan nabil CS","printed":195,"pending":173,"processing":2,"cancelled":43,"alt":33,"added":19,"actions":413,"contribution_pct":1.4,"canc_share_pct":1.1,"pending_share_pct":2,"printed_share_pct":1.2,"alt_share_pct":0.6,"own_cancel_rate":10.4,"own_pending_rate":41.9,"own_printed_rate":47.2,"own_proc_rate":0.5,"own_alt_rate":8,"activity_score":21,"efficiency_score":47.7,"performance_score":29.1,"rank":39,"pctile":13.3,"grade":"D","segment":"Needs Attention","cancel_risk":"Normal"},{"name":"Maha Cs","printed":135,"pending":174,"processing":9,"cancelled":20,"alt":77,"added":5,"actions":338,"contribution_pct":1.1,"canc_share_pct":0.5,"pending_share_pct":2,"printed_share_pct":0.8,"alt_share_pct":1.3,"own_cancel_rate":5.9,"own_pending_rate":51.5,"own_printed_rate":39.9,"own_proc_rate":2.7,"own_alt_rate":22.8,"activity_score":17.2,"efficiency_score":42.6,"performance_score":24.7,"rank":40,"pctile":6.7,"grade":"D","segment":"Needs Attention","cancel_risk":"Normal"},{"name":"AMR REDA CS","printed":163,"pending":129,"processing":3,"cancelled":36,"alt":85,"added":4,"actions":331,"contribution_pct":1.1,"canc_share_pct":1,"pending_share_pct":1.5,"printed_share_pct":1,"alt_share_pct":1.4,"own_cancel_rate":10.9,"own_pending_rate":39,"own_printed_rate":49.2,"own_proc_rate":0.9,"own_alt_rate":25.7,"activity_score":16.8,"efficiency_score":50.2,"performance_score":26.8,"rank":41,"pctile":8.9,"grade":"D","segment":"Needs Attention","cancel_risk":"Normal"},{"name":"Mohamed Medhat CS","printed":75,"pending":66,"processing":4,"cancelled":10,"alt":31,"added":0,"actions":155,"contribution_pct":0.5,"canc_share_pct":0.3,"pending_share_pct":0.8,"printed_share_pct":0.5,"alt_share_pct":0.5,"own_cancel_rate":6.5,"own_pending_rate":42.6,"own_printed_rate":48.4,"own_proc_rate":2.6,"own_alt_rate":20,"activity_score":7.9,"efficiency_score":51,"performance_score":20.8,"rank":42,"pctile":2.2,"grade":"D","segment":"Needs Attention","cancel_risk":"Normal"},{"name":"Asmaa Cs","printed":77,"pending":55,"processing":1,"cancelled":4,"alt":35,"added":6,"actions":137,"contribution_pct":0.5,"canc_share_pct":0.1,"pending_share_pct":0.6,"printed_share_pct":0.5,"alt_share_pct":0.6,"own_cancel_rate":2.9,"own_pending_rate":40.1,"own_printed_rate":56.2,"own_proc_rate":0.7,"own_alt_rate":25.5,"activity_score":7,"efficiency_score":56.9,"performance_score":22.1,"rank":43,"pctile":4.4,"grade":"D","segment":"Needs Attention","cancel_risk":"Normal"},{"name":"RAWAN SALAMA CS","printed":0,"pending":0,"processing":4,"cancelled":0,"alt":0,"added":5,"actions":4,"contribution_pct":0,"canc_share_pct":0,"pending_share_pct":0,"printed_share_pct":0,"alt_share_pct":0,"own_cancel_rate":0,"own_pending_rate":0,"own_printed_rate":0,"own_proc_rate":100,"own_alt_rate":0,"activity_score":0.2,"efficiency_score":100,"performance_score":30.1,"rank":44,"pctile":20,"grade":"D","segment":"Needs Attention","cancel_risk":"Low Volume"},{"name":"Ahmed M CS","printed":1,"pending":0,"processing":0,"cancelled":0,"alt":0,"added":1,"actions":1,"contribution_pct":0,"canc_share_pct":0,"pending_share_pct":0,"printed_share_pct":0,"alt_share_pct":0,"own_cancel_rate":0,"own_pending_rate":0,"own_printed_rate":100,"own_proc_rate":0,"own_alt_rate":0,"activity_score":0.1,"efficiency_score":100,"performance_score":30,"rank":45,"pctile":17.8,"grade":"D","segment":"Needs Attention","cancel_risk":"Low Volume"}],"insights":["After removing duplicate log entries, each real status change counts once — this cut 58,912 repeated rows (66.5% of raw status logs).","Across 22 HR days, 40,410 new orders were logged (avg 1,837/day).","At agent level (deduplicated), cancellations are 12.7% of all 29,671 real actions; Pending is 28.7%.","7 agents carry a High cancellation-risk flag (rate ≥ 1.5× the 12.7% team average).","BASMA CS leads with 6.6% of all CS actions; the top 3 hold 15.6%.","Printing is the dominant workflow at 55.4% of real actions; Pending is a sizeable 28.7% queue.","Daily cancellation averaged 20.1%, worst on Jul 20 at 27.3%.","19,853 unique orders were added across ALL departments (deduplicated by order code)."],"observations":[["Cancellation Hotspots","7 agents exceed 1.5× the team cancel rate — led by MOHAMED OSAMA CS, Ahmed Ataa ( pen ) CS, Sahar cs. A review of their cancellation reasons is warranted."],["Top Cancellation Rate","MARWA AHMED CS cancels 52.6% of their 416 real actions (219 orders) — the highest rate on the team."],["Pending Backlog","8,525 orders sit in Pending (28.7% of actions) — a queue that was absent from the HR summary."],["Cancellation Trend","Daily cancellation rate is rising: 19.7% in the first half vs 20.5% in the second."],["Deduplication Impact","Raw logs recorded each status change ~3×. Counting once per order+employee+status removed 66.5% of rows, giving a true action count of 29,671."]],"rankings":{"most_active":[{"name":"BASMA CS","value":1967},{"name":"MOHAMED OSAMA CS","value":1461},{"name":"Sanaa CS","value":1210},{"name":"Zahraa CS","value":1197},{"name":"Abdulrahman mohamed (pen) CS","value":1024},{"name":"Eman Elkomy CS","value":1017},{"name":"Esraa Reda CS","value":1009},{"name":"Marwa new Cs","value":983},{"name":"Asmaa Fathy CS","value":865},{"name":"EMAN CS","value":836}],"printed":[{"name":"BASMA CS","value":1173},{"name":"MOHAMED OSAMA CS","value":901},{"name":"Zahraa CS","value":668},{"name":"Abdulrahman mohamed (pen) CS","value":625},{"name":"Esraa Reda CS","value":623},{"name":"Sanaa CS","value":616},{"name":"Alyaa CS","value":608},{"name":"EMAN CS","value":555},{"name":"Eman Elkomy CS","value":498},{"name":"Asmaa Fathy CS","value":456}],"pending":[{"name":"Marwa new Cs","value":600},{"name":"BASMA CS","value":515},{"name":"Sanaa CS","value":474},{"name":"Eman Elkomy CS","value":376},{"name":"Asmaa Fathy CS","value":333},{"name":"Esraa Reda CS","value":305},{"name":"REEM ELSAEED CS","value":299},{"name":"Hanan CS","value":295},{"name":"Hayam CS","value":292},{"name":"Nour CS","value":283}],"cancelled":[{"name":"MOHAMED OSAMA CS","value":289},{"name":"MARWA AHMED CS","value":219},{"name":"Zahraa CS","value":210},{"name":"Abdulrahman mohamed (pen) CS","value":194},{"name":"Sahar cs","value":189},{"name":"Ahmed Ataa ( pen ) CS","value":179},{"name":"EMAN CS","value":145},{"name":"BASMA CS","value":142},{"name":"Esraa Salah cs","value":135},{"name":"Alyaa CS","value":131}],"processing":[{"name":"BASMA CS","value":137},{"name":"Sanaa CS","value":65},{"name":"Zahraa CS","value":56},{"name":"Hussen Ibrahim CS","value":48},{"name":"Alyaa CS","value":36},{"name":"Marwa new Cs","value":36},{"name":"MOHAMED OSAMA CS","value":35},{"name":"Abdulrahman mohamed (pen) CS","value":34},{"name":"Abrar CS","value":31},{"name":"EMAN CS","value":30}],"alt":[{"name":"BASMA CS","value":381},{"name":"Ali Hamada CS","value":308},{"name":"EMAN CS","value":291},{"name":"MOHAMED OSAMA CS","value":269},{"name":"Zahraa CS","value":247},{"name":"Abdulrahman mohamed (pen) CS","value":231},{"name":"Hayam CS","value":208},{"name":"Abrar CS","value":201},{"name":"Esraa Reda CS","value":195},{"name":"Eman Elkomy CS","value":194}],"contribution":[{"name":"BASMA CS","value":6.6},{"name":"MOHAMED OSAMA CS","value":4.9},{"name":"Sanaa CS","value":4.1},{"name":"Zahraa CS","value":4},{"name":"Abdulrahman mohamed (pen) CS","value":3.5},{"name":"Eman Elkomy CS","value":3.4},{"name":"Esraa Reda CS","value":3.4},{"name":"Marwa new Cs","value":3.3},{"name":"Asmaa Fathy CS","value":2.9},{"name":"EMAN CS","value":2.8}]},"cancel_rate_rank":[{"name":"MARWA AHMED CS","value":52.6,"cancelled":219,"actions":416,"risk":"High"},{"name":"Sahar cs","value":28,"cancelled":189,"actions":674,"risk":"High"},{"name":"Ali Mohamed cs","value":23.8,"cancelled":108,"actions":453,"risk":"High"},{"name":"Esraa Salah cs","value":23.4,"cancelled":135,"actions":576,"risk":"High"},{"name":"Ahmed Ataa ( pen ) CS","value":22.6,"cancelled":179,"actions":793,"risk":"High"},{"name":"Malak Abdelfattah CS","value":20,"cancelled":92,"actions":459,"risk":"High"},{"name":"MOHAMED OSAMA CS","value":19.8,"cancelled":289,"actions":1461,"risk":"High"},{"name":"Abdulrahman mohamed (pen) CS","value":18.9,"cancelled":194,"actions":1024,"risk":"Elevated"},{"name":"Rania ahmed CS","value":18.6,"cancelled":101,"actions":543,"risk":"Elevated"},{"name":"HABIBA FAHMY (pen) CS","value":18.1,"cancelled":99,"actions":548,"risk":"Elevated"},{"name":"Fagr CS","value":17.9,"cancelled":87,"actions":486,"risk":"Elevated"},{"name":"Zahraa CS","value":17.5,"cancelled":210,"actions":1197,"risk":"Elevated"},{"name":"EMAN CS","value":17.3,"cancelled":145,"actions":836,"risk":"Elevated"},{"name":"Ali CS","value":16.3,"cancelled":112,"actions":687,"risk":"Elevated"},{"name":"Alyaa CS","value":15.7,"cancelled":131,"actions":832,"risk":"Elevated"}],"added_all_top":[{"name":"Jehan data entry","value":2799,"is_cs":false},{"name":"Mariam data entry","value":2634,"is_cs":false},{"name":"Hanaa Data Entry","value":2211,"is_cs":false},{"name":"ManalDataEntry","value":1464,"is_cs":false},{"name":"Sohila Sakr","value":1235,"is_cs":false},{"name":"Alaa","value":1076,"is_cs":false},{"name":"YOMNA ABDELRAZIQ","value":909,"is_cs":false},{"name":"Amal data entry","value":906,"is_cs":false},{"name":"Mohamed","value":565,"is_cs":false},{"name":"Reham","value":535,"is_cs":false},{"name":"Ahmed mohamed - Vemoney","value":460,"is_cs":false},{"name":"Eslam","value":375,"is_cs":false},{"name":"VLOVY","value":277,"is_cs":false},{"name":"Sara Data Entry","value":241,"is_cs":false},{"name":"محمد","value":240,"is_cs":false}],"added_cs":1219,"added_noncs":18634,"status_totals":{"Printed":16437,"Pending":8525,"Processing":946,"Cancelled":3763},"allCSContributors":[{"name":"BASMA CS","employee":"BASMA CS","value":226,"count":226,"is_cs":true},{"name":"Hussen Ibrahim CS","employee":"Hussen Ibrahim CS","value":70,"count":70,"is_cs":true},{"name":"EMAN CS","employee":"EMAN CS","value":56,"count":56,"is_cs":true},{"name":"MOHAMED OSAMA CS","employee":"MOHAMED OSAMA CS","value":55,"count":55,"is_cs":true},{"name":"Zahraa CS","employee":"Zahraa CS","value":54,"count":54,"is_cs":true},{"name":"Sanaa CS","employee":"Sanaa CS","value":53,"count":53,"is_cs":true},{"name":"Alyaa CS","employee":"Alyaa CS","value":52,"count":52,"is_cs":true},{"name":"Abdulrahman mohamed (pen) CS","employee":"Abdulrahman mohamed (pen) CS","value":49,"count":49,"is_cs":true},{"name":"Esraa Reda CS","employee":"Esraa Reda CS","value":46,"count":46,"is_cs":true},{"name":"Ahmed Ataa ( pen ) CS","employee":"Ahmed Ataa ( pen ) CS","value":32,"count":32,"is_cs":true},{"name":"Ali CS","employee":"Ali CS","value":31,"count":31,"is_cs":true},{"name":"Fagr CS","employee":"Fagr CS","value":30,"count":30,"is_cs":true},{"name":"MARIAM Aaber CS","employee":"MARIAM Aaber CS","value":29,"count":29,"is_cs":true},{"name":"Abrar CS","employee":"Abrar CS","value":28,"count":28,"is_cs":true},{"name":"Marwa new Cs","employee":"Marwa new Cs","value":25,"count":25,"is_cs":true},{"name":"Eman Elkomy CS","employee":"Eman Elkomy CS","value":23,"count":23,"is_cs":true},{"name":"SHIMAA HUSSEIN CS","employee":"SHIMAA HUSSEIN CS","value":23,"count":23,"is_cs":true},{"name":"Sahar cs","employee":"Sahar cs","value":22,"count":22,"is_cs":true},{"name":"Menna Sherif cs","employee":"Menna Sherif cs","value":22,"count":22,"is_cs":true},{"name":"Esraa Salah cs","employee":"Esraa Salah cs","value":22,"count":22,"is_cs":true},{"name":"MARWA AHMED CS","employee":"MARWA AHMED CS","value":20,"count":20,"is_cs":true},{"name":"REEM ELSAEED CS","employee":"REEM ELSAEED CS","value":19,"count":19,"is_cs":true},{"name":"Rania ahmed CS","employee":"Rania ahmed CS","value":19,"count":19,"is_cs":true},{"name":"Nourhan nabil CS","employee":"Nourhan nabil CS","value":19,"count":19,"is_cs":true},{"name":"Menna atef cs","employee":"Menna atef cs","value":18,"count":18,"is_cs":true},{"name":"Asmaa Fathy CS","employee":"Asmaa Fathy CS","value":17,"count":17,"is_cs":true},{"name":"Malak Tamer CS","employee":"Malak Tamer CS","value":17,"count":17,"is_cs":true},{"name":"Ali Hamada CS","employee":"Ali Hamada CS","value":16,"count":16,"is_cs":true},{"name":"Hayam CS","employee":"Hayam CS","value":15,"count":15,"is_cs":true},{"name":"Donia CS","employee":"Donia CS","value":15,"count":15,"is_cs":true},{"name":"Salwa Cs","employee":"Salwa Cs","value":14,"count":14,"is_cs":true},{"name":"Ali Bahlol CS","employee":"Ali Bahlol CS","value":12,"count":12,"is_cs":true},{"name":"Hanan CS","employee":"Hanan CS","value":10,"count":10,"is_cs":true},{"name":"Ali Mohamed cs","employee":"Ali Mohamed cs","value":10,"count":10,"is_cs":true},{"name":"Malak Abdelfattah CS","employee":"Malak Abdelfattah CS","value":9,"count":9,"is_cs":true},{"name":"Mostafa Ehab CS","employee":"Mostafa Ehab CS","value":8,"count":8,"is_cs":true},{"name":"Asmaa Cs","employee":"Asmaa Cs","value":6,"count":6,"is_cs":true},{"name":"HABIBA FAHMY (pen) CS","employee":"HABIBA FAHMY (pen) CS","value":5,"count":5,"is_cs":true},{"name":"Maha Cs","employee":"Maha Cs","value":5,"count":5,"is_cs":true},{"name":"RAWAN SALAMA CS","employee":"RAWAN SALAMA CS","value":5,"count":5,"is_cs":true},{"name":"Nour CS","employee":"Nour CS","value":4,"count":4,"is_cs":true},{"name":"AMR REDA CS","employee":"AMR REDA CS","value":4,"count":4,"is_cs":true},{"name":"RANIA CS","employee":"RANIA CS","value":3,"count":3,"is_cs":true},{"name":"Ahmed M CS","employee":"Ahmed M CS","value":1,"count":1,"is_cs":true}],"topCSContributors":[{"name":"BASMA CS","employee":"BASMA CS","value":226,"count":226,"is_cs":true},{"name":"Hussen Ibrahim CS","employee":"Hussen Ibrahim CS","value":70,"count":70,"is_cs":true},{"name":"EMAN CS","employee":"EMAN CS","value":56,"count":56,"is_cs":true},{"name":"MOHAMED OSAMA CS","employee":"MOHAMED OSAMA CS","value":55,"count":55,"is_cs":true},{"name":"Zahraa CS","employee":"Zahraa CS","value":54,"count":54,"is_cs":true},{"name":"Sanaa CS","employee":"Sanaa CS","value":53,"count":53,"is_cs":true},{"name":"Alyaa CS","employee":"Alyaa CS","value":52,"count":52,"is_cs":true},{"name":"Abdulrahman mohamed (pen) CS","employee":"Abdulrahman mohamed (pen) CS","value":49,"count":49,"is_cs":true},{"name":"Esraa Reda CS","employee":"Esraa Reda CS","value":46,"count":46,"is_cs":true},{"name":"Ahmed Ataa ( pen ) CS","employee":"Ahmed Ataa ( pen ) CS","value":32,"count":32,"is_cs":true},{"name":"Ali CS","employee":"Ali CS","value":31,"count":31,"is_cs":true},{"name":"Fagr CS","employee":"Fagr CS","value":30,"count":30,"is_cs":true},{"name":"MARIAM Aaber CS","employee":"MARIAM Aaber CS","value":29,"count":29,"is_cs":true},{"name":"Abrar CS","employee":"Abrar CS","value":28,"count":28,"is_cs":true},{"name":"Marwa new Cs","employee":"Marwa new Cs","value":25,"count":25,"is_cs":true}],"topCSContributor":{"employee":"BASMA CS","name":"BASMA CS","count":226,"value":226},"fromCS":1219,"fromOtherDepartments":18634,"addedOrders":{"totalAdded":19853,"totalAddedCS":1219,"totalAddedNonCS":18634,"fromCS":1219,"fromOtherDepartments":18634,"topCSContributor":{"employee":"BASMA CS","name":"BASMA CS","count":226,"value":226},"topCSContributors":[{"name":"BASMA CS","employee":"BASMA CS","value":226,"count":226,"is_cs":true},{"name":"Hussen Ibrahim CS","employee":"Hussen Ibrahim CS","value":70,"count":70,"is_cs":true},{"name":"EMAN CS","employee":"EMAN CS","value":56,"count":56,"is_cs":true},{"name":"MOHAMED OSAMA CS","employee":"MOHAMED OSAMA CS","value":55,"count":55,"is_cs":true},{"name":"Zahraa CS","employee":"Zahraa CS","value":54,"count":54,"is_cs":true},{"name":"Sanaa CS","employee":"Sanaa CS","value":53,"count":53,"is_cs":true},{"name":"Alyaa CS","employee":"Alyaa CS","value":52,"count":52,"is_cs":true},{"name":"Abdulrahman mohamed (pen) CS","employee":"Abdulrahman mohamed (pen) CS","value":49,"count":49,"is_cs":true},{"name":"Esraa Reda CS","employee":"Esraa Reda CS","value":46,"count":46,"is_cs":true},{"name":"Ahmed Ataa ( pen ) CS","employee":"Ahmed Ataa ( pen ) CS","value":32,"count":32,"is_cs":true},{"name":"Ali CS","employee":"Ali CS","value":31,"count":31,"is_cs":true},{"name":"Fagr CS","employee":"Fagr CS","value":30,"count":30,"is_cs":true},{"name":"MARIAM Aaber CS","employee":"MARIAM Aaber CS","value":29,"count":29,"is_cs":true},{"name":"Abrar CS","employee":"Abrar CS","value":28,"count":28,"is_cs":true},{"name":"Marwa new Cs","employee":"Marwa new Cs","value":25,"count":25,"is_cs":true}],"allCSContributors":[{"name":"BASMA CS","employee":"BASMA CS","value":226,"count":226,"is_cs":true},{"name":"Hussen Ibrahim CS","employee":"Hussen Ibrahim CS","value":70,"count":70,"is_cs":true},{"name":"EMAN CS","employee":"EMAN CS","value":56,"count":56,"is_cs":true},{"name":"MOHAMED OSAMA CS","employee":"MOHAMED OSAMA CS","value":55,"count":55,"is_cs":true},{"name":"Zahraa CS","employee":"Zahraa CS","value":54,"count":54,"is_cs":true},{"name":"Sanaa CS","employee":"Sanaa CS","value":53,"count":53,"is_cs":true},{"name":"Alyaa CS","employee":"Alyaa CS","value":52,"count":52,"is_cs":true},{"name":"Abdulrahman mohamed (pen) CS","employee":"Abdulrahman mohamed (pen) CS","value":49,"count":49,"is_cs":true},{"name":"Esraa Reda CS","employee":"Esraa Reda CS","value":46,"count":46,"is_cs":true},{"name":"Ahmed Ataa ( pen ) CS","employee":"Ahmed Ataa ( pen ) CS","value":32,"count":32,"is_cs":true},{"name":"Ali CS","employee":"Ali CS","value":31,"count":31,"is_cs":true},{"name":"Fagr CS","employee":"Fagr CS","value":30,"count":30,"is_cs":true},{"name":"MARIAM Aaber CS","employee":"MARIAM Aaber CS","value":29,"count":29,"is_cs":true},{"name":"Abrar CS","employee":"Abrar CS","value":28,"count":28,"is_cs":true},{"name":"Marwa new Cs","employee":"Marwa new Cs","value":25,"count":25,"is_cs":true},{"name":"Eman Elkomy CS","employee":"Eman Elkomy CS","value":23,"count":23,"is_cs":true},{"name":"SHIMAA HUSSEIN CS","employee":"SHIMAA HUSSEIN CS","value":23,"count":23,"is_cs":true},{"name":"Sahar cs","employee":"Sahar cs","value":22,"count":22,"is_cs":true},{"name":"Menna Sherif cs","employee":"Menna Sherif cs","value":22,"count":22,"is_cs":true},{"name":"Esraa Salah cs","employee":"Esraa Salah cs","value":22,"count":22,"is_cs":true},{"name":"MARWA AHMED CS","employee":"MARWA AHMED CS","value":20,"count":20,"is_cs":true},{"name":"REEM ELSAEED CS","employee":"REEM ELSAEED CS","value":19,"count":19,"is_cs":true},{"name":"Rania ahmed CS","employee":"Rania ahmed CS","value":19,"count":19,"is_cs":true},{"name":"Nourhan nabil CS","employee":"Nourhan nabil CS","value":19,"count":19,"is_cs":true},{"name":"Menna atef cs","employee":"Menna atef cs","value":18,"count":18,"is_cs":true},{"name":"Asmaa Fathy CS","employee":"Asmaa Fathy CS","value":17,"count":17,"is_cs":true},{"name":"Malak Tamer CS","employee":"Malak Tamer CS","value":17,"count":17,"is_cs":true},{"name":"Ali Hamada CS","employee":"Ali Hamada CS","value":16,"count":16,"is_cs":true},{"name":"Hayam CS","employee":"Hayam CS","value":15,"count":15,"is_cs":true},{"name":"Donia CS","employee":"Donia CS","value":15,"count":15,"is_cs":true},{"name":"Salwa Cs","employee":"Salwa Cs","value":14,"count":14,"is_cs":true},{"name":"Ali Bahlol CS","employee":"Ali Bahlol CS","value":12,"count":12,"is_cs":true},{"name":"Hanan CS","employee":"Hanan CS","value":10,"count":10,"is_cs":true},{"name":"Ali Mohamed cs","employee":"Ali Mohamed cs","value":10,"count":10,"is_cs":true},{"name":"Malak Abdelfattah CS","employee":"Malak Abdelfattah CS","value":9,"count":9,"is_cs":true},{"name":"Mostafa Ehab CS","employee":"Mostafa Ehab CS","value":8,"count":8,"is_cs":true},{"name":"Asmaa Cs","employee":"Asmaa Cs","value":6,"count":6,"is_cs":true},{"name":"HABIBA FAHMY (pen) CS","employee":"HABIBA FAHMY (pen) CS","value":5,"count":5,"is_cs":true},{"name":"Maha Cs","employee":"Maha Cs","value":5,"count":5,"is_cs":true},{"name":"RAWAN SALAMA CS","employee":"RAWAN SALAMA CS","value":5,"count":5,"is_cs":true},{"name":"Nour CS","employee":"Nour CS","value":4,"count":4,"is_cs":true},{"name":"AMR REDA CS","employee":"AMR REDA CS","value":4,"count":4,"is_cs":true},{"name":"RANIA CS","employee":"RANIA CS","value":3,"count":3,"is_cs":true},{"name":"Ahmed M CS","employee":"Ahmed M CS","value":1,"count":1,"is_cs":true}]}};
+let D = {"exists":false,"date":null,"work_date":null,"employees":[],"log_totals":{"actions":0,"printed":0,"pending":0,"processing":0,"cancelled":0,"alt":0},"status_totals":{"Printed":0,"Pending":0,"Processing":0,"Cancelled":0},"hr":{"days":0,"tot_new":0,"tot_printed":0,"tot_cancel":0,"tot_add":0},"daily":[],"rankings":{"printed":[],"pending":[],"cancelled":[]},"cancel_rate_rank":[],"team_cancel_rate":0,"team_pending_rate":0,"addedOrders":{"totalAdded":0,"totalAddedCS":0,"totalAddedNonCS":0,"fromCS":0,"fromOtherDepartments":0,"topCSContributors":[],"allCSContributors":[]}};
 const NAVY='#1E3A8A',BLUE='#2563EB',GREEN='#16A34A',AMBER='#F59E0B',RED='#DC2626',PURPLE='#7C3AED',SLATE='#64748B',MUT='#64748B';
 const AV=['#1E3A8A','#2563EB','#0891B2','#7C3AED','#DB2777','#0D9488','#EA580C','#4F46E5','#059669','#C026D3'];
 const fmt=n=>Number(n||0).toLocaleString('en-US');
@@ -457,7 +457,11 @@ function lineChart(series,keys,colors,labels,pctMode){
 // GLOBAL DATE NAVIGATION ENGINE
 // -------------------------------------------------------------
 function getTodayDate() {
-  return '2026-09-08';
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function getInitialDate() {
@@ -589,6 +593,48 @@ async function updateGlobalContextBar() {
   }
 }
 
+async function triggerQuickVendoorSync() {
+  showToast('⚡ Syncing Orders', 'Connecting to Vendoor and fetching live orders...');
+  try {
+    const res = await apiFetch('/api/integrations/vendoor/sync/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fromDate: currentWorkDate, toDate: currentWorkDate, pageSize: 300 })
+    });
+    if (res.success) {
+      showToast('✓ Vendoor Orders Synced', `Ingested ${res.summary?.total_fetched || 0} orders into active pool.`);
+      await loadInitialData();
+      await updateGlobalContextBar();
+      renderCurrentTab();
+    } else {
+      showToast('⚠️ Sync Notice', res.error || 'Sync completed with 0 new orders');
+    }
+  } catch (err) {
+    showToast('❌ Sync Failed', err.message);
+  }
+}
+
+async function triggerQuickVendoorLogsSync() {
+  showToast('⚡ Syncing Activity Logs', 'Fetching Vendoor employee audit logs...');
+  try {
+    const res = await apiFetch('/api/integrations/vendoor/sync/logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startDate: currentWorkDate, endDate: currentWorkDate })
+    });
+    if (res.success) {
+      showToast('✓ Vendoor Logs Synced', `Ingested ${res.summary?.total_rows || 0} activity records.`);
+      await loadInitialData();
+      await updateGlobalContextBar();
+      renderCurrentTab();
+    } else {
+      showToast('⚠️ Sync Notice', res.error || 'Sync logs returned no records');
+    }
+  } catch (err) {
+    showToast('❌ Sync Failed', err.message);
+  }
+}
+
 function navigateDateOffset(offset) {
   const nextDate = shiftDate(currentWorkDate, offset);
   setGlobalSelectedDate(nextDate);
@@ -623,8 +669,48 @@ async function setGlobalSelectedDate(newDate) {
 async function fetchPerformanceDataForDate(dateStr) {
   try {
     const data = await apiFetch(`/api/data?date=${dateStr}`);
-    if (data && data.exists !== false && (data.employees || data.hr)) {
-      D = data;
+    if (data && data.exists !== false && (data.employees || data.hr || data.log_totals)) {
+      D = {
+        exists: true,
+        date: dateStr,
+        employees: data.employees || [],
+        log_totals: {
+          actions: data.log_totals?.actions || 0,
+          printed: data.log_totals?.printed || 0,
+          pending: data.log_totals?.pending || 0,
+          processing: data.log_totals?.processing || 0,
+          cancelled: data.log_totals?.cancelled || 0,
+          alt: data.log_totals?.alt || 0,
+          ...(data.log_totals || {})
+        },
+        status_totals: {
+          Printed: data.status_totals?.Printed || 0,
+          Pending: data.status_totals?.Pending || 0,
+          Processing: data.status_totals?.Processing || 0,
+          Cancelled: data.status_totals?.Cancelled || 0,
+          ...(data.status_totals || {})
+        },
+        rankings: {
+          printed: data.rankings?.printed || [],
+          pending: data.rankings?.pending || [],
+          cancelled: data.rankings?.cancelled || [],
+          ...(data.rankings || {})
+        },
+        cancel_rate_rank: data.cancel_rate_rank || [],
+        hr: data.hr || { days: 0, tot_new: 0, tot_printed: 0, tot_cancel: 0, tot_add: 0 },
+        daily: data.daily || [],
+        dedup: data.dedup || { removed: 0, removed_pct: 0 },
+        team_cancel_rate: data.team_cancel_rate || 0,
+        team_pending_rate: data.team_pending_rate || 0,
+        addedOrders: data.addedOrders || { totalAdded: 0, totalAddedCS: 0, totalAddedNonCS: 0, fromCS: 0, fromOtherDepartments: 0, topCSContributors: [], allCSContributors: [] },
+        ...data
+      };
+      D.rankings = D.rankings || {};
+      D.rankings.printed = D.rankings.printed || [];
+      D.rankings.pending = D.rankings.pending || [];
+      D.rankings.cancelled = D.rankings.cancelled || [];
+      D.log_totals = D.log_totals || { actions: 0, printed: 0, pending: 0, processing: 0, cancelled: 0, alt: 0 };
+      D.status_totals = D.status_totals || { Printed: 0, Pending: 0, Processing: 0, Cancelled: 0 };
     } else {
       D = {
         exists: false,
@@ -673,11 +759,9 @@ function renderEmptyState(title, subtitle, icon, canUploadDaily = true) {
       <h3 style="font-size:18px;font-weight:800;color:var(--navy);margin-bottom:8px">${actualTitle}</h3>
       <p style="font-size:13px;color:var(--mut);line-height:1.6;max-width:440px;margin:0 auto 20px">${actualSub}</p>
       <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
-        ${canUploadDaily && !isFuture ? `
-          <label class="btn primary" for="dailyLogInput" style="cursor:pointer">
-            ⭱ Upload Daily Log for ${displayDate}
-          </label>
-        ` : ''}
+        <button class="btn primary" onclick="show('management', 'vendoor')">
+          ⚡ Sync from Vendoor
+        </button>
         <button class="btn" onclick="navigateDateToday()">Return to Today</button>
       </div>
     </div>
@@ -875,10 +959,10 @@ function renderWorkAllocationUI(overview) {
   if (currentAccountsList.length === 0) {
     html += `
       <div class="panel empty-alloc" style="margin-bottom:20px;border:1px dashed var(--blue);background:#EFF6FF">
-        <div style="font-size:26px;margin-bottom:6px">📦</div>
-        <b style="font-size:14px;color:var(--navy)">No Specific Orders uploaded for this date yet</b>
-        <p style="margin:4px 0 14px;color:var(--slate)">Upload a Specific Orders Excel file (e.g. SpecificOrders.xlsx) to populate the accounts list and order queue.</p>
-        <button class="btn primary" onclick="show('operations', 'uploads')">⭱ Upload Specific Orders Now</button>
+        <div style="font-size:26px;margin-bottom:6px">⚡</div>
+        <b style="font-size:14px;color:var(--navy)">No active orders synced for this date yet</b>
+        <p style="margin:4px 0 14px;color:var(--slate)">Sync live orders directly from Vendoor to populate the accounts list and order queue.</p>
+        <button class="btn primary" onclick="triggerQuickVendoorSync()">⚡ Sync Vendoor Orders Now</button>
       </div>
     `;
   }
@@ -1423,7 +1507,7 @@ async function openOrderLevelModal(targetAcc = '', targetStatus = '') {
           <div style="font-size:32px;margin-bottom:8px">📦</div>
           <b style="color:var(--ink)">No Orders Found in Pool</b>
           <p style="font-size:12.5px;margin:6px 0 16px">${escapeHtml(err.message || 'No orders found for this account.')}</p>
-          <button class="btn primary sm" onclick="closeOrderLevelModal();show('operations', 'uploads')">⭱ Upload Specific Orders</button>
+          <button class="btn primary sm" onclick="closeOrderLevelModal();triggerQuickVendoorSync()">⚡ Sync Vendoor Orders</button>
         </div>
       `;
     }
@@ -2399,7 +2483,7 @@ async function openAccountRuleModal(rule = null) {
   }
   if (selectEl) {
     const options = [
-      `<option value="">-- Choose Account from Uploaded Sheets (${allKnownAccounts.length} accounts found) --</option>`
+      `<option value="">-- Choose Account from Synced Accounts (${allKnownAccounts.length} accounts found) --</option>`
     ];
     for (const acc of allKnownAccounts) {
       const hasRule = allAccountRules.some(r => r.account_name && r.account_name.toLowerCase() === acc.toLowerCase());
@@ -4646,7 +4730,7 @@ function renderAccountsGrid(accounts) {
   if (accounts.length === 0) {
     return `
       <div class="panel" style="text-align:center;padding:40px;color:var(--mut)">
-        No accounts found for ${formatDisplayDate(currentWorkDate)}. Upload Specific Orders to populate.
+        No accounts found for ${formatDisplayDate(currentWorkDate)}. Sync Vendoor orders to populate.
       </div>
     `;
   }
@@ -5134,21 +5218,17 @@ async function loadCurrentOrdersView() {
   const f2 = poolStatus ? poolStatus.file2 : null;
   const summary = poolStatus ? poolStatus.summary : null;
   const accounts = (poolStatus && poolStatus.accounts) ? poolStatus.accounts : [];
+  const stagedFiles = (poolStatus && poolStatus.files) ? poolStatus.files : [];
   const totalOrders = poolStatus ? poolStatus.total_orders : 0;
-
-  const stagedFiles = (poolStatus && poolStatus.files && poolStatus.files.length > 0) 
-    ? poolStatus.files 
-    : ([f1, f2].filter(Boolean));
 
   let html = `
     <!-- Operational Source Separation Banner -->
     <div style="background:linear-gradient(135deg, #1E3A8A, #1D4ED8);color:#fff;border-radius:14px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:16px;box-shadow:var(--shadow)">
       <div style="font-size:32px">📦</div>
       <div style="flex:1">
-        <b style="font-size:15px;display:block;margin-bottom:3px">Operational Source: Specific Orders (Dynamic Batch Allocation Pool)</b>
+        <b style="font-size:15px;display:block;margin-bottom:3px">Operational Source: Vendoor Live Orders Pool</b>
         <p style="font-size:12px;opacity:0.9;margin:0;line-height:1.5">
-          Dedicated purely to today's active inventory and work allocation. Multiple files can be uploaded into this pool (e.g. 300 + 290 = 590 unique orders).
-          <b>Uploading saves and stages files. The pool remains open for more uploads until you click Generate Allocation.</b>
+          Autonomous order ingestion synchronized directly from authenticated Vendoor endpoints for the selected business date.
         </p>
       </div>
       <div style="text-align:right;background:rgba(255,255,255,0.15);padding:8px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.2)">
@@ -5157,69 +5237,27 @@ async function loadCurrentOrdersView() {
       </div>
     </div>
 
-    <!-- Dynamic Batch Staging Pool Panel -->
+    <!-- Vendoor Sync & Pool Summary Panel -->
     <div class="panel" style="margin-bottom:20px;border:1px solid var(--line);box-shadow:var(--shadow)">
       <div class="hd" style="flex-wrap:wrap;gap:12px;border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:14px">
         <div>
           <h3 style="margin:0;display:flex;align-items:center;gap:8px">
-            📁 Staged Files in Pool (${stagedFiles.length} File${stagedFiles.length === 1 ? '' : 's'})
+            ⚡ Current Orders Pool (${fmt(totalOrders)} Orders)
             <span class="tag" style="background:#ECFDF5;color:#059669;font-weight:700">Ready for Allocation</span>
           </h3>
           <p style="margin:4px 0 0;font-size:12px;color:var(--slate)">
-            Uploads remain open until you click <b>Generate Allocation</b>. You can add more files at any time.
+            Orders are automatically ingested and isolated by business date.
           </p>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <label class="btn primary sm" style="cursor:pointer">
-            ⭱ Add File(s) to Pool
-            <input type="file" accept=".xlsx,.xls" multiple style="display:none" onchange="uploadSpecificOrdersBatch(this)">
-          </label>
-          <button class="btn success sm" onclick="show('work-allocation')">
-            ⚡ Generate Allocation →
+          <button class="btn primary sm" onclick="show('management', 'vendoor')">
+            🔌 Vendoor Sync Settings
+          </button>
+          <button class="btn success sm" onclick="show('operations', 'allocation')">
+            ⚡ Open Work Allocation →
           </button>
         </div>
       </div>
-
-      <!-- Grid of Staged Files -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:12px;margin-bottom:14px">
-        ${stagedFiles.length === 0 ? `
-          <div style="grid-column:1/-1;padding:30px;text-align:center;background:var(--panel2);border:2px dashed var(--line);border-radius:12px">
-            <div style="font-size:28px;margin-bottom:6px">📂</div>
-            <b style="color:var(--navy);font-size:14px">No Specific Orders files staged yet for ${formatDisplayDate(currentWorkDate)}</b>
-            <p style="color:var(--mut);font-size:12px;margin:4px 0 12px">Upload one or multiple Excel files containing New and Pending orders.</p>
-            <label class="btn primary sm" style="cursor:pointer">
-              ⭱ Choose File(s) to Stage
-              <input type="file" accept=".xlsx,.xls" multiple style="display:none" onchange="uploadSpecificOrdersBatch(this)">
-            </label>
-          </div>
-        ` : stagedFiles.map(f => `
-          <div style="background:#fff;border:1.5px solid #10B981;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:var(--shadow-sm)">
-            <div>
-              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:6px">
-                <span class="tag" style="background:#DCFCE7;color:#15803D;font-weight:700">File #${f.file_slot}</span>
-                <span style="font-size:11px;color:var(--mut)">${f.upload_date ? (f.upload_date.split(' ')[1] || f.upload_date) : ''}</span>
-              </div>
-              <b style="font-size:13px;color:var(--ink);word-break:break-all;display:block;margin-bottom:6px" title="${escapeHtml(f.file_name)}">
-                📄 ${escapeHtml(f.file_name)}
-              </b>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11.5px;background:var(--panel2);padding:6px 10px;border-radius:6px;margin-bottom:10px">
-                <div><span style="color:var(--mut);display:block;font-size:10px">Total Rows</span><b>${fmt(f.row_count)}</b></div>
-                <div><span style="color:var(--mut);display:block;font-size:10px">Valid Orders</span><b style="color:#15803D">${fmt(f.valid_orders_count)}</b></div>
-              </div>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:6px;border-top:1px solid var(--line)">
-              <label class="btn sm" style="cursor:pointer;padding:2px 8px;font-size:11px">
-                ↻ Replace
-                <input type="file" accept=".xlsx,.xls" style="display:none" onchange="uploadSpecificOrdersSlot(${f.file_slot}, this)">
-              </label>
-              <button class="btn sm danger" style="padding:2px 8px;font-size:11px" onclick="removeStagedFile(${f.file_slot})">
-                🗑️ Remove
-              </button>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    </div>
 
     <!-- Multi-File Consolidation Summary -->
     <div class="panel" style="margin-bottom:20px;border:1px solid var(--line);box-shadow:var(--shadow)">
@@ -5278,7 +5316,7 @@ async function loadCurrentOrdersView() {
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
         ${accounts.length === 0 ? `
-          <div style="grid-column:1/-1;padding:24px;text-align:center;color:var(--mut)">No accounts found in current work pool. Upload File #1 or File #2 above.</div>
+          <div style="grid-column:1/-1;padding:24px;text-align:center;color:var(--mut)">No accounts found in current work pool. Sync Vendoor orders to populate today's pool.</div>
         ` : accounts.map(a => `
           <div style="background:var(--panel2);padding:12px 14px;border-radius:10px;border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
             <b style="font-size:13px;color:var(--ink)">${a}</b>
@@ -5585,7 +5623,7 @@ function renderAutoDetectedUploadModal(result) {
 
         <!-- Files Processed Breakdown -->
         <div>
-          <h4 style="font-size:13px;color:var(--slate);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Uploaded Files Inspection</h4>
+          <h4 style="font-size:13px;color:var(--slate);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Data Integrity Inspection</h4>
           <div class="tbl-scroll">
             <table>
               <thead>
@@ -5896,7 +5934,7 @@ async function loadEmployeeTrackingView(empIdToSelect) {
       }
     }
 
-    const logUploaded = teamSummary ? Boolean(teamSummary.daily_log_uploaded) : false;
+    const logsSynced = teamSummary ? Boolean(teamSummary.daily_log_uploaded) : false;
     const sources = (teamSummary && teamSummary.sources) || {};
     const teamKpis = (teamSummary && teamSummary.team_kpis) || {};
 
@@ -5911,35 +5949,38 @@ async function loadEmployeeTrackingView(empIdToSelect) {
             </p>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="tag" style="background:${sources.new_orders_uploaded ? '#DCFCE7' : '#FEF3C7'};color:${sources.new_orders_uploaded ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
-              ${sources.new_orders_uploaded ? '✓ File #1 (New)' : '⚠️ File #1 Missing'}
+            <span class="tag" style="background:${sources.new_orders_synced ? '#DCFCE7' : '#FEF3C7'};color:${sources.new_orders_synced ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
+              ${sources.new_orders_synced ? '✓ Vendoor New Orders' : '⚠️ New Orders Pending'}
             </span>
-            <span class="tag" style="background:${sources.pending_orders_uploaded ? '#DCFCE7' : '#FEF3C7'};color:${sources.pending_orders_uploaded ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
-              ${sources.pending_orders_uploaded ? '✓ File #2 (Pending)' : '⚠️ File #2 Missing'}
+            <span class="tag" style="background:${sources.pending_orders_synced ? '#DCFCE7' : '#FEF3C7'};color:${sources.pending_orders_synced ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
+              ${sources.pending_orders_synced ? '✓ Vendoor Pending Orders' : '⚠️ Pending Orders Pending'}
             </span>
-            <span class="tag" style="background:${logUploaded ? '#DCFCE7' : '#FEE2E2'};color:${logUploaded ? '#15803D' : '#991B1B'};font-size:11.5px;font-weight:700">
-              ${logUploaded ? '✓ Daily Log Uploaded' : '⚠️ Daily Log Not Uploaded'}
+            <span class="tag" style="background:${logsSynced ? '#DCFCE7' : '#FEE2E2'};color:${logsSynced ? '#15803D' : '#991B1B'};font-size:11.5px;font-weight:700">
+              ${logsSynced ? '✓ Vendoor Activity Synced' : '⚠️ Activity Sync Pending'}
             </span>
           </div>
         </div>
       </div>
 
       <!-- State Message Banner -->
-      ${!logUploaded ? `
-        <div style="background:#F8FAFC;border:1px solid #CBD5E1;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:14px">
-          <div style="font-size:24px">📁</div>
-          <div>
-            <b style="color:#334155;display:block;margin-bottom:2px">End-of-Day Log Not Uploaded</b>
-            <p style="font-size:12.5px;color:#64748B;margin:0">
-              The Daily Log has not been uploaded for ${formatDisplayDate(currentWorkDate)}. Showing manual account assignments. All worked activity, action counts, and allocation compliance are strictly recorded as <b>N/A</b>.
-            </p>
+      ${!logsSynced ? `
+        <div style="background:#F8FAFC;border:1px solid #CBD5E1;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="font-size:24px">⚡</div>
+            <div>
+              <b style="color:#334155;display:block;margin-bottom:2px">Vendoor Daily Activity Logs Ready for Sync</b>
+              <p style="font-size:12.5px;color:#64748B;margin:0">
+                Synchronize employee activity logs from Vendoor to compute real-time scorecard compliance for ${formatDisplayDate(currentWorkDate)}.
+              </p>
+            </div>
           </div>
+          <button class="btn primary sm" onclick="triggerQuickVendoorLogsSync()">⚡ Sync Activity Logs Now</button>
         </div>
       ` : (teamKpis.employees_with_activity === 0 ? `
         <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:14px">
           <div style="font-size:24px">ℹ️</div>
           <div>
-            <b style="color:#1E40AF;display:block;margin-bottom:2px">Log Uploaded — No Activity Recorded</b>
+            <b style="color:#1E40AF;display:block;margin-bottom:2px">Activity Synced — No Activity Recorded</b>
             <p style="font-size:12.5px;color:#1E3A8A;margin:0">
               The Daily Log is uploaded for ${formatDisplayDate(currentWorkDate)}, but contains 0 action records across the team. Compliance is <b>N/A</b>.
             </p>
@@ -5964,11 +6005,11 @@ async function loadEmployeeTrackingView(empIdToSelect) {
         <!-- Team KPIs -->
         <div class="kpis" style="margin-bottom:16px">
           ${kpiCard('👥', fmt(teamKpis.total_employees || teamList.length), 'Total Team Members', 'Permanent & Active CS', NAVY)}
-          ${kpiCard('⚡', logUploaded ? fmt(teamKpis.employees_with_activity) : '—', 'With Log Activity', logUploaded ? 'Logged at least 1 action' : 'Log not uploaded', BLUE)}
-          ${kpiCard('💤', logUploaded ? fmt(teamKpis.employees_without_activity) : '—', 'Zero Activity', logUploaded ? '0 actions recorded' : 'Log not uploaded', PURPLE)}
-          ${kpiCard('📦', logUploaded ? fmt(teamKpis.total_orders_worked_today) : '—', 'Orders Worked Today', logUploaded ? 'Unique orders touched' : 'Log not uploaded', GREEN)}
-          ${kpiCard('⚡', logUploaded ? fmt(teamKpis.total_real_actions) : '—', 'Total Real Actions', logUploaded ? 'Deduplicated (120s)' : 'Log not uploaded', BLUE)}
-          ${kpiCard('⚠️', logUploaded ? fmt(teamKpis.outside_allocation_accounts) : '—', 'Outside Accounts', logUploaded ? 'Unassigned accounts worked' : 'Log not uploaded', (teamKpis.outside_allocation_accounts > 0) ? AMBER : GREEN)}
+          ${kpiCard('⚡', logsSynced ? fmt(teamKpis.employees_with_activity) : '—', 'With Log Activity', logsSynced ? 'Logged at least 1 action' : 'Log not synced', BLUE)}
+          ${kpiCard('💤', logsSynced ? fmt(teamKpis.employees_without_activity) : '—', 'Zero Activity', logsSynced ? '0 actions recorded' : 'Log not synced', PURPLE)}
+          ${kpiCard('📦', logsSynced ? fmt(teamKpis.total_orders_worked_today) : '—', 'Orders Worked Today', logsSynced ? 'Unique orders touched' : 'Log not synced', GREEN)}
+          ${kpiCard('⚡', logsSynced ? fmt(teamKpis.total_real_actions) : '—', 'Total Real Actions', logsSynced ? 'Deduplicated (120s)' : 'Log not synced', BLUE)}
+          ${kpiCard('⚠️', logsSynced ? fmt(teamKpis.outside_allocation_accounts) : '—', 'Outside Accounts', logsSynced ? 'Unassigned accounts worked' : 'Log not synced', (teamKpis.outside_allocation_accounts > 0) ? AMBER : GREEN)}
         </div>
 
         <!-- Team Summary Table -->
@@ -6009,24 +6050,24 @@ async function loadEmployeeTrackingView(empIdToSelect) {
                       </span>
                     </td>
                     <td>
-                      ${logUploaded ? `
+                      ${logsSynced ? `
                         <span class="tag" style="background:${e.worked_accounts_count > 0 ? '#F0FDF4' : '#F1F5F9'};color:${e.worked_accounts_count > 0 ? '#15803D' : '#64748B'}">
                           ${fmt(e.worked_accounts_count)} Accounts
                         </span>
                       ` : '<span style="color:var(--mut)">—</span>'}
                     </td>
                     <td>
-                      ${logUploaded ? (
+                      ${logsSynced ? (
                         hasOut
                           ? `<span class="tag" style="background:#FEE2E2;color:#991B1B;font-weight:700">⚠️ ${fmt(e.extra_accounts_count)} Unassigned</span>`
                           : '<span class="tag" style="background:#F0FDF4;color:#15803D">None</span>'
                       ) : '<span style="color:var(--mut)">—</span>'}
                     </td>
-                    <td><b>${logUploaded ? fmt(e.orders_worked_today) : '—'}</b></td>
-                    <td><b>${logUploaded ? fmt(e.real_actions) : '—'}</b></td>
-                    <td>${logUploaded ? fmt(e.printed) : '—'}</td>
-                    <td>${logUploaded ? fmt(e.pending) : '—'}</td>
-                    <td>${logUploaded ? fmt(e.cancelled) : '—'}</td>
+                    <td><b>${logsSynced ? fmt(e.orders_worked_today) : '—'}</b></td>
+                    <td><b>${logsSynced ? fmt(e.real_actions) : '—'}</b></td>
+                    <td>${logsSynced ? fmt(e.printed) : '—'}</td>
+                    <td>${logsSynced ? fmt(e.pending) : '—'}</td>
+                    <td>${logsSynced ? fmt(e.cancelled) : '—'}</td>
                     <td>
                       ${isNA ? `
                         <span class="tag" style="background:#F1F5F9;color:#64748B;font-weight:700">N/A</span>
@@ -6091,7 +6132,7 @@ async function loadEmployeeTrackingView(empIdToSelect) {
           <div style="background:#F8FAFC;border:1px solid #CBD5E1;border-radius:12px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:12px">
             <span style="font-size:20px">📁</span>
             <span style="font-size:13px;color:#475569">
-              <b>End-of-Day Log Not Uploaded:</b> Actual worked metrics and compliance for <b>${escapeHtml(empData.employee_name)}</b> are <b>N/A</b>. Showing assigned accounts from manual allocation.
+              <b>End-of-Day Log Not Synced:</b> Actual worked metrics and compliance for <b>${escapeHtml(empData.employee_name)}</b> are <b>N/A</b>. Showing assigned accounts from manual allocation.
             </span>
           </div>
         `;
@@ -6100,7 +6141,7 @@ async function loadEmployeeTrackingView(empIdToSelect) {
           <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:12px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:12px">
             <span style="font-size:20px">ℹ️</span>
             <span style="font-size:13px;color:#1E40AF">
-              <b>Log Uploaded — No Activity Recorded:</b> <b>${escapeHtml(empData.employee_name)}</b> was assigned ${assignedAccs.length} account(s), but logged 0 actions in today's Daily Log. Allocation Compliance is <b>N/A</b>.
+              <b>Activity Synced — No Activity Recorded:</b> <b>${escapeHtml(empData.employee_name)}</b> was assigned ${assignedAccs.length} account(s), but logged 0 actions in today's Daily Log. Allocation Compliance is <b>N/A</b>.
             </span>
           </div>
         `;
@@ -6122,9 +6163,9 @@ async function loadEmployeeTrackingView(empIdToSelect) {
       html += `
         <!-- Metric Cards with Truthful N/A Handling -->
         <div class="kpis" style="margin-bottom:20px">
-          ${kpiCard('📦', isLogUp ? fmt(empData.orders_worked_today) : '—', 'Orders Worked Today', isLogUp ? 'Unique orders touched' : 'Log not uploaded', NAVY)}
-          ${kpiCard('⚡', isLogUp ? fmt(empData.real_actions) : '—', 'Real Actions', isLogUp ? 'Deduplicated (120s window)' : 'Log not uploaded', BLUE)}
-          ${kpiCard('⚠️', isLogUp ? fmt(empData.orders_worked_outside_allocation) : '—', 'Orders Outside Allocation', isLogUp ? (hasOutside ? 'Touched unassigned accounts' : '0 unassigned') : 'Log not uploaded', hasOutside ? AMBER : GREEN)}
+          ${kpiCard('📦', isLogUp ? fmt(empData.orders_worked_today) : '—', 'Orders Worked Today', isLogUp ? 'Unique orders touched' : 'Log not synced', NAVY)}
+          ${kpiCard('⚡', isLogUp ? fmt(empData.real_actions) : '—', 'Real Actions', isLogUp ? 'Deduplicated (120s window)' : 'Log not synced', BLUE)}
+          ${kpiCard('⚠️', isLogUp ? fmt(empData.orders_worked_outside_allocation) : '—', 'Orders Outside Allocation', isLogUp ? (hasOutside ? 'Touched unassigned accounts' : '0 unassigned') : 'Log not synced', hasOutside ? AMBER : GREEN)}
           ${kpiCard('✓', escapeHtml(complianceLabel), 'Allocation Compliance', isNA ? 'No activity recorded' : 'Actions in assigned accounts', isNA ? SLATE : (empData.allocation_compliance >= 100 ? GREEN : AMBER))}
         </div>
 
@@ -6168,7 +6209,7 @@ async function loadEmployeeTrackingView(empIdToSelect) {
             </div>
             <div>
               ${!isLogUp ? `
-                <p style="font-size:12.5px;color:var(--mut);padding:14px 0">End-of-Day Log not uploaded for this date.</p>
+                <p style="font-size:12.5px;color:var(--mut);padding:14px 0">End-of-Day Log not synced for this date.</p>
               ` : (workedAccs.length === 0 ? `
                 <p style="font-size:12.5px;color:var(--mut);padding:14px 0">No actions recorded in Daily Log for this date.</p>
               ` : `
@@ -6200,7 +6241,7 @@ async function loadEmployeeTrackingView(empIdToSelect) {
           </div>
           ${!isLogUp || (empData.account_breakdown || []).length === 0 ? `
             <div style="text-align:center;padding:30px 20px;color:var(--mut);font-size:13px">
-              ${!isLogUp ? 'End-of-Day Log not uploaded. No logged actions to display.' : 'No actions recorded in Daily Log for this employee.'}
+              ${!isLogUp ? 'End-of-Day Log not synced. No logged actions to display.' : 'No actions recorded in Daily Log for this employee.'}
             </div>
           ` : `
             <div class="tbl-scroll">
@@ -6304,7 +6345,7 @@ async function loadTrackingOverviewView() {
     const act = overviewData.actual_work || {};
     const audit = overviewData.data_quality_audit || {};
     const sources = overviewData.sources || {};
-    const logUploaded = Boolean(overviewData.daily_log_uploaded);
+    const logsSynced = Boolean(overviewData.daily_log_uploaded);
 
     let html = `
       <!-- Top Source Upload Integrity Status Bar -->
@@ -6317,37 +6358,40 @@ async function loadTrackingOverviewView() {
             </p>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="tag" style="background:${sources.new_orders_uploaded ? '#DCFCE7' : '#FEF3C7'};color:${sources.new_orders_uploaded ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
-              ${sources.new_orders_uploaded ? '✓ File #1 (New)' : '⚠️ File #1 Missing'}
+            <span class="tag" style="background:${sources.new_orders_synced ? '#DCFCE7' : '#FEF3C7'};color:${sources.new_orders_synced ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
+              ${sources.new_orders_synced ? '✓ Vendoor New Orders' : '⚠️ New Orders Pending'}
             </span>
-            <span class="tag" style="background:${sources.pending_orders_uploaded ? '#DCFCE7' : '#FEF3C7'};color:${sources.pending_orders_uploaded ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
-              ${sources.pending_orders_uploaded ? '✓ File #2 (Pending)' : '⚠️ File #2 Missing'}
+            <span class="tag" style="background:${sources.pending_orders_synced ? '#DCFCE7' : '#FEF3C7'};color:${sources.pending_orders_synced ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
+              ${sources.pending_orders_synced ? '✓ Vendoor Pending Orders' : '⚠️ Pending Orders Pending'}
             </span>
-            <span class="tag" style="background:${logUploaded ? '#DCFCE7' : '#FEE2E2'};color:${logUploaded ? '#15803D' : '#991B1B'};font-size:11.5px;font-weight:700">
-              ${logUploaded ? '✓ Daily Log Uploaded' : '⚠️ Daily Log Not Uploaded'}
+            <span class="tag" style="background:${logsSynced ? '#DCFCE7' : '#FEE2E2'};color:${logsSynced ? '#15803D' : '#991B1B'};font-size:11.5px;font-weight:700">
+              ${logsSynced ? '✓ Vendoor Activity Synced' : '⚠️ Activity Sync Pending'}
             </span>
           </div>
         </div>
       </div>
 
       <!-- Status Banner if Log Missing -->
-      ${!logUploaded ? `
-        <div style="background:#F8FAFC;border:1px solid #CBD5E1;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:14px">
-          <div style="font-size:24px">📁</div>
-          <div>
-            <b style="color:#334155;display:block;margin-bottom:2px">End-of-Day Daily Log Not Uploaded</b>
-            <p style="font-size:12.5px;color:#64748B;margin:0">
-              Opening inventory is ready (${fmt(op.opening_total)} orders), but actual worked metrics and untouched orders require the Daily Log upload.
-            </p>
+      ${!logsSynced ? `
+        <div style="background:#F8FAFC;border:1px solid #CBD5E1;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="font-size:24px">⚡</div>
+            <div>
+              <b style="color:#334155;display:block;margin-bottom:2px">Vendoor Daily Activity Logs Ready for Sync</b>
+              <p style="font-size:12.5px;color:#64748B;margin:0">
+                Opening inventory is ready (${fmt(op.opening_total)} orders). Synchronize activity logs from Vendoor to calculate untouched orders and real agent actions.
+              </p>
+            </div>
           </div>
+          <button class="btn primary sm" onclick="triggerQuickVendoorLogsSync()">⚡ Sync Activity Logs Now</button>
         </div>
       ` : ''}
 
       <!-- Top KPI Grid -->
       <div class="kpis" style="margin-bottom:20px">
         ${kpiCard('📦', fmt(op.opening_total), 'Opening Inventory Pool', `${fmt(op.new_orders)} New · ${fmt(op.pending_orders)} Pending`, NAVY)}
-        ${kpiCard('✓', logUploaded ? fmt(act.orders_worked_today) : '—', 'Orders Worked Today', logUploaded ? 'Unique orders touched across team' : 'Log not uploaded', BLUE)}
-        ${kpiCard('⏳', logUploaded ? fmt(op.untouched_orders) : '—', 'Untouched Orders', logUploaded ? 'Opening orders with 0 daily log activity' : 'N/A (log not uploaded)', PURPLE)}
+        ${kpiCard('✓', logsSynced ? fmt(act.orders_worked_today) : '—', 'Orders Worked Today', logsSynced ? 'Unique orders touched across team' : 'Logs pending sync', BLUE)}
+        ${kpiCard('⏳', logsSynced ? fmt(op.untouched_orders) : '—', 'Untouched Orders', logsSynced ? 'Opening orders with 0 daily log activity' : 'N/A (sync pending)', PURPLE)}
         ${kpiCard('⚠️', fmt(audit.orders_in_both_conflict), 'Opening Status Conflicts', 'Existed in both New and Pending', audit.orders_in_both_conflict > 0 ? AMBER : GREEN)}
       </div>
 
@@ -6357,7 +6401,7 @@ async function loadTrackingOverviewView() {
           <div class="hd">
             <div>
               <h3>📦 Opening Inventory Breakdown</h3>
-              <p>Reconciliation of Specific Orders File #1 and File #2</p>
+              <p>Reconciliation of New and Pending inventory pools</p>
             </div>
           </div>
           <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;text-align:center;padding:12px 0">
@@ -6386,19 +6430,19 @@ async function loadTrackingOverviewView() {
           <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;text-align:center;padding:12px 0">
             <div style="background:#F0FDF4;padding:10px;border-radius:8px">
               <span style="font-size:10px;color:var(--mut);display:block">Printed</span>
-              <b style="font-size:16px;color:#15803D">${logUploaded ? fmt(act.printed_orders) : '—'}</b>
+              <b style="font-size:16px;color:#15803D">${logsSynced ? fmt(act.printed_orders) : '—'}</b>
             </div>
             <div style="background:#F5F3FF;padding:10px;border-radius:8px">
               <span style="font-size:10px;color:var(--mut);display:block">Pending Backlog</span>
-              <b style="font-size:16px;color:#7C3AED">${logUploaded ? fmt(act.pending_backlog) : '—'}</b>
+              <b style="font-size:16px;color:#7C3AED">${logsSynced ? fmt(act.pending_backlog) : '—'}</b>
             </div>
             <div style="background:#FEF2F2;padding:10px;border-radius:8px">
               <span style="font-size:10px;color:var(--mut);display:block">Cancelled</span>
-              <b style="font-size:16px;color:#DC2626">${logUploaded ? fmt(act.cancelled_orders) : '—'}</b>
+              <b style="font-size:16px;color:#DC2626">${logsSynced ? fmt(act.cancelled_orders) : '—'}</b>
             </div>
             <div style="background:#FFFBEB;padding:10px;border-radius:8px">
               <span style="font-size:10px;color:var(--mut);display:block">Alt Phone</span>
-              <b style="font-size:16px;color:#B45309">${logUploaded ? fmt(act.alt_phones) : '—'}</b>
+              <b style="font-size:16px;color:#B45309">${logsSynced ? fmt(act.alt_phones) : '—'}</b>
             </div>
           </div>
         </div>
@@ -6491,7 +6535,7 @@ async function loadTrackingAuditView() {
 
   const audit = overviewData.data_quality_audit || {};
   const op = overviewData.opening_inventory || {};
-  const logUploaded = overviewData.daily_log_uploaded;
+  const logsSynced = overviewData.daily_log_uploaded;
   const sources = overviewData.sources || {};
 
   let html = `
@@ -6513,10 +6557,10 @@ async function loadTrackingAuditView() {
 
     <!-- Audit KPI Cards -->
     <div class="kpis" style="margin-bottom:20px">
-      ${kpiCard('⚠️', fmt(audit.conflicting_opening_orders_count), 'Opening Conflicts', 'Present in both File #1 & #2', audit.conflicting_opening_orders_count > 0 ? AMBER : GREEN)}
-      ${kpiCard('🔍', fmt(audit.unmatched_order_codes_count), 'Unmatched Daily Log Orders', 'Logged but missing from inventory', audit.unmatched_order_codes_count > 0 ? AMBER : GREEN)}
-      ${kpiCard('⏳', logUploaded ? fmt(audit.orders_without_daily_log) : '—', 'Untouched Opening Orders', logUploaded ? 'Zero Daily Log actions' : 'Log not uploaded', PURPLE)}
-      ${kpiCard('✓', logUploaded ? fmt(audit.orders_with_daily_log) : '—', 'Touched Opening Orders', logUploaded ? 'Had at least 1 action' : 'Log not uploaded', BLUE)}
+      ${kpiCard('⚠️', fmt(audit.conflicting_opening_orders_count), 'Opening Conflicts', 'Cross-stream status conflict', audit.conflicting_opening_orders_count > 0 ? AMBER : GREEN)}
+      ${kpiCard('🔍', fmt(audit.unmatched_order_codes_count), 'Unmatched Log Orders', 'Logged but missing from inventory', audit.unmatched_order_codes_count > 0 ? AMBER : GREEN)}
+      ${kpiCard('⏳', logsSynced ? fmt(audit.orders_without_daily_log) : '—', 'Untouched Opening Orders', logsSynced ? 'Zero activity actions' : 'Log not synced', PURPLE)}
+      ${kpiCard('✓', logsSynced ? fmt(audit.orders_with_daily_log) : '—', 'Touched Opening Orders', logsSynced ? 'Had at least 1 action' : 'Log not synced', BLUE)}
     </div>
 
     <!-- Audit Details Grid -->
@@ -6526,7 +6570,7 @@ async function loadTrackingAuditView() {
         <div class="hd">
           <div>
             <h3>⚠️ Opening Status Conflicts (${audit.conflicting_opening_orders_count || 0})</h3>
-            <p>Orders present in both File #1 (New) and File #2 (Pending).</p>
+            <p>Orders detected simultaneously in both New and Pending streams.</p>
           </div>
         </div>
         <div>
@@ -6579,6 +6623,7 @@ async function loadTrackingAuditView() {
 // -------------------------------------------------------------
 function pages(){
   const hr=D.hr||{},st=D.status_totals||{},tot=D.log_totals||{},ded=D.dedup||{};
+  const rankings=D.rankings||{printed:[],pending:[],cancelled:[]};
   const dops=tot.actions||1;
   const pctv=x=>((x||0)/dops*100);
   const p1=pctv(st.Printed),p2=p1+pctv(st.Pending),p3=p2+pctv(st.Processing);
@@ -6716,7 +6761,7 @@ function pages(){
       </div>
       <div class="panel">
         <div class="hd"><h3>Highest Cancelled Volume</h3><p>Absolute deduplicated count</p></div>
-        ${barList(D.rankings.cancelled,null,RED)}
+        ${barList(rankings.cancelled||[],null,RED)}
       </div>
     </div>
   `;
@@ -6752,7 +6797,7 @@ function pages(){
                 <td><span class="rk ${e.rank<=3?'g'+e.rank:''}">${e.rank}</span></td>
                 <td class="nm-cell">${e.name}</td>
                 <td>${scoreCell(e.performance_score)}</td>
-                <td><span class="grade gr-${e.grade[0]}">${e.grade}</span></td>
+                <td><span class="grade gr-${(e.grade||'N')[0]}">${e.grade || 'N/A'}</span></td>
                 <td><span class="seg seg-${segClass(e.segment)}">${e.segment}</span></td>
                 <td><b>${fmt(e.actions)}</b></td>
                 <td><span style="color:${GREEN};font-weight:700">${e.own_printed_rate}%</span></td>
@@ -6914,7 +6959,7 @@ function pages(){
       </div>
       <div class="panel">
         <div class="hd"><h3>Highest Pending Volume</h3><p>Count of orders left pending</p></div>
-        ${barList(D.rankings.pending,null,PURPLE)}
+        ${barList(rankings.pending||[],null,PURPLE)}
       </div>
     </div>
   `;
@@ -6934,7 +6979,7 @@ function pages(){
       </div>
       <div class="panel">
         <div class="hd"><h3>Highest Printed Volume</h3><p>Absolute count</p></div>
-        ${barList(D.rankings.printed,null,GREEN)}
+        ${barList(rankings.printed||[],null,GREEN)}
       </div>
     </div>
   `;
@@ -7032,7 +7077,7 @@ function profileCard(e,i){
   return `
     <div class="prof">
       <div class="ph"><div class="av" style="background:linear-gradient(135deg,${col},${col}cc)">${initials(e.name)}</div>
-        <div style="flex:1"><div class="pn">${e.name}</div><div class="pr">Rank #${e.rank} · <span class="grade gr-${e.grade[0]}" style="padding:1px 7px">${e.grade}</span> · ${e.segment}</div></div>
+        <div style="flex:1"><div class="pn">${e.name}</div><div class="pr">Rank #${e.rank || '-'} · <span class="grade gr-${(e.grade||'N')[0]}" style="padding:1px 7px">${e.grade || 'N/A'}</span> · ${e.segment || 'Core'}</div></div>
       </div>
       <div class="stats">
         <div class="st"><b>${fmt(e.actions)}</b><span>ACTIONS</span></div>
@@ -7056,7 +7101,7 @@ function profileCard(e,i){
 
 function tableRows(list){
   return list.map(e=>`
-    <tr data-seg="${e.segment}" data-risk="${e.cancel_risk}" data-name="${e.name.toLowerCase()}">
+    <tr data-seg="${e.segment}" data-risk="${e.cancel_risk}" data-name="${(e.name||'').toLowerCase()}">
       <td><span class="rk ${e.rank<=3?'g'+e.rank:''}">${e.rank}</span></td>
       <td class="nm-cell">${e.name}</td>
       <td>${fmt(e.actions)}</td>
@@ -7071,7 +7116,7 @@ function tableRows(list){
       <td><b style="color:${BLUE}">${e.own_alt_rate}%</b></td>
       <td>${e.added}</td>
       <td>${e.contribution_pct}%</td>
-      <td><span class="grade gr-${e.grade[0]}">${e.grade}</span></td>
+      <td><span class="grade gr-${(e.grade||'N')[0]}">${e.grade || 'N/A'}</span></td>
     </tr>
   `).join('');
 }
@@ -7104,18 +7149,16 @@ const MAIN_PAGES_CONFIG = {
     tabs: [
       { id: 'overview', label: 'Overview', icon: '📊' },
       { id: 'daily', label: 'Daily Summary', icon: '📈' },
-      { id: 'alerts', label: 'Alerts & Insights', icon: '◈' },
-      { id: 'upload-status', label: 'Upload Status', icon: '📁' }
+      { id: 'alerts', label: 'Alerts & Insights', icon: '◈' }
     ]
   },
   operations: {
     title: 'Operations',
-    sub: 'Daily Work Allocation, Specific Orders Uploads & Team Setup',
+    sub: 'Daily Work Allocation, Vendoor Orders Pool & Team Setup',
     defaultTab: 'allocation',
     tabs: [
       { id: 'allocation', label: 'Work Allocation', icon: '⚡' },
       { id: 'dispatcher', label: 'Auto Dispatcher', icon: '🚀' },
-      { id: 'uploads', label: 'Uploads', icon: '⭱' },
       { id: 'working-team', label: "Today's Working Team", icon: '👥' },
       { id: 'orders-pool', label: 'Current Orders Pool', icon: '📦' },
       { id: 'history', label: 'Allocation History', icon: '⏳' },
@@ -7205,11 +7248,9 @@ function renderTabContent(mainPage, tab) {
     if (tab === 'overview') return RENDERED.overview || '';
     if (tab === 'daily') return RENDERED.daily || '';
     if (tab === 'alerts') return RENDERED.insights || '';
-    if (tab === 'upload-status') return `<div id="dashboardUploadStatusContainer"></div>`;
   } else if (mainPage === 'operations') {
     if (tab === 'allocation') return RENDERED['work-allocation'] || '';
     if (tab === 'dispatcher') return RENDERED['auto-dispatcher'] || '';
-    if (tab === 'uploads') return `<div id="uploadsManagementContainer"></div>`;
     if (tab === 'working-team') return RENDERED['working-team'] || '';
     if (tab === 'orders-pool') return RENDERED['current-orders'] || '';
     if (tab === 'history') return RENDERED['allocation-history'] || '';
@@ -7242,7 +7283,6 @@ function triggerTabLoaders(mainPage, tab) {
   if (mainPage === 'operations') {
     if (tab === 'allocation') loadWorkAllocationData();
     else if (tab === 'dispatcher') loadAutoDispatcherView();
-    else if (tab === 'uploads') loadUploadsManagementView();
     else if (tab === 'working-team') loadWorkingTeamView();
     else if (tab === 'orders-pool') loadCurrentOrdersView();
     else if (tab === 'history') loadAllocationHistoryView();
@@ -7258,8 +7298,6 @@ function triggerTabLoaders(mainPage, tab) {
     else if (tab === 'teams') loadTeamSetupView();
     else if (tab === 'accounts') loadAccountConfigView();
     else if (tab === 'vendoor') loadVendoorIntegrationView();
-  } else if (mainPage === 'dashboard') {
-    if (tab === 'upload-status') renderDashboardUploadStatusView();
   }
 }
 
@@ -7288,20 +7326,17 @@ async function loadUploadsManagementView() {
   }
 
   container.innerHTML = `
-    <!-- Top Auto-Detect Dropzone -->
-    <div class="panel" style="border:2px dashed var(--blue);background:linear-gradient(135deg,#EFF6FF,#F8FAFC);margin-bottom:24px;padding:24px;text-align:center"
-         ondragover="event.preventDefault();this.style.background='#DBEAFE'"
-         ondragleave="this.style.background='linear-gradient(135deg,#EFF6FF,#F8FAFC)'"
-         ondrop="event.preventDefault();this.style.background='linear-gradient(135deg,#EFF6FF,#F8FAFC)';if(event.dataTransfer.files.length)handleUniversalAutoUpload(event.dataTransfer.files)">
-      <div style="font-size:36px;margin-bottom:8px">⚡📁</div>
-      <h3 style="font-size:16px;font-weight:800;color:var(--navy);margin-bottom:4px">Automatic Business Date & File Type Detection</h3>
+    <!-- Top Automated Sync Banner -->
+    <div class="panel" style="border:1px solid #BFDBFE;background:linear-gradient(135deg,#EFF6FF,#F8FAFC);margin-bottom:24px;padding:24px;text-align:center">
+      <div style="font-size:36px;margin-bottom:8px">🔌⚡</div>
+      <h3 style="font-size:16px;font-weight:800;color:var(--navy);margin-bottom:4px">Autonomous Vendoor Order & Activity Synchronization</h3>
       <p style="font-size:12.5px;color:var(--slate);max-width:680px;margin:0 auto 16px;line-height:1.5">
-        Drag & drop any Excel file(s) here (New Orders, Pending Orders, or EOD Daily Log). The system automatically inspects the internal columns to identify the true <b>Business Date</b> and routes orders directly without manual sorting.
+        Orders (300 records per page, multi-page auto-paginated) and employee activity logs are ingested automatically from Vendoor for <b>${currentWorkDate}</b>. Manual Excel manipulation is disabled in autonomous mode.
       </p>
       <div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap">
-        <label class="btn primary" for="universalAutoUploadInput" style="cursor:pointer;padding:9px 18px;font-size:13px;background:linear-gradient(135deg,var(--blue),var(--purple));border:none">
-          ⭱ Select / Drop Excel Files (Auto-Detect)
-        </label>
+        <button class="btn primary" onclick="show('management', 'vendoor')" style="cursor:pointer;padding:9px 18px;font-size:13px;background:linear-gradient(135deg,var(--blue),var(--purple));border:none">
+          ⚡ Open Vendoor Integration Center
+        </button>
       </div>
     </div>
 
@@ -7309,15 +7344,15 @@ async function loadUploadsManagementView() {
     <div class="panel" style="margin-bottom:24px">
       <div class="hd">
         <div>
-          <h3>📅 Detected Business Dates Registry</h3>
-          <p>History of all uploaded dates, independent pools, and allocation status</p>
+          <h3>📅 Business Dates Registry</h3>
+          <p>History of operational business dates, order pools, and synchronization status</p>
         </div>
         <span class="tag" style="background:#EFF6FF;color:var(--blue);font-weight:700">${detectedDatesList.length} Active Date(s)</span>
       </div>
 
       ${detectedDatesList.length === 0 ? `
         <div style="padding:20px;text-align:center;color:var(--mut);font-size:13px">
-          No files uploaded yet. Drop an Excel file above to begin.
+          No operational records found. Synchronize from Vendoor or configure credentials in Management.
         </div>
       ` : `
         <div class="tbl-scroll">
@@ -7369,10 +7404,10 @@ async function loadUploadsManagementView() {
 
     <!-- Current Selected Date Summary -->
     <div class="dedup-banner" style="margin-bottom:20px">
-      <div class="di">⭱</div>
+      <div class="di">⚡</div>
       <div class="dt">
-        <b>Specific Orders & Operational Uploads for ${formatDisplayDate(currentWorkDate)}</b>
-        <p>All uploads are persistent and cumulative. Uploading another batch appends to the day's pool without deleting previous allocations.</p>
+        <b>Autonomous Vendoor Data Pipeline for ${formatDisplayDate(currentWorkDate)}</b>
+        <p>Real-time autonomous data ingestion from Vendoor Employee Portal. Live orders and daily logs are synchronized directly without manual Excel files.</p>
       </div>
       <div class="dm">
         <b>${fmt(totalOrders)}</b>
@@ -7381,53 +7416,38 @@ async function loadUploadsManagementView() {
     </div>
 
     <div class="grid g2e" style="margin-bottom:20px">
-      <!-- Upload Specific Orders (New) -->
+      <!-- Sync Vendoor Orders -->
       <div class="panel" style="border-top:3px solid #2563EB">
         <div class="hd">
-          <h3>📦 Upload NEW Specific Orders</h3>
-          <span class="tag" style="background:#DBEAFE;color:#1E40AF">SpecificOrders.xlsx</span>
+          <h3>⚡ Vendoor Live Orders Sync</h3>
+          <span class="tag" style="background:#DBEAFE;color:#1E40AF">Live Portal API</span>
         </div>
         <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
-          Upload unallocated orders for new accounts. The engine automatically classifies these for the New CS team.
+          Pulls active orders (New & Pending) directly from Vendoor. Automated pagination and classification stage the orders directly into today's work pool.
         </p>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <label class="btn primary sm" for="specificOrdersInput" style="cursor:pointer">⭱ Upload Specific Orders (New)</label>
-          <span style="font-size:11.5px;color:var(--mut)">${newOrders > 0 ? `✓ ${fmt(newOrders)} New orders loaded` : 'No new orders uploaded yet'}</span>
+          <button class="btn primary sm" onclick="triggerQuickVendoorSync()">⚡ Sync Live Orders Now</button>
+          <span style="font-size:11.5px;color:var(--mut)">${newOrders + penOrders > 0 ? `✓ ${fmt(newOrders)} New · ${fmt(penOrders)} Pending active` : 'No orders loaded yet'}</span>
         </div>
       </div>
 
-      <!-- Upload Specific Orders (Pending) -->
-      <div class="panel" style="border-top:3px solid #7C3AED">
+      <!-- Sync Vendoor Activity Logs -->
+      <div class="panel" style="border-top:3px solid #16A34A">
         <div class="hd">
-          <h3>⏳ Upload PENDING Specific Orders</h3>
-          <span class="tag" style="background:#F3E8FF;color:#6B21A8">PendingOrders.xlsx</span>
+          <h3>📊 Vendoor Activity Logs Sync</h3>
+          <span class="tag" style="background:#DCFCE7;color:#15803D">Audit Logs Export</span>
         </div>
         <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
-          Upload backlog orders requiring customer follow-up. Automatically prioritized for the Pending CS team.
+          Retrieves employee actions, status changes, and calls from Vendoor to compute real-time scorecard metrics, untouched orders, and allocation tracking.
         </p>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <label class="btn primary sm" for="pendingSpecificOrdersInput" style="cursor:pointer;background:#7C3AED;border-color:#7C3AED">⭱ Upload Specific Orders (Pending)</label>
-          <span style="font-size:11.5px;color:var(--mut)">${penOrders > 0 ? `✓ ${fmt(penOrders)} Pending orders loaded` : 'No pending orders uploaded yet'}</span>
+          <button class="btn success sm" onclick="triggerQuickVendoorLogsSync()">⚡ Sync Activity Logs Now</button>
+          <span style="font-size:11.5px;color:var(--mut)">${hasLog ? `✓ Daily log active (${D.employees.length} agents)` : 'Logs pending sync for this date'}</span>
         </div>
       </div>
     </div>
 
     <div class="grid g2" style="margin-bottom:20px">
-      <!-- Upload Daily Performance Log -->
-      <div class="panel" style="border-top:3px solid #16A34A">
-        <div class="hd">
-          <h3>📊 Upload Daily Log</h3>
-          <span class="tag" style="background:#DCFCE7;color:#15803D">Master Log</span>
-        </div>
-        <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
-          Upload operational activity log (.xlsx) containing employee actions, printing, cancellation, and phone changes for scorecard tracking.
-        </p>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <label class="btn success sm" for="fileInput" style="cursor:pointer">⭱ Upload Daily Performance Log</label>
-          <span style="font-size:11.5px;color:var(--mut)">${hasLog ? `✓ Daily log active (${D.employees.length} agents)` : 'No daily log uploaded for this date'}</span>
-        </div>
-      </div>
-
       <!-- Cumulative Status -->
       <div class="panel">
         <div class="hd">
@@ -7437,7 +7457,7 @@ async function loadUploadsManagementView() {
         <div style="display:flex;flex-direction:column;gap:8px">
           <div class="hstat">
             <div class="d" style="background:#2563EB"></div>
-            <div class="t"><b>Total Work Pool Orders</b><span>Specific Orders in memory & DB</span></div>
+            <div class="t"><b>Total Work Pool Orders</b><span>Active orders in DB pool</span></div>
             <div class="v">${fmt(totalOrders)}</div>
           </div>
           <div class="hstat">
@@ -7453,6 +7473,22 @@ async function loadUploadsManagementView() {
         </div>
         <div style="margin-top:14px;text-align:right">
           <button class="btn primary sm" onclick="switchSubTab('operations', 'allocation')">Go to Work Allocation →</button>
+        </div>
+      </div>
+
+      <!-- Offline File Fallback -->
+      <div class="panel" style="background:#FAFAFA;border:1px dashed #CBD5E1">
+        <div class="hd">
+          <h3>📁 Offline File Import (Fallback)</h3>
+          <span class="tag" style="background:#F1F5F9;color:#64748B">Optional Backup</span>
+        </div>
+        <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
+          If offline manual Excel backups are needed, you can optionally upload local files directly into the engine.
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <label class="btn sm" for="specificOrdersInput" style="cursor:pointer;background:#fff;border-color:#CBD5E1">Import New Orders (.xlsx)</label>
+          <label class="btn sm" for="pendingSpecificOrdersInput" style="cursor:pointer;background:#fff;border-color:#CBD5E1">Import Pending (.xlsx)</label>
+          <label class="btn sm" for="fileInput" style="cursor:pointer;background:#fff;border-color:#CBD5E1">Import Log (.xlsx)</label>
         </div>
       </div>
     </div>
@@ -7483,10 +7519,10 @@ function loadOperationsOverviewView() {
       <div class="panel" style="display:flex;flex-direction:column;justify-content:space-between">
         <div>
           <div style="font-size:24px;margin-bottom:8px">1️⃣</div>
-          <h3 style="margin-bottom:6px">1. Upload Orders</h3>
-          <p style="font-size:12px;color:var(--slate);line-height:1.5">Upload Specific Orders for New and Pending accounts to populate today's work pool.</p>
+          <h3 style="margin-bottom:6px">1. Sync Orders</h3>
+          <p style="font-size:12px;color:var(--slate);line-height:1.5">Synchronize live orders directly from Vendoor Employee Portal for New and Pending accounts.</p>
         </div>
-        <button class="btn sm primary" style="margin-top:14px" onclick="switchSubTab('operations', 'uploads')">Go to Uploads →</button>
+        <button class="btn sm primary" style="margin-top:14px" onclick="triggerQuickVendoorSync()">⚡ Sync Vendoor Orders →</button>
       </div>
 
       <div class="panel" style="display:flex;flex-direction:column;justify-content:space-between">
@@ -7527,28 +7563,28 @@ function renderDashboardUploadStatusView() {
     <div class="grid g2" style="margin-bottom:20px">
       <div class="panel">
         <div class="hd">
-          <h3>📊 Daily Performance Log</h3>
+          <h3>📊 Vendoor Activity Logs</h3>
           <span class="tag" style="background:${hasLog ? '#DCFCE7' : '#FEE2E2'};color:${hasLog ? '#15803D' : '#B91C1C'}">
-            ${hasLog ? '✓ Active Snapshot' : '✕ Missing for Date'}
+            ${hasLog ? '✓ Active Snapshot' : '✕ Pending Sync for Date'}
           </span>
         </div>
         <p style="font-size:12.5px;color:var(--slate);line-height:1.5;margin-bottom:14px">
           ${hasLog ? `Daily Log loaded with <b>${D.employees.length} active agents</b> and <b>${fmt(D.kpis?.total_actions || 0)} deduplicated actions</b>.` : `No Daily Log operational records have been loaded for ${formatDisplayDate(currentWorkDate)}.`}
         </p>
-        <label class="btn primary sm" for="fileInput" style="cursor:pointer">⭱ Upload Daily Log (.xlsx)</label>
+        <button class="btn primary sm" onclick="triggerQuickVendoorLogsSync()">⚡ Sync Vendoor Activity Logs</button>
       </div>
 
       <div class="panel">
         <div class="hd">
-          <h3>📦 Specific Orders Pool</h3>
+          <h3>📦 Vendoor Orders Pool</h3>
           <span class="tag" style="background:${totalOrders > 0 ? '#DCFCE7' : '#FEF3C7'};color:${totalOrders > 0 ? '#15803D' : '#B45309'}">
             ${totalOrders > 0 ? `✓ ${fmt(totalOrders)} Orders Loaded` : '⚠ No Orders Loaded'}
           </span>
         </div>
         <p style="font-size:12.5px;color:var(--slate);line-height:1.5;margin-bottom:14px">
-          ${totalOrders > 0 ? `Active work pool contains <b>${fmt(newOrders)} New</b> and <b>${fmt(penOrders)} Pending</b> orders across <b>${currentAccountsList.length} accounts</b>.` : `No Specific Orders files have been staged for ${formatDisplayDate(currentWorkDate)}.`}
+          ${totalOrders > 0 ? `Active work pool contains <b>${fmt(newOrders)} New</b> and <b>${fmt(penOrders)} Pending</b> orders across <b>${currentAccountsList.length} accounts</b>.` : `No orders loaded for ${formatDisplayDate(currentWorkDate)}.`}
         </p>
-        <button class="btn primary sm" onclick="show('operations', 'uploads')">Manage Specific Orders Uploads →</button>
+        <button class="btn primary sm" onclick="triggerQuickVendoorSync()">⚡ Sync Vendoor Orders</button>
       </div>
     </div>
   `;
@@ -7674,9 +7710,7 @@ async function initApp() {
   updateUrlDate(currentWorkDate);
   updateGlobalDateUI();
 
-  if (currentWorkDate !== getTodayDate()) {
-    await fetchPerformanceDataForDate(currentWorkDate);
-  }
+  await fetchPerformanceDataForDate(currentWorkDate);
 
   render();
 }
@@ -7760,7 +7794,7 @@ initApp();
             <input type="text" id="accRuleModalName" list="accRuleModalAccountList" placeholder="Search or type account name..." required oninput="onAccountRuleModalAccountChange(this.value)" onchange="onAccountRuleModalAccountChange(this.value)" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;outline:none">
             <datalist id="accRuleModalAccountList"></datalist>
             <select id="accRuleModalAccountSelect" onchange="onAccountRuleModalAccountChange(this.value)" style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;background:#F8FAFC;outline:none">
-              <option value="">-- Choose Account from Uploaded Sheets --</option>
+              <option value="">-- Choose Account from Synced Accounts --</option>
             </select>
           </div>
           <div id="accRuleSavedNotice" style="margin-top:6px;display:none"></div>

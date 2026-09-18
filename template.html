@@ -315,7 +315,7 @@ input:checked + .slider:before{transform:translateX(16px)}
       <div class="global-date-selector" id="globalDateSelector">
         <div class="gds-label-group">
           <span class="gds-caption">Business Date</span>
-          <div class="gds-badge" id="globalDateDisplay">08 Sep 2026</div>
+          <div class="gds-badge" id="globalDateDisplay">Loading...</div>
         </div>
         <div class="gds-controls">
           <button type="button" class="gds-btn" id="btnPrevDay" onclick="navigateDateOffset(-1)" title="Previous Day">
@@ -446,7 +446,11 @@ function lineChart(series,keys,colors,labels,pctMode){
 // GLOBAL DATE NAVIGATION ENGINE
 // -------------------------------------------------------------
 function getTodayDate() {
-  return '2026-09-08';
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function getInitialDate() {
@@ -578,6 +582,48 @@ async function updateGlobalContextBar() {
   }
 }
 
+async function triggerQuickVendoorSync() {
+  showToast('⚡ Syncing Orders', 'Connecting to Vendoor and fetching live orders...');
+  try {
+    const res = await apiFetch('/api/integrations/vendoor/sync/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fromDate: currentWorkDate, toDate: currentWorkDate, pageSize: 300 })
+    });
+    if (res.success) {
+      showToast('✓ Vendoor Orders Synced', `Ingested ${res.summary?.total_fetched || 0} orders into active pool.`);
+      await loadInitialData();
+      await updateGlobalContextBar();
+      renderCurrentTab();
+    } else {
+      showToast('⚠️ Sync Notice', res.error || 'Sync completed with 0 new orders');
+    }
+  } catch (err) {
+    showToast('❌ Sync Failed', err.message);
+  }
+}
+
+async function triggerQuickVendoorLogsSync() {
+  showToast('⚡ Syncing Activity Logs', 'Fetching Vendoor employee audit logs...');
+  try {
+    const res = await apiFetch('/api/integrations/vendoor/sync/logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startDate: currentWorkDate, endDate: currentWorkDate })
+    });
+    if (res.success) {
+      showToast('✓ Vendoor Logs Synced', `Ingested ${res.summary?.total_rows || 0} activity records.`);
+      await loadInitialData();
+      await updateGlobalContextBar();
+      renderCurrentTab();
+    } else {
+      showToast('⚠️ Sync Notice', res.error || 'Sync logs returned no records');
+    }
+  } catch (err) {
+    showToast('❌ Sync Failed', err.message);
+  }
+}
+
 function navigateDateOffset(offset) {
   const nextDate = shiftDate(currentWorkDate, offset);
   setGlobalSelectedDate(nextDate);
@@ -612,8 +658,48 @@ async function setGlobalSelectedDate(newDate) {
 async function fetchPerformanceDataForDate(dateStr) {
   try {
     const data = await apiFetch(`/api/data?date=${dateStr}`);
-    if (data && data.exists !== false && (data.employees || data.hr)) {
-      D = data;
+    if (data && data.exists !== false && (data.employees || data.hr || data.log_totals)) {
+      D = {
+        exists: true,
+        date: dateStr,
+        employees: data.employees || [],
+        log_totals: {
+          actions: data.log_totals?.actions || 0,
+          printed: data.log_totals?.printed || 0,
+          pending: data.log_totals?.pending || 0,
+          processing: data.log_totals?.processing || 0,
+          cancelled: data.log_totals?.cancelled || 0,
+          alt: data.log_totals?.alt || 0,
+          ...(data.log_totals || {})
+        },
+        status_totals: {
+          Printed: data.status_totals?.Printed || 0,
+          Pending: data.status_totals?.Pending || 0,
+          Processing: data.status_totals?.Processing || 0,
+          Cancelled: data.status_totals?.Cancelled || 0,
+          ...(data.status_totals || {})
+        },
+        rankings: {
+          printed: data.rankings?.printed || [],
+          pending: data.rankings?.pending || [],
+          cancelled: data.rankings?.cancelled || [],
+          ...(data.rankings || {})
+        },
+        cancel_rate_rank: data.cancel_rate_rank || [],
+        hr: data.hr || { days: 0, tot_new: 0, tot_printed: 0, tot_cancel: 0, tot_add: 0 },
+        daily: data.daily || [],
+        dedup: data.dedup || { removed: 0, removed_pct: 0 },
+        team_cancel_rate: data.team_cancel_rate || 0,
+        team_pending_rate: data.team_pending_rate || 0,
+        addedOrders: data.addedOrders || { totalAdded: 0, totalAddedCS: 0, totalAddedNonCS: 0, fromCS: 0, fromOtherDepartments: 0, topCSContributors: [], allCSContributors: [] },
+        ...data
+      };
+      D.rankings = D.rankings || {};
+      D.rankings.printed = D.rankings.printed || [];
+      D.rankings.pending = D.rankings.pending || [];
+      D.rankings.cancelled = D.rankings.cancelled || [];
+      D.log_totals = D.log_totals || { actions: 0, printed: 0, pending: 0, processing: 0, cancelled: 0, alt: 0 };
+      D.status_totals = D.status_totals || { Printed: 0, Pending: 0, Processing: 0, Cancelled: 0 };
     } else {
       D = {
         exists: false,
@@ -662,11 +748,9 @@ function renderEmptyState(title, subtitle, icon, canUploadDaily = true) {
       <h3 style="font-size:18px;font-weight:800;color:var(--navy);margin-bottom:8px">${actualTitle}</h3>
       <p style="font-size:13px;color:var(--mut);line-height:1.6;max-width:440px;margin:0 auto 20px">${actualSub}</p>
       <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
-        ${canUploadDaily && !isFuture ? `
-          <label class="btn primary" for="dailyLogInput" style="cursor:pointer">
-            ⭱ Upload Daily Log for ${displayDate}
-          </label>
-        ` : ''}
+        <button class="btn primary" onclick="show('management', 'vendoor')">
+          ⚡ Sync from Vendoor
+        </button>
         <button class="btn" onclick="navigateDateToday()">Return to Today</button>
       </div>
     </div>
@@ -864,10 +948,10 @@ function renderWorkAllocationUI(overview) {
   if (currentAccountsList.length === 0) {
     html += `
       <div class="panel empty-alloc" style="margin-bottom:20px;border:1px dashed var(--blue);background:#EFF6FF">
-        <div style="font-size:26px;margin-bottom:6px">📦</div>
-        <b style="font-size:14px;color:var(--navy)">No Specific Orders uploaded for this date yet</b>
-        <p style="margin:4px 0 14px;color:var(--slate)">Upload a Specific Orders Excel file (e.g. SpecificOrders.xlsx) to populate the accounts list and order queue.</p>
-        <button class="btn primary" onclick="show('operations', 'uploads')">⭱ Upload Specific Orders Now</button>
+        <div style="font-size:26px;margin-bottom:6px">⚡</div>
+        <b style="font-size:14px;color:var(--navy)">No active orders synced for this date yet</b>
+        <p style="margin:4px 0 14px;color:var(--slate)">Sync live orders directly from Vendoor to populate the accounts list and order queue.</p>
+        <button class="btn primary" onclick="triggerQuickVendoorSync()">⚡ Sync Vendoor Orders Now</button>
       </div>
     `;
   }
@@ -1412,7 +1496,7 @@ async function openOrderLevelModal(targetAcc = '', targetStatus = '') {
           <div style="font-size:32px;margin-bottom:8px">📦</div>
           <b style="color:var(--ink)">No Orders Found in Pool</b>
           <p style="font-size:12.5px;margin:6px 0 16px">${escapeHtml(err.message || 'No orders found for this account.')}</p>
-          <button class="btn primary sm" onclick="closeOrderLevelModal();show('operations', 'uploads')">⭱ Upload Specific Orders</button>
+          <button class="btn primary sm" onclick="closeOrderLevelModal();triggerQuickVendoorSync()">⚡ Sync Vendoor Orders</button>
         </div>
       `;
     }
@@ -2388,7 +2472,7 @@ async function openAccountRuleModal(rule = null) {
   }
   if (selectEl) {
     const options = [
-      `<option value="">-- Choose Account from Uploaded Sheets (${allKnownAccounts.length} accounts found) --</option>`
+      `<option value="">-- Choose Account from Synced Accounts (${allKnownAccounts.length} accounts found) --</option>`
     ];
     for (const acc of allKnownAccounts) {
       const hasRule = allAccountRules.some(r => r.account_name && r.account_name.toLowerCase() === acc.toLowerCase());
@@ -4635,7 +4719,7 @@ function renderAccountsGrid(accounts) {
   if (accounts.length === 0) {
     return `
       <div class="panel" style="text-align:center;padding:40px;color:var(--mut)">
-        No accounts found for ${formatDisplayDate(currentWorkDate)}. Upload Specific Orders to populate.
+        No accounts found for ${formatDisplayDate(currentWorkDate)}. Sync Vendoor orders to populate.
       </div>
     `;
   }
@@ -5123,21 +5207,17 @@ async function loadCurrentOrdersView() {
   const f2 = poolStatus ? poolStatus.file2 : null;
   const summary = poolStatus ? poolStatus.summary : null;
   const accounts = (poolStatus && poolStatus.accounts) ? poolStatus.accounts : [];
+  const stagedFiles = (poolStatus && poolStatus.files) ? poolStatus.files : [];
   const totalOrders = poolStatus ? poolStatus.total_orders : 0;
-
-  const stagedFiles = (poolStatus && poolStatus.files && poolStatus.files.length > 0) 
-    ? poolStatus.files 
-    : ([f1, f2].filter(Boolean));
 
   let html = `
     <!-- Operational Source Separation Banner -->
     <div style="background:linear-gradient(135deg, #1E3A8A, #1D4ED8);color:#fff;border-radius:14px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:16px;box-shadow:var(--shadow)">
       <div style="font-size:32px">📦</div>
       <div style="flex:1">
-        <b style="font-size:15px;display:block;margin-bottom:3px">Operational Source: Specific Orders (Dynamic Batch Allocation Pool)</b>
+        <b style="font-size:15px;display:block;margin-bottom:3px">Operational Source: Vendoor Live Orders Pool</b>
         <p style="font-size:12px;opacity:0.9;margin:0;line-height:1.5">
-          Dedicated purely to today's active inventory and work allocation. Multiple files can be uploaded into this pool (e.g. 300 + 290 = 590 unique orders).
-          <b>Uploading saves and stages files. The pool remains open for more uploads until you click Generate Allocation.</b>
+          Autonomous order ingestion synchronized directly from authenticated Vendoor endpoints for the selected business date.
         </p>
       </div>
       <div style="text-align:right;background:rgba(255,255,255,0.15);padding:8px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.2)">
@@ -5146,69 +5226,27 @@ async function loadCurrentOrdersView() {
       </div>
     </div>
 
-    <!-- Dynamic Batch Staging Pool Panel -->
+    <!-- Vendoor Sync & Pool Summary Panel -->
     <div class="panel" style="margin-bottom:20px;border:1px solid var(--line);box-shadow:var(--shadow)">
       <div class="hd" style="flex-wrap:wrap;gap:12px;border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:14px">
         <div>
           <h3 style="margin:0;display:flex;align-items:center;gap:8px">
-            📁 Staged Files in Pool (${stagedFiles.length} File${stagedFiles.length === 1 ? '' : 's'})
+            ⚡ Current Orders Pool (${fmt(totalOrders)} Orders)
             <span class="tag" style="background:#ECFDF5;color:#059669;font-weight:700">Ready for Allocation</span>
           </h3>
           <p style="margin:4px 0 0;font-size:12px;color:var(--slate)">
-            Uploads remain open until you click <b>Generate Allocation</b>. You can add more files at any time.
+            Orders are automatically ingested and isolated by business date.
           </p>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <label class="btn primary sm" style="cursor:pointer">
-            ⭱ Add File(s) to Pool
-            <input type="file" accept=".xlsx,.xls" multiple style="display:none" onchange="uploadSpecificOrdersBatch(this)">
-          </label>
-          <button class="btn success sm" onclick="show('work-allocation')">
-            ⚡ Generate Allocation →
+          <button class="btn primary sm" onclick="show('management', 'vendoor')">
+            🔌 Vendoor Sync Settings
+          </button>
+          <button class="btn success sm" onclick="show('operations', 'allocation')">
+            ⚡ Open Work Allocation →
           </button>
         </div>
       </div>
-
-      <!-- Grid of Staged Files -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:12px;margin-bottom:14px">
-        ${stagedFiles.length === 0 ? `
-          <div style="grid-column:1/-1;padding:30px;text-align:center;background:var(--panel2);border:2px dashed var(--line);border-radius:12px">
-            <div style="font-size:28px;margin-bottom:6px">📂</div>
-            <b style="color:var(--navy);font-size:14px">No Specific Orders files staged yet for ${formatDisplayDate(currentWorkDate)}</b>
-            <p style="color:var(--mut);font-size:12px;margin:4px 0 12px">Upload one or multiple Excel files containing New and Pending orders.</p>
-            <label class="btn primary sm" style="cursor:pointer">
-              ⭱ Choose File(s) to Stage
-              <input type="file" accept=".xlsx,.xls" multiple style="display:none" onchange="uploadSpecificOrdersBatch(this)">
-            </label>
-          </div>
-        ` : stagedFiles.map(f => `
-          <div style="background:#fff;border:1.5px solid #10B981;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:var(--shadow-sm)">
-            <div>
-              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:6px">
-                <span class="tag" style="background:#DCFCE7;color:#15803D;font-weight:700">File #${f.file_slot}</span>
-                <span style="font-size:11px;color:var(--mut)">${f.upload_date ? (f.upload_date.split(' ')[1] || f.upload_date) : ''}</span>
-              </div>
-              <b style="font-size:13px;color:var(--ink);word-break:break-all;display:block;margin-bottom:6px" title="${escapeHtml(f.file_name)}">
-                📄 ${escapeHtml(f.file_name)}
-              </b>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11.5px;background:var(--panel2);padding:6px 10px;border-radius:6px;margin-bottom:10px">
-                <div><span style="color:var(--mut);display:block;font-size:10px">Total Rows</span><b>${fmt(f.row_count)}</b></div>
-                <div><span style="color:var(--mut);display:block;font-size:10px">Valid Orders</span><b style="color:#15803D">${fmt(f.valid_orders_count)}</b></div>
-              </div>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:6px;border-top:1px solid var(--line)">
-              <label class="btn sm" style="cursor:pointer;padding:2px 8px;font-size:11px">
-                ↻ Replace
-                <input type="file" accept=".xlsx,.xls" style="display:none" onchange="uploadSpecificOrdersSlot(${f.file_slot}, this)">
-              </label>
-              <button class="btn sm danger" style="padding:2px 8px;font-size:11px" onclick="removeStagedFile(${f.file_slot})">
-                🗑️ Remove
-              </button>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    </div>
 
     <!-- Multi-File Consolidation Summary -->
     <div class="panel" style="margin-bottom:20px;border:1px solid var(--line);box-shadow:var(--shadow)">
@@ -5267,7 +5305,7 @@ async function loadCurrentOrdersView() {
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
         ${accounts.length === 0 ? `
-          <div style="grid-column:1/-1;padding:24px;text-align:center;color:var(--mut)">No accounts found in current work pool. Upload File #1 or File #2 above.</div>
+          <div style="grid-column:1/-1;padding:24px;text-align:center;color:var(--mut)">No accounts found in current work pool. Sync Vendoor orders to populate today's pool.</div>
         ` : accounts.map(a => `
           <div style="background:var(--panel2);padding:12px 14px;border-radius:10px;border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
             <b style="font-size:13px;color:var(--ink)">${a}</b>
@@ -5574,7 +5612,7 @@ function renderAutoDetectedUploadModal(result) {
 
         <!-- Files Processed Breakdown -->
         <div>
-          <h4 style="font-size:13px;color:var(--slate);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Uploaded Files Inspection</h4>
+          <h4 style="font-size:13px;color:var(--slate);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Data Integrity Inspection</h4>
           <div class="tbl-scroll">
             <table>
               <thead>
@@ -5885,7 +5923,7 @@ async function loadEmployeeTrackingView(empIdToSelect) {
       }
     }
 
-    const logUploaded = teamSummary ? Boolean(teamSummary.daily_log_uploaded) : false;
+    const logsSynced = teamSummary ? Boolean(teamSummary.daily_log_uploaded) : false;
     const sources = (teamSummary && teamSummary.sources) || {};
     const teamKpis = (teamSummary && teamSummary.team_kpis) || {};
 
@@ -5900,35 +5938,38 @@ async function loadEmployeeTrackingView(empIdToSelect) {
             </p>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="tag" style="background:${sources.new_orders_uploaded ? '#DCFCE7' : '#FEF3C7'};color:${sources.new_orders_uploaded ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
-              ${sources.new_orders_uploaded ? '✓ File #1 (New)' : '⚠️ File #1 Missing'}
+            <span class="tag" style="background:${sources.new_orders_synced ? '#DCFCE7' : '#FEF3C7'};color:${sources.new_orders_synced ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
+              ${sources.new_orders_synced ? '✓ Vendoor New Orders' : '⚠️ New Orders Pending'}
             </span>
-            <span class="tag" style="background:${sources.pending_orders_uploaded ? '#DCFCE7' : '#FEF3C7'};color:${sources.pending_orders_uploaded ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
-              ${sources.pending_orders_uploaded ? '✓ File #2 (Pending)' : '⚠️ File #2 Missing'}
+            <span class="tag" style="background:${sources.pending_orders_synced ? '#DCFCE7' : '#FEF3C7'};color:${sources.pending_orders_synced ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
+              ${sources.pending_orders_synced ? '✓ Vendoor Pending Orders' : '⚠️ Pending Orders Pending'}
             </span>
-            <span class="tag" style="background:${logUploaded ? '#DCFCE7' : '#FEE2E2'};color:${logUploaded ? '#15803D' : '#991B1B'};font-size:11.5px;font-weight:700">
-              ${logUploaded ? '✓ Daily Log Uploaded' : '⚠️ Daily Log Not Uploaded'}
+            <span class="tag" style="background:${logsSynced ? '#DCFCE7' : '#FEE2E2'};color:${logsSynced ? '#15803D' : '#991B1B'};font-size:11.5px;font-weight:700">
+              ${logsSynced ? '✓ Vendoor Activity Synced' : '⚠️ Activity Sync Pending'}
             </span>
           </div>
         </div>
       </div>
 
       <!-- State Message Banner -->
-      ${!logUploaded ? `
-        <div style="background:#F8FAFC;border:1px solid #CBD5E1;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:14px">
-          <div style="font-size:24px">📁</div>
-          <div>
-            <b style="color:#334155;display:block;margin-bottom:2px">End-of-Day Log Not Uploaded</b>
-            <p style="font-size:12.5px;color:#64748B;margin:0">
-              The Daily Log has not been uploaded for ${formatDisplayDate(currentWorkDate)}. Showing manual account assignments. All worked activity, action counts, and allocation compliance are strictly recorded as <b>N/A</b>.
-            </p>
+      ${!logsSynced ? `
+        <div style="background:#F8FAFC;border:1px solid #CBD5E1;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="font-size:24px">⚡</div>
+            <div>
+              <b style="color:#334155;display:block;margin-bottom:2px">Vendoor Daily Activity Logs Ready for Sync</b>
+              <p style="font-size:12.5px;color:#64748B;margin:0">
+                Synchronize employee activity logs from Vendoor to compute real-time scorecard compliance for ${formatDisplayDate(currentWorkDate)}.
+              </p>
+            </div>
           </div>
+          <button class="btn primary sm" onclick="triggerQuickVendoorLogsSync()">⚡ Sync Activity Logs Now</button>
         </div>
       ` : (teamKpis.employees_with_activity === 0 ? `
         <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:14px">
           <div style="font-size:24px">ℹ️</div>
           <div>
-            <b style="color:#1E40AF;display:block;margin-bottom:2px">Log Uploaded — No Activity Recorded</b>
+            <b style="color:#1E40AF;display:block;margin-bottom:2px">Activity Synced — No Activity Recorded</b>
             <p style="font-size:12.5px;color:#1E3A8A;margin:0">
               The Daily Log is uploaded for ${formatDisplayDate(currentWorkDate)}, but contains 0 action records across the team. Compliance is <b>N/A</b>.
             </p>
@@ -5953,11 +5994,11 @@ async function loadEmployeeTrackingView(empIdToSelect) {
         <!-- Team KPIs -->
         <div class="kpis" style="margin-bottom:16px">
           ${kpiCard('👥', fmt(teamKpis.total_employees || teamList.length), 'Total Team Members', 'Permanent & Active CS', NAVY)}
-          ${kpiCard('⚡', logUploaded ? fmt(teamKpis.employees_with_activity) : '—', 'With Log Activity', logUploaded ? 'Logged at least 1 action' : 'Log not uploaded', BLUE)}
-          ${kpiCard('💤', logUploaded ? fmt(teamKpis.employees_without_activity) : '—', 'Zero Activity', logUploaded ? '0 actions recorded' : 'Log not uploaded', PURPLE)}
-          ${kpiCard('📦', logUploaded ? fmt(teamKpis.total_orders_worked_today) : '—', 'Orders Worked Today', logUploaded ? 'Unique orders touched' : 'Log not uploaded', GREEN)}
-          ${kpiCard('⚡', logUploaded ? fmt(teamKpis.total_real_actions) : '—', 'Total Real Actions', logUploaded ? 'Deduplicated (120s)' : 'Log not uploaded', BLUE)}
-          ${kpiCard('⚠️', logUploaded ? fmt(teamKpis.outside_allocation_accounts) : '—', 'Outside Accounts', logUploaded ? 'Unassigned accounts worked' : 'Log not uploaded', (teamKpis.outside_allocation_accounts > 0) ? AMBER : GREEN)}
+          ${kpiCard('⚡', logsSynced ? fmt(teamKpis.employees_with_activity) : '—', 'With Log Activity', logsSynced ? 'Logged at least 1 action' : 'Log not synced', BLUE)}
+          ${kpiCard('💤', logsSynced ? fmt(teamKpis.employees_without_activity) : '—', 'Zero Activity', logsSynced ? '0 actions recorded' : 'Log not synced', PURPLE)}
+          ${kpiCard('📦', logsSynced ? fmt(teamKpis.total_orders_worked_today) : '—', 'Orders Worked Today', logsSynced ? 'Unique orders touched' : 'Log not synced', GREEN)}
+          ${kpiCard('⚡', logsSynced ? fmt(teamKpis.total_real_actions) : '—', 'Total Real Actions', logsSynced ? 'Deduplicated (120s)' : 'Log not synced', BLUE)}
+          ${kpiCard('⚠️', logsSynced ? fmt(teamKpis.outside_allocation_accounts) : '—', 'Outside Accounts', logsSynced ? 'Unassigned accounts worked' : 'Log not synced', (teamKpis.outside_allocation_accounts > 0) ? AMBER : GREEN)}
         </div>
 
         <!-- Team Summary Table -->
@@ -5998,24 +6039,24 @@ async function loadEmployeeTrackingView(empIdToSelect) {
                       </span>
                     </td>
                     <td>
-                      ${logUploaded ? `
+                      ${logsSynced ? `
                         <span class="tag" style="background:${e.worked_accounts_count > 0 ? '#F0FDF4' : '#F1F5F9'};color:${e.worked_accounts_count > 0 ? '#15803D' : '#64748B'}">
                           ${fmt(e.worked_accounts_count)} Accounts
                         </span>
                       ` : '<span style="color:var(--mut)">—</span>'}
                     </td>
                     <td>
-                      ${logUploaded ? (
+                      ${logsSynced ? (
                         hasOut
                           ? `<span class="tag" style="background:#FEE2E2;color:#991B1B;font-weight:700">⚠️ ${fmt(e.extra_accounts_count)} Unassigned</span>`
                           : '<span class="tag" style="background:#F0FDF4;color:#15803D">None</span>'
                       ) : '<span style="color:var(--mut)">—</span>'}
                     </td>
-                    <td><b>${logUploaded ? fmt(e.orders_worked_today) : '—'}</b></td>
-                    <td><b>${logUploaded ? fmt(e.real_actions) : '—'}</b></td>
-                    <td>${logUploaded ? fmt(e.printed) : '—'}</td>
-                    <td>${logUploaded ? fmt(e.pending) : '—'}</td>
-                    <td>${logUploaded ? fmt(e.cancelled) : '—'}</td>
+                    <td><b>${logsSynced ? fmt(e.orders_worked_today) : '—'}</b></td>
+                    <td><b>${logsSynced ? fmt(e.real_actions) : '—'}</b></td>
+                    <td>${logsSynced ? fmt(e.printed) : '—'}</td>
+                    <td>${logsSynced ? fmt(e.pending) : '—'}</td>
+                    <td>${logsSynced ? fmt(e.cancelled) : '—'}</td>
                     <td>
                       ${isNA ? `
                         <span class="tag" style="background:#F1F5F9;color:#64748B;font-weight:700">N/A</span>
@@ -6080,7 +6121,7 @@ async function loadEmployeeTrackingView(empIdToSelect) {
           <div style="background:#F8FAFC;border:1px solid #CBD5E1;border-radius:12px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:12px">
             <span style="font-size:20px">📁</span>
             <span style="font-size:13px;color:#475569">
-              <b>End-of-Day Log Not Uploaded:</b> Actual worked metrics and compliance for <b>${escapeHtml(empData.employee_name)}</b> are <b>N/A</b>. Showing assigned accounts from manual allocation.
+              <b>End-of-Day Log Not Synced:</b> Actual worked metrics and compliance for <b>${escapeHtml(empData.employee_name)}</b> are <b>N/A</b>. Showing assigned accounts from manual allocation.
             </span>
           </div>
         `;
@@ -6089,7 +6130,7 @@ async function loadEmployeeTrackingView(empIdToSelect) {
           <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:12px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:12px">
             <span style="font-size:20px">ℹ️</span>
             <span style="font-size:13px;color:#1E40AF">
-              <b>Log Uploaded — No Activity Recorded:</b> <b>${escapeHtml(empData.employee_name)}</b> was assigned ${assignedAccs.length} account(s), but logged 0 actions in today's Daily Log. Allocation Compliance is <b>N/A</b>.
+              <b>Activity Synced — No Activity Recorded:</b> <b>${escapeHtml(empData.employee_name)}</b> was assigned ${assignedAccs.length} account(s), but logged 0 actions in today's Daily Log. Allocation Compliance is <b>N/A</b>.
             </span>
           </div>
         `;
@@ -6111,9 +6152,9 @@ async function loadEmployeeTrackingView(empIdToSelect) {
       html += `
         <!-- Metric Cards with Truthful N/A Handling -->
         <div class="kpis" style="margin-bottom:20px">
-          ${kpiCard('📦', isLogUp ? fmt(empData.orders_worked_today) : '—', 'Orders Worked Today', isLogUp ? 'Unique orders touched' : 'Log not uploaded', NAVY)}
-          ${kpiCard('⚡', isLogUp ? fmt(empData.real_actions) : '—', 'Real Actions', isLogUp ? 'Deduplicated (120s window)' : 'Log not uploaded', BLUE)}
-          ${kpiCard('⚠️', isLogUp ? fmt(empData.orders_worked_outside_allocation) : '—', 'Orders Outside Allocation', isLogUp ? (hasOutside ? 'Touched unassigned accounts' : '0 unassigned') : 'Log not uploaded', hasOutside ? AMBER : GREEN)}
+          ${kpiCard('📦', isLogUp ? fmt(empData.orders_worked_today) : '—', 'Orders Worked Today', isLogUp ? 'Unique orders touched' : 'Log not synced', NAVY)}
+          ${kpiCard('⚡', isLogUp ? fmt(empData.real_actions) : '—', 'Real Actions', isLogUp ? 'Deduplicated (120s window)' : 'Log not synced', BLUE)}
+          ${kpiCard('⚠️', isLogUp ? fmt(empData.orders_worked_outside_allocation) : '—', 'Orders Outside Allocation', isLogUp ? (hasOutside ? 'Touched unassigned accounts' : '0 unassigned') : 'Log not synced', hasOutside ? AMBER : GREEN)}
           ${kpiCard('✓', escapeHtml(complianceLabel), 'Allocation Compliance', isNA ? 'No activity recorded' : 'Actions in assigned accounts', isNA ? SLATE : (empData.allocation_compliance >= 100 ? GREEN : AMBER))}
         </div>
 
@@ -6157,7 +6198,7 @@ async function loadEmployeeTrackingView(empIdToSelect) {
             </div>
             <div>
               ${!isLogUp ? `
-                <p style="font-size:12.5px;color:var(--mut);padding:14px 0">End-of-Day Log not uploaded for this date.</p>
+                <p style="font-size:12.5px;color:var(--mut);padding:14px 0">End-of-Day Log not synced for this date.</p>
               ` : (workedAccs.length === 0 ? `
                 <p style="font-size:12.5px;color:var(--mut);padding:14px 0">No actions recorded in Daily Log for this date.</p>
               ` : `
@@ -6189,7 +6230,7 @@ async function loadEmployeeTrackingView(empIdToSelect) {
           </div>
           ${!isLogUp || (empData.account_breakdown || []).length === 0 ? `
             <div style="text-align:center;padding:30px 20px;color:var(--mut);font-size:13px">
-              ${!isLogUp ? 'End-of-Day Log not uploaded. No logged actions to display.' : 'No actions recorded in Daily Log for this employee.'}
+              ${!isLogUp ? 'End-of-Day Log not synced. No logged actions to display.' : 'No actions recorded in Daily Log for this employee.'}
             </div>
           ` : `
             <div class="tbl-scroll">
@@ -6293,7 +6334,7 @@ async function loadTrackingOverviewView() {
     const act = overviewData.actual_work || {};
     const audit = overviewData.data_quality_audit || {};
     const sources = overviewData.sources || {};
-    const logUploaded = Boolean(overviewData.daily_log_uploaded);
+    const logsSynced = Boolean(overviewData.daily_log_uploaded);
 
     let html = `
       <!-- Top Source Upload Integrity Status Bar -->
@@ -6306,37 +6347,40 @@ async function loadTrackingOverviewView() {
             </p>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="tag" style="background:${sources.new_orders_uploaded ? '#DCFCE7' : '#FEF3C7'};color:${sources.new_orders_uploaded ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
-              ${sources.new_orders_uploaded ? '✓ File #1 (New)' : '⚠️ File #1 Missing'}
+            <span class="tag" style="background:${sources.new_orders_synced ? '#DCFCE7' : '#FEF3C7'};color:${sources.new_orders_synced ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
+              ${sources.new_orders_synced ? '✓ Vendoor New Orders' : '⚠️ New Orders Pending'}
             </span>
-            <span class="tag" style="background:${sources.pending_orders_uploaded ? '#DCFCE7' : '#FEF3C7'};color:${sources.pending_orders_uploaded ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
-              ${sources.pending_orders_uploaded ? '✓ File #2 (Pending)' : '⚠️ File #2 Missing'}
+            <span class="tag" style="background:${sources.pending_orders_synced ? '#DCFCE7' : '#FEF3C7'};color:${sources.pending_orders_synced ? '#15803D' : '#B45309'};font-size:11.5px;font-weight:700">
+              ${sources.pending_orders_synced ? '✓ Vendoor Pending Orders' : '⚠️ Pending Orders Pending'}
             </span>
-            <span class="tag" style="background:${logUploaded ? '#DCFCE7' : '#FEE2E2'};color:${logUploaded ? '#15803D' : '#991B1B'};font-size:11.5px;font-weight:700">
-              ${logUploaded ? '✓ Daily Log Uploaded' : '⚠️ Daily Log Not Uploaded'}
+            <span class="tag" style="background:${logsSynced ? '#DCFCE7' : '#FEE2E2'};color:${logsSynced ? '#15803D' : '#991B1B'};font-size:11.5px;font-weight:700">
+              ${logsSynced ? '✓ Vendoor Activity Synced' : '⚠️ Activity Sync Pending'}
             </span>
           </div>
         </div>
       </div>
 
       <!-- Status Banner if Log Missing -->
-      ${!logUploaded ? `
-        <div style="background:#F8FAFC;border:1px solid #CBD5E1;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:14px">
-          <div style="font-size:24px">📁</div>
-          <div>
-            <b style="color:#334155;display:block;margin-bottom:2px">End-of-Day Daily Log Not Uploaded</b>
-            <p style="font-size:12.5px;color:#64748B;margin:0">
-              Opening inventory is ready (${fmt(op.opening_total)} orders), but actual worked metrics and untouched orders require the Daily Log upload.
-            </p>
+      ${!logsSynced ? `
+        <div style="background:#F8FAFC;border:1px solid #CBD5E1;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="font-size:24px">⚡</div>
+            <div>
+              <b style="color:#334155;display:block;margin-bottom:2px">Vendoor Daily Activity Logs Ready for Sync</b>
+              <p style="font-size:12.5px;color:#64748B;margin:0">
+                Opening inventory is ready (${fmt(op.opening_total)} orders). Synchronize activity logs from Vendoor to calculate untouched orders and real agent actions.
+              </p>
+            </div>
           </div>
+          <button class="btn primary sm" onclick="triggerQuickVendoorLogsSync()">⚡ Sync Activity Logs Now</button>
         </div>
       ` : ''}
 
       <!-- Top KPI Grid -->
       <div class="kpis" style="margin-bottom:20px">
         ${kpiCard('📦', fmt(op.opening_total), 'Opening Inventory Pool', `${fmt(op.new_orders)} New · ${fmt(op.pending_orders)} Pending`, NAVY)}
-        ${kpiCard('✓', logUploaded ? fmt(act.orders_worked_today) : '—', 'Orders Worked Today', logUploaded ? 'Unique orders touched across team' : 'Log not uploaded', BLUE)}
-        ${kpiCard('⏳', logUploaded ? fmt(op.untouched_orders) : '—', 'Untouched Orders', logUploaded ? 'Opening orders with 0 daily log activity' : 'N/A (log not uploaded)', PURPLE)}
+        ${kpiCard('✓', logsSynced ? fmt(act.orders_worked_today) : '—', 'Orders Worked Today', logsSynced ? 'Unique orders touched across team' : 'Logs pending sync', BLUE)}
+        ${kpiCard('⏳', logsSynced ? fmt(op.untouched_orders) : '—', 'Untouched Orders', logsSynced ? 'Opening orders with 0 daily log activity' : 'N/A (sync pending)', PURPLE)}
         ${kpiCard('⚠️', fmt(audit.orders_in_both_conflict), 'Opening Status Conflicts', 'Existed in both New and Pending', audit.orders_in_both_conflict > 0 ? AMBER : GREEN)}
       </div>
 
@@ -6346,7 +6390,7 @@ async function loadTrackingOverviewView() {
           <div class="hd">
             <div>
               <h3>📦 Opening Inventory Breakdown</h3>
-              <p>Reconciliation of Specific Orders File #1 and File #2</p>
+              <p>Reconciliation of New and Pending inventory pools</p>
             </div>
           </div>
           <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;text-align:center;padding:12px 0">
@@ -6375,19 +6419,19 @@ async function loadTrackingOverviewView() {
           <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;text-align:center;padding:12px 0">
             <div style="background:#F0FDF4;padding:10px;border-radius:8px">
               <span style="font-size:10px;color:var(--mut);display:block">Printed</span>
-              <b style="font-size:16px;color:#15803D">${logUploaded ? fmt(act.printed_orders) : '—'}</b>
+              <b style="font-size:16px;color:#15803D">${logsSynced ? fmt(act.printed_orders) : '—'}</b>
             </div>
             <div style="background:#F5F3FF;padding:10px;border-radius:8px">
               <span style="font-size:10px;color:var(--mut);display:block">Pending Backlog</span>
-              <b style="font-size:16px;color:#7C3AED">${logUploaded ? fmt(act.pending_backlog) : '—'}</b>
+              <b style="font-size:16px;color:#7C3AED">${logsSynced ? fmt(act.pending_backlog) : '—'}</b>
             </div>
             <div style="background:#FEF2F2;padding:10px;border-radius:8px">
               <span style="font-size:10px;color:var(--mut);display:block">Cancelled</span>
-              <b style="font-size:16px;color:#DC2626">${logUploaded ? fmt(act.cancelled_orders) : '—'}</b>
+              <b style="font-size:16px;color:#DC2626">${logsSynced ? fmt(act.cancelled_orders) : '—'}</b>
             </div>
             <div style="background:#FFFBEB;padding:10px;border-radius:8px">
               <span style="font-size:10px;color:var(--mut);display:block">Alt Phone</span>
-              <b style="font-size:16px;color:#B45309">${logUploaded ? fmt(act.alt_phones) : '—'}</b>
+              <b style="font-size:16px;color:#B45309">${logsSynced ? fmt(act.alt_phones) : '—'}</b>
             </div>
           </div>
         </div>
@@ -6480,7 +6524,7 @@ async function loadTrackingAuditView() {
 
   const audit = overviewData.data_quality_audit || {};
   const op = overviewData.opening_inventory || {};
-  const logUploaded = overviewData.daily_log_uploaded;
+  const logsSynced = overviewData.daily_log_uploaded;
   const sources = overviewData.sources || {};
 
   let html = `
@@ -6502,10 +6546,10 @@ async function loadTrackingAuditView() {
 
     <!-- Audit KPI Cards -->
     <div class="kpis" style="margin-bottom:20px">
-      ${kpiCard('⚠️', fmt(audit.conflicting_opening_orders_count), 'Opening Conflicts', 'Present in both File #1 & #2', audit.conflicting_opening_orders_count > 0 ? AMBER : GREEN)}
-      ${kpiCard('🔍', fmt(audit.unmatched_order_codes_count), 'Unmatched Daily Log Orders', 'Logged but missing from inventory', audit.unmatched_order_codes_count > 0 ? AMBER : GREEN)}
-      ${kpiCard('⏳', logUploaded ? fmt(audit.orders_without_daily_log) : '—', 'Untouched Opening Orders', logUploaded ? 'Zero Daily Log actions' : 'Log not uploaded', PURPLE)}
-      ${kpiCard('✓', logUploaded ? fmt(audit.orders_with_daily_log) : '—', 'Touched Opening Orders', logUploaded ? 'Had at least 1 action' : 'Log not uploaded', BLUE)}
+      ${kpiCard('⚠️', fmt(audit.conflicting_opening_orders_count), 'Opening Conflicts', 'Cross-stream status conflict', audit.conflicting_opening_orders_count > 0 ? AMBER : GREEN)}
+      ${kpiCard('🔍', fmt(audit.unmatched_order_codes_count), 'Unmatched Log Orders', 'Logged but missing from inventory', audit.unmatched_order_codes_count > 0 ? AMBER : GREEN)}
+      ${kpiCard('⏳', logsSynced ? fmt(audit.orders_without_daily_log) : '—', 'Untouched Opening Orders', logsSynced ? 'Zero activity actions' : 'Log not synced', PURPLE)}
+      ${kpiCard('✓', logsSynced ? fmt(audit.orders_with_daily_log) : '—', 'Touched Opening Orders', logsSynced ? 'Had at least 1 action' : 'Log not synced', BLUE)}
     </div>
 
     <!-- Audit Details Grid -->
@@ -6515,7 +6559,7 @@ async function loadTrackingAuditView() {
         <div class="hd">
           <div>
             <h3>⚠️ Opening Status Conflicts (${audit.conflicting_opening_orders_count || 0})</h3>
-            <p>Orders present in both File #1 (New) and File #2 (Pending).</p>
+            <p>Orders detected simultaneously in both New and Pending streams.</p>
           </div>
         </div>
         <div>
@@ -6568,6 +6612,7 @@ async function loadTrackingAuditView() {
 // -------------------------------------------------------------
 function pages(){
   const hr=D.hr||{},st=D.status_totals||{},tot=D.log_totals||{},ded=D.dedup||{};
+  const rankings=D.rankings||{printed:[],pending:[],cancelled:[]};
   const dops=tot.actions||1;
   const pctv=x=>((x||0)/dops*100);
   const p1=pctv(st.Printed),p2=p1+pctv(st.Pending),p3=p2+pctv(st.Processing);
@@ -6705,7 +6750,7 @@ function pages(){
       </div>
       <div class="panel">
         <div class="hd"><h3>Highest Cancelled Volume</h3><p>Absolute deduplicated count</p></div>
-        ${barList(D.rankings.cancelled,null,RED)}
+        ${barList(rankings.cancelled||[],null,RED)}
       </div>
     </div>
   `;
@@ -6741,7 +6786,7 @@ function pages(){
                 <td><span class="rk ${e.rank<=3?'g'+e.rank:''}">${e.rank}</span></td>
                 <td class="nm-cell">${e.name}</td>
                 <td>${scoreCell(e.performance_score)}</td>
-                <td><span class="grade gr-${e.grade[0]}">${e.grade}</span></td>
+                <td><span class="grade gr-${(e.grade||'N')[0]}">${e.grade || 'N/A'}</span></td>
                 <td><span class="seg seg-${segClass(e.segment)}">${e.segment}</span></td>
                 <td><b>${fmt(e.actions)}</b></td>
                 <td><span style="color:${GREEN};font-weight:700">${e.own_printed_rate}%</span></td>
@@ -6903,7 +6948,7 @@ function pages(){
       </div>
       <div class="panel">
         <div class="hd"><h3>Highest Pending Volume</h3><p>Count of orders left pending</p></div>
-        ${barList(D.rankings.pending,null,PURPLE)}
+        ${barList(rankings.pending||[],null,PURPLE)}
       </div>
     </div>
   `;
@@ -6923,7 +6968,7 @@ function pages(){
       </div>
       <div class="panel">
         <div class="hd"><h3>Highest Printed Volume</h3><p>Absolute count</p></div>
-        ${barList(D.rankings.printed,null,GREEN)}
+        ${barList(rankings.printed||[],null,GREEN)}
       </div>
     </div>
   `;
@@ -7021,7 +7066,7 @@ function profileCard(e,i){
   return `
     <div class="prof">
       <div class="ph"><div class="av" style="background:linear-gradient(135deg,${col},${col}cc)">${initials(e.name)}</div>
-        <div style="flex:1"><div class="pn">${e.name}</div><div class="pr">Rank #${e.rank} · <span class="grade gr-${e.grade[0]}" style="padding:1px 7px">${e.grade}</span> · ${e.segment}</div></div>
+        <div style="flex:1"><div class="pn">${e.name}</div><div class="pr">Rank #${e.rank || '-'} · <span class="grade gr-${(e.grade||'N')[0]}" style="padding:1px 7px">${e.grade || 'N/A'}</span> · ${e.segment || 'Core'}</div></div>
       </div>
       <div class="stats">
         <div class="st"><b>${fmt(e.actions)}</b><span>ACTIONS</span></div>
@@ -7045,7 +7090,7 @@ function profileCard(e,i){
 
 function tableRows(list){
   return list.map(e=>`
-    <tr data-seg="${e.segment}" data-risk="${e.cancel_risk}" data-name="${e.name.toLowerCase()}">
+    <tr data-seg="${e.segment}" data-risk="${e.cancel_risk}" data-name="${(e.name||'').toLowerCase()}">
       <td><span class="rk ${e.rank<=3?'g'+e.rank:''}">${e.rank}</span></td>
       <td class="nm-cell">${e.name}</td>
       <td>${fmt(e.actions)}</td>
@@ -7060,7 +7105,7 @@ function tableRows(list){
       <td><b style="color:${BLUE}">${e.own_alt_rate}%</b></td>
       <td>${e.added}</td>
       <td>${e.contribution_pct}%</td>
-      <td><span class="grade gr-${e.grade[0]}">${e.grade}</span></td>
+      <td><span class="grade gr-${(e.grade||'N')[0]}">${e.grade || 'N/A'}</span></td>
     </tr>
   `).join('');
 }
@@ -7093,18 +7138,16 @@ const MAIN_PAGES_CONFIG = {
     tabs: [
       { id: 'overview', label: 'Overview', icon: '📊' },
       { id: 'daily', label: 'Daily Summary', icon: '📈' },
-      { id: 'alerts', label: 'Alerts & Insights', icon: '◈' },
-      { id: 'upload-status', label: 'Upload Status', icon: '📁' }
+      { id: 'alerts', label: 'Alerts & Insights', icon: '◈' }
     ]
   },
   operations: {
     title: 'Operations',
-    sub: 'Daily Work Allocation, Specific Orders Uploads & Team Setup',
+    sub: 'Daily Work Allocation, Vendoor Orders Pool & Team Setup',
     defaultTab: 'allocation',
     tabs: [
       { id: 'allocation', label: 'Work Allocation', icon: '⚡' },
       { id: 'dispatcher', label: 'Auto Dispatcher', icon: '🚀' },
-      { id: 'uploads', label: 'Uploads', icon: '⭱' },
       { id: 'working-team', label: "Today's Working Team", icon: '👥' },
       { id: 'orders-pool', label: 'Current Orders Pool', icon: '📦' },
       { id: 'history', label: 'Allocation History', icon: '⏳' },
@@ -7194,11 +7237,9 @@ function renderTabContent(mainPage, tab) {
     if (tab === 'overview') return RENDERED.overview || '';
     if (tab === 'daily') return RENDERED.daily || '';
     if (tab === 'alerts') return RENDERED.insights || '';
-    if (tab === 'upload-status') return `<div id="dashboardUploadStatusContainer"></div>`;
   } else if (mainPage === 'operations') {
     if (tab === 'allocation') return RENDERED['work-allocation'] || '';
     if (tab === 'dispatcher') return RENDERED['auto-dispatcher'] || '';
-    if (tab === 'uploads') return `<div id="uploadsManagementContainer"></div>`;
     if (tab === 'working-team') return RENDERED['working-team'] || '';
     if (tab === 'orders-pool') return RENDERED['current-orders'] || '';
     if (tab === 'history') return RENDERED['allocation-history'] || '';
@@ -7231,7 +7272,6 @@ function triggerTabLoaders(mainPage, tab) {
   if (mainPage === 'operations') {
     if (tab === 'allocation') loadWorkAllocationData();
     else if (tab === 'dispatcher') loadAutoDispatcherView();
-    else if (tab === 'uploads') loadUploadsManagementView();
     else if (tab === 'working-team') loadWorkingTeamView();
     else if (tab === 'orders-pool') loadCurrentOrdersView();
     else if (tab === 'history') loadAllocationHistoryView();
@@ -7247,8 +7287,6 @@ function triggerTabLoaders(mainPage, tab) {
     else if (tab === 'teams') loadTeamSetupView();
     else if (tab === 'accounts') loadAccountConfigView();
     else if (tab === 'vendoor') loadVendoorIntegrationView();
-  } else if (mainPage === 'dashboard') {
-    if (tab === 'upload-status') renderDashboardUploadStatusView();
   }
 }
 
@@ -7277,20 +7315,17 @@ async function loadUploadsManagementView() {
   }
 
   container.innerHTML = `
-    <!-- Top Auto-Detect Dropzone -->
-    <div class="panel" style="border:2px dashed var(--blue);background:linear-gradient(135deg,#EFF6FF,#F8FAFC);margin-bottom:24px;padding:24px;text-align:center"
-         ondragover="event.preventDefault();this.style.background='#DBEAFE'"
-         ondragleave="this.style.background='linear-gradient(135deg,#EFF6FF,#F8FAFC)'"
-         ondrop="event.preventDefault();this.style.background='linear-gradient(135deg,#EFF6FF,#F8FAFC)';if(event.dataTransfer.files.length)handleUniversalAutoUpload(event.dataTransfer.files)">
-      <div style="font-size:36px;margin-bottom:8px">⚡📁</div>
-      <h3 style="font-size:16px;font-weight:800;color:var(--navy);margin-bottom:4px">Automatic Business Date & File Type Detection</h3>
+    <!-- Top Automated Sync Banner -->
+    <div class="panel" style="border:1px solid #BFDBFE;background:linear-gradient(135deg,#EFF6FF,#F8FAFC);margin-bottom:24px;padding:24px;text-align:center">
+      <div style="font-size:36px;margin-bottom:8px">🔌⚡</div>
+      <h3 style="font-size:16px;font-weight:800;color:var(--navy);margin-bottom:4px">Autonomous Vendoor Order & Activity Synchronization</h3>
       <p style="font-size:12.5px;color:var(--slate);max-width:680px;margin:0 auto 16px;line-height:1.5">
-        Drag & drop any Excel file(s) here (New Orders, Pending Orders, or EOD Daily Log). The system automatically inspects the internal columns to identify the true <b>Business Date</b> and routes orders directly without manual sorting.
+        Orders (300 records per page, multi-page auto-paginated) and employee activity logs are ingested automatically from Vendoor for <b>${currentWorkDate}</b>. Manual Excel manipulation is disabled in autonomous mode.
       </p>
       <div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap">
-        <label class="btn primary" for="universalAutoUploadInput" style="cursor:pointer;padding:9px 18px;font-size:13px;background:linear-gradient(135deg,var(--blue),var(--purple));border:none">
-          ⭱ Select / Drop Excel Files (Auto-Detect)
-        </label>
+        <button class="btn primary" onclick="show('management', 'vendoor')" style="cursor:pointer;padding:9px 18px;font-size:13px;background:linear-gradient(135deg,var(--blue),var(--purple));border:none">
+          ⚡ Open Vendoor Integration Center
+        </button>
       </div>
     </div>
 
@@ -7298,15 +7333,15 @@ async function loadUploadsManagementView() {
     <div class="panel" style="margin-bottom:24px">
       <div class="hd">
         <div>
-          <h3>📅 Detected Business Dates Registry</h3>
-          <p>History of all uploaded dates, independent pools, and allocation status</p>
+          <h3>📅 Business Dates Registry</h3>
+          <p>History of operational business dates, order pools, and synchronization status</p>
         </div>
         <span class="tag" style="background:#EFF6FF;color:var(--blue);font-weight:700">${detectedDatesList.length} Active Date(s)</span>
       </div>
 
       ${detectedDatesList.length === 0 ? `
         <div style="padding:20px;text-align:center;color:var(--mut);font-size:13px">
-          No files uploaded yet. Drop an Excel file above to begin.
+          No operational records found. Synchronize from Vendoor or configure credentials in Management.
         </div>
       ` : `
         <div class="tbl-scroll">
@@ -7358,10 +7393,10 @@ async function loadUploadsManagementView() {
 
     <!-- Current Selected Date Summary -->
     <div class="dedup-banner" style="margin-bottom:20px">
-      <div class="di">⭱</div>
+      <div class="di">⚡</div>
       <div class="dt">
-        <b>Specific Orders & Operational Uploads for ${formatDisplayDate(currentWorkDate)}</b>
-        <p>All uploads are persistent and cumulative. Uploading another batch appends to the day's pool without deleting previous allocations.</p>
+        <b>Autonomous Vendoor Data Pipeline for ${formatDisplayDate(currentWorkDate)}</b>
+        <p>Real-time autonomous data ingestion from Vendoor Employee Portal. Live orders and daily logs are synchronized directly without manual Excel files.</p>
       </div>
       <div class="dm">
         <b>${fmt(totalOrders)}</b>
@@ -7370,53 +7405,38 @@ async function loadUploadsManagementView() {
     </div>
 
     <div class="grid g2e" style="margin-bottom:20px">
-      <!-- Upload Specific Orders (New) -->
+      <!-- Sync Vendoor Orders -->
       <div class="panel" style="border-top:3px solid #2563EB">
         <div class="hd">
-          <h3>📦 Upload NEW Specific Orders</h3>
-          <span class="tag" style="background:#DBEAFE;color:#1E40AF">SpecificOrders.xlsx</span>
+          <h3>⚡ Vendoor Live Orders Sync</h3>
+          <span class="tag" style="background:#DBEAFE;color:#1E40AF">Live Portal API</span>
         </div>
         <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
-          Upload unallocated orders for new accounts. The engine automatically classifies these for the New CS team.
+          Pulls active orders (New & Pending) directly from Vendoor. Automated pagination and classification stage the orders directly into today's work pool.
         </p>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <label class="btn primary sm" for="specificOrdersInput" style="cursor:pointer">⭱ Upload Specific Orders (New)</label>
-          <span style="font-size:11.5px;color:var(--mut)">${newOrders > 0 ? `✓ ${fmt(newOrders)} New orders loaded` : 'No new orders uploaded yet'}</span>
+          <button class="btn primary sm" onclick="triggerQuickVendoorSync()">⚡ Sync Live Orders Now</button>
+          <span style="font-size:11.5px;color:var(--mut)">${newOrders + penOrders > 0 ? `✓ ${fmt(newOrders)} New · ${fmt(penOrders)} Pending active` : 'No orders loaded yet'}</span>
         </div>
       </div>
 
-      <!-- Upload Specific Orders (Pending) -->
-      <div class="panel" style="border-top:3px solid #7C3AED">
+      <!-- Sync Vendoor Activity Logs -->
+      <div class="panel" style="border-top:3px solid #16A34A">
         <div class="hd">
-          <h3>⏳ Upload PENDING Specific Orders</h3>
-          <span class="tag" style="background:#F3E8FF;color:#6B21A8">PendingOrders.xlsx</span>
+          <h3>📊 Vendoor Activity Logs Sync</h3>
+          <span class="tag" style="background:#DCFCE7;color:#15803D">Audit Logs Export</span>
         </div>
         <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
-          Upload backlog orders requiring customer follow-up. Automatically prioritized for the Pending CS team.
+          Retrieves employee actions, status changes, and calls from Vendoor to compute real-time scorecard metrics, untouched orders, and allocation tracking.
         </p>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <label class="btn primary sm" for="pendingSpecificOrdersInput" style="cursor:pointer;background:#7C3AED;border-color:#7C3AED">⭱ Upload Specific Orders (Pending)</label>
-          <span style="font-size:11.5px;color:var(--mut)">${penOrders > 0 ? `✓ ${fmt(penOrders)} Pending orders loaded` : 'No pending orders uploaded yet'}</span>
+          <button class="btn success sm" onclick="triggerQuickVendoorLogsSync()">⚡ Sync Activity Logs Now</button>
+          <span style="font-size:11.5px;color:var(--mut)">${hasLog ? `✓ Daily log active (${D.employees.length} agents)` : 'Logs pending sync for this date'}</span>
         </div>
       </div>
     </div>
 
     <div class="grid g2" style="margin-bottom:20px">
-      <!-- Upload Daily Performance Log -->
-      <div class="panel" style="border-top:3px solid #16A34A">
-        <div class="hd">
-          <h3>📊 Upload Daily Log</h3>
-          <span class="tag" style="background:#DCFCE7;color:#15803D">Master Log</span>
-        </div>
-        <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
-          Upload operational activity log (.xlsx) containing employee actions, printing, cancellation, and phone changes for scorecard tracking.
-        </p>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <label class="btn success sm" for="fileInput" style="cursor:pointer">⭱ Upload Daily Performance Log</label>
-          <span style="font-size:11.5px;color:var(--mut)">${hasLog ? `✓ Daily log active (${D.employees.length} agents)` : 'No daily log uploaded for this date'}</span>
-        </div>
-      </div>
-
       <!-- Cumulative Status -->
       <div class="panel">
         <div class="hd">
@@ -7426,7 +7446,7 @@ async function loadUploadsManagementView() {
         <div style="display:flex;flex-direction:column;gap:8px">
           <div class="hstat">
             <div class="d" style="background:#2563EB"></div>
-            <div class="t"><b>Total Work Pool Orders</b><span>Specific Orders in memory & DB</span></div>
+            <div class="t"><b>Total Work Pool Orders</b><span>Active orders in DB pool</span></div>
             <div class="v">${fmt(totalOrders)}</div>
           </div>
           <div class="hstat">
@@ -7442,6 +7462,22 @@ async function loadUploadsManagementView() {
         </div>
         <div style="margin-top:14px;text-align:right">
           <button class="btn primary sm" onclick="switchSubTab('operations', 'allocation')">Go to Work Allocation →</button>
+        </div>
+      </div>
+
+      <!-- Offline File Fallback -->
+      <div class="panel" style="background:#FAFAFA;border:1px dashed #CBD5E1">
+        <div class="hd">
+          <h3>📁 Offline File Import (Fallback)</h3>
+          <span class="tag" style="background:#F1F5F9;color:#64748B">Optional Backup</span>
+        </div>
+        <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
+          If offline manual Excel backups are needed, you can optionally upload local files directly into the engine.
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <label class="btn sm" for="specificOrdersInput" style="cursor:pointer;background:#fff;border-color:#CBD5E1">Import New Orders (.xlsx)</label>
+          <label class="btn sm" for="pendingSpecificOrdersInput" style="cursor:pointer;background:#fff;border-color:#CBD5E1">Import Pending (.xlsx)</label>
+          <label class="btn sm" for="fileInput" style="cursor:pointer;background:#fff;border-color:#CBD5E1">Import Log (.xlsx)</label>
         </div>
       </div>
     </div>
@@ -7472,10 +7508,10 @@ function loadOperationsOverviewView() {
       <div class="panel" style="display:flex;flex-direction:column;justify-content:space-between">
         <div>
           <div style="font-size:24px;margin-bottom:8px">1️⃣</div>
-          <h3 style="margin-bottom:6px">1. Upload Orders</h3>
-          <p style="font-size:12px;color:var(--slate);line-height:1.5">Upload Specific Orders for New and Pending accounts to populate today's work pool.</p>
+          <h3 style="margin-bottom:6px">1. Sync Orders</h3>
+          <p style="font-size:12px;color:var(--slate);line-height:1.5">Synchronize live orders directly from Vendoor Employee Portal for New and Pending accounts.</p>
         </div>
-        <button class="btn sm primary" style="margin-top:14px" onclick="switchSubTab('operations', 'uploads')">Go to Uploads →</button>
+        <button class="btn sm primary" style="margin-top:14px" onclick="triggerQuickVendoorSync()">⚡ Sync Vendoor Orders →</button>
       </div>
 
       <div class="panel" style="display:flex;flex-direction:column;justify-content:space-between">
@@ -7516,28 +7552,28 @@ function renderDashboardUploadStatusView() {
     <div class="grid g2" style="margin-bottom:20px">
       <div class="panel">
         <div class="hd">
-          <h3>📊 Daily Performance Log</h3>
+          <h3>📊 Vendoor Activity Logs</h3>
           <span class="tag" style="background:${hasLog ? '#DCFCE7' : '#FEE2E2'};color:${hasLog ? '#15803D' : '#B91C1C'}">
-            ${hasLog ? '✓ Active Snapshot' : '✕ Missing for Date'}
+            ${hasLog ? '✓ Active Snapshot' : '✕ Pending Sync for Date'}
           </span>
         </div>
         <p style="font-size:12.5px;color:var(--slate);line-height:1.5;margin-bottom:14px">
           ${hasLog ? `Daily Log loaded with <b>${D.employees.length} active agents</b> and <b>${fmt(D.kpis?.total_actions || 0)} deduplicated actions</b>.` : `No Daily Log operational records have been loaded for ${formatDisplayDate(currentWorkDate)}.`}
         </p>
-        <label class="btn primary sm" for="fileInput" style="cursor:pointer">⭱ Upload Daily Log (.xlsx)</label>
+        <button class="btn primary sm" onclick="triggerQuickVendoorLogsSync()">⚡ Sync Vendoor Activity Logs</button>
       </div>
 
       <div class="panel">
         <div class="hd">
-          <h3>📦 Specific Orders Pool</h3>
+          <h3>📦 Vendoor Orders Pool</h3>
           <span class="tag" style="background:${totalOrders > 0 ? '#DCFCE7' : '#FEF3C7'};color:${totalOrders > 0 ? '#15803D' : '#B45309'}">
             ${totalOrders > 0 ? `✓ ${fmt(totalOrders)} Orders Loaded` : '⚠ No Orders Loaded'}
           </span>
         </div>
         <p style="font-size:12.5px;color:var(--slate);line-height:1.5;margin-bottom:14px">
-          ${totalOrders > 0 ? `Active work pool contains <b>${fmt(newOrders)} New</b> and <b>${fmt(penOrders)} Pending</b> orders across <b>${currentAccountsList.length} accounts</b>.` : `No Specific Orders files have been staged for ${formatDisplayDate(currentWorkDate)}.`}
+          ${totalOrders > 0 ? `Active work pool contains <b>${fmt(newOrders)} New</b> and <b>${fmt(penOrders)} Pending</b> orders across <b>${currentAccountsList.length} accounts</b>.` : `No orders loaded for ${formatDisplayDate(currentWorkDate)}.`}
         </p>
-        <button class="btn primary sm" onclick="show('operations', 'uploads')">Manage Specific Orders Uploads →</button>
+        <button class="btn primary sm" onclick="triggerQuickVendoorSync()">⚡ Sync Vendoor Orders</button>
       </div>
     </div>
   `;
@@ -7663,9 +7699,7 @@ async function initApp() {
   updateUrlDate(currentWorkDate);
   updateGlobalDateUI();
 
-  if (currentWorkDate !== getTodayDate()) {
-    await fetchPerformanceDataForDate(currentWorkDate);
-  }
+  await fetchPerformanceDataForDate(currentWorkDate);
 
   render();
 }
@@ -7749,7 +7783,7 @@ initApp();
             <input type="text" id="accRuleModalName" list="accRuleModalAccountList" placeholder="Search or type account name..." required oninput="onAccountRuleModalAccountChange(this.value)" onchange="onAccountRuleModalAccountChange(this.value)" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;outline:none">
             <datalist id="accRuleModalAccountList"></datalist>
             <select id="accRuleModalAccountSelect" onchange="onAccountRuleModalAccountChange(this.value)" style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;background:#F8FAFC;outline:none">
-              <option value="">-- Choose Account from Uploaded Sheets --</option>
+              <option value="">-- Choose Account from Synced Accounts --</option>
             </select>
           </div>
           <div id="accRuleSavedNotice" style="margin-top:6px;display:none"></div>

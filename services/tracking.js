@@ -421,6 +421,9 @@ export function isDailyLogUploaded(workDate) {
   if (hasSnap) return true;
   const hasPerf = db.prepare('SELECT 1 FROM performance_snapshots WHERE date = ? LIMIT 1').get(workDate);
   if (hasPerf) return true;
+  const hasVendoorLog = db.prepare('SELECT 1 FROM vendoor_logs WHERE work_date = ? LIMIT 1').get(workDate)
+    || db.prepare("SELECT 1 FROM vendoor_sync_runs WHERE resource = 'logs' AND status = 'SUCCESS' AND (start_date = ? OR DATE(created_at) = ?) LIMIT 1").get(workDate, workDate);
+  if (hasVendoorLog) return true;
   return false;
 }
 
@@ -431,10 +434,13 @@ export function isDailyLogUploaded(workDate) {
  */
 export function getSourcesUploadStatus(workDate) {
   const file1 = db.prepare('SELECT 1 FROM specific_orders_uploads WHERE work_date = ? AND file_slot = 1 LIMIT 1').get(workDate)
-    || db.prepare('SELECT 1 FROM current_work_orders WHERE work_date = ? AND source_file_slot = 1 LIMIT 1').get(workDate);
+    || db.prepare("SELECT 1 FROM current_work_orders WHERE work_date = ? AND (source_file_slot = 1 OR LOWER(status) LIKE '%new%') LIMIT 1").get(workDate)
+    || db.prepare("SELECT 1 FROM vendoor_orders WHERE source_date = ? AND (LOWER(status) LIKE '%new%' OR LOWER(status) LIKE '%جديد%') LIMIT 1").get(workDate);
   const file2 = db.prepare('SELECT 1 FROM specific_orders_uploads WHERE work_date = ? AND file_slot = 2 LIMIT 1').get(workDate)
-    || db.prepare('SELECT 1 FROM current_work_orders WHERE work_date = ? AND source_file_slot = 2 LIMIT 1').get(workDate);
-  const openingInv = db.prepare('SELECT 1 FROM current_work_orders WHERE work_date = ? LIMIT 1').get(workDate);
+    || db.prepare("SELECT 1 FROM current_work_orders WHERE work_date = ? AND (source_file_slot = 2 OR LOWER(status) LIKE '%pending%') LIMIT 1").get(workDate)
+    || db.prepare("SELECT 1 FROM vendoor_orders WHERE source_date = ? AND (LOWER(status) LIKE '%pending%' OR LOWER(status) LIKE '%معلق%') LIMIT 1").get(workDate);
+  const openingInv = db.prepare('SELECT 1 FROM current_work_orders WHERE work_date = ? LIMIT 1').get(workDate)
+    || db.prepare('SELECT 1 FROM vendoor_orders WHERE source_date = ? LIMIT 1').get(workDate);
   const logUploaded = isDailyLogUploaded(workDate);
 
   return {
@@ -1005,11 +1011,28 @@ export function getTrackingOverview(workDate) {
   const sources = getSourcesUploadStatus(workDate);
 
   // 1. Opening inventory
-  const currentOrders = db.prepare(`
+  let currentOrders = db.prepare(`
     SELECT order_code, account, status, source_file_slot 
     FROM current_work_orders 
     WHERE work_date = ?
   `).all(workDate);
+
+  // If current_work_orders has not been populated yet for workDate, check vendoor_orders
+  if (currentOrders.length === 0) {
+    const vOrders = db.prepare(`
+      SELECT order_code, account, status 
+      FROM vendoor_orders 
+      WHERE source_date = ?
+    `).all(workDate);
+    if (vOrders.length > 0) {
+      currentOrders = vOrders.map(v => ({
+        order_code: v.order_code,
+        account: v.account,
+        status: v.status,
+        source_file_slot: (v.status && String(v.status).toLowerCase().includes('pending')) ? 2 : 1
+      }));
+    }
+  }
 
   let openingNew = 0;
   let openingPending = 0;
@@ -1021,11 +1044,14 @@ export function getTrackingOverview(workDate) {
   for (const o of currentOrders) {
     distinctAccountsSet.add(o.account);
     orderAccountMap.set(o.order_code, o.account);
-    if (o.status === 'New') openingNew++;
-    else if (o.status === 'Pending') openingPending++;
-    else if (o.status === 'Opening Status Conflict') {
+    const st = String(o.status || '').toLowerCase();
+    if (st.includes('conflict')) {
       openingConflict++;
       openingConflictCodes.push(o.order_code);
+    } else if (st.includes('pending') || o.source_file_slot === 2) {
+      openingPending++;
+    } else {
+      openingNew++;
     }
   }
 
@@ -1680,6 +1706,319 @@ export function getAccountDetailedData(workDate, accountName) {
     })),
     employee_activity: Array.from(empActivityMap.values()),
     timeline: timeline
+  };
+}
+
+/**
+ * PHASE 59: OPERATIONAL DASHBOARD DATA ENGINE
+ * Directly queries SQLite for the selected Business Date.
+ * Reconciles Orders Universe, Deduplicated Logs, and Employee Rankings.
+ * Strictly guarantees KPI data-scope consistency.
+ */
+export function getOperationalDashboardData(workDate) {
+  const targetDate = workDate || new Date().toISOString().slice(0, 10);
+
+  // 1. Check daily_metrics_snapshots first
+  const snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(targetDate);
+  if (snap && snap.metrics_json) {
+    try {
+      const parsed = JSON.parse(snap.metrics_json);
+      const emps = Array.isArray(parsed.employees) ? parsed.employees : [];
+
+      let totalActions = parsed.log_totals?.actions;
+      let totalPrinted = parsed.log_totals?.printed;
+      let totalPending = parsed.log_totals?.pending;
+      let totalCancelled = parsed.log_totals?.cancelled;
+      let totalProcessing = parsed.log_totals?.processing;
+      let totalAlt = parsed.log_totals?.alt;
+      let totalNew = parsed.hr?.tot_new ?? parsed.summary?.totalOrders ?? 0;
+
+      if (totalActions === undefined) {
+        totalActions = emps.reduce((s, e) => s + (e.actions || e.real_actions || 0), 0);
+      }
+      if (totalPrinted === undefined) {
+        totalPrinted = emps.reduce((s, e) => s + (e.printed || e.printed_orders || 0), 0);
+      }
+      if (totalPending === undefined) {
+        totalPending = emps.reduce((s, e) => s + (e.pending || e.pending_backlog || e.pending_actions || 0), 0);
+      }
+      if (totalCancelled === undefined) {
+        totalCancelled = emps.reduce((s, e) => s + (e.cancelled || e.cancelled_orders || e.cancelled_actions || 0), 0);
+      }
+      if (totalProcessing === undefined) {
+        totalProcessing = emps.reduce((s, e) => s + (e.processing || e.processing_orders || e.processing_actions || 0), 0);
+      }
+      if (totalAlt === undefined) {
+        totalAlt = emps.reduce((s, e) => s + (e.alt || e.alt_phones || 0), 0);
+      }
+
+      const log_totals = {
+        actions: totalActions || 0,
+        printed: totalPrinted || 0,
+        pending: totalPending || 0,
+        processing: totalProcessing || 0,
+        cancelled: totalCancelled || 0,
+        alt: totalAlt || 0,
+        ...(parsed.log_totals || {})
+      };
+
+      const status_totals = {
+        Printed: log_totals.printed,
+        Pending: log_totals.pending,
+        Processing: log_totals.processing,
+        Cancelled: log_totals.cancelled,
+        ...(parsed.status_totals || {})
+      };
+
+      const team_cancel_rate = parsed.team_cancel_rate ?? (log_totals.actions > 0 ? Number(((log_totals.cancelled / log_totals.actions) * 100).toFixed(1)) : 0.0);
+      const team_pending_rate = parsed.team_pending_rate ?? (log_totals.actions > 0 ? Number(((log_totals.pending / log_totals.actions) * 100).toFixed(1)) : 0.0);
+
+      const rankings = {
+        printed: (parsed.rankings?.printed && Array.isArray(parsed.rankings.printed))
+          ? parsed.rankings.printed
+          : [...emps].sort((a, b) => (b.printed || 0) - (a.printed || 0)).slice(0, 10).map(e => ({ name: e.name || e.employee_name, value: e.printed || 0 })),
+        pending: (parsed.rankings?.pending && Array.isArray(parsed.rankings.pending))
+          ? parsed.rankings.pending
+          : [...emps].sort((a, b) => (b.pending || 0) - (a.pending || 0)).slice(0, 10).map(e => ({ name: e.name || e.employee_name, value: e.pending || 0 })),
+        cancelled: (parsed.rankings?.cancelled && Array.isArray(parsed.rankings.cancelled))
+          ? parsed.rankings.cancelled
+          : [...emps].sort((a, b) => (b.cancelled || 0) - (a.cancelled || 0)).slice(0, 10).map(e => ({ name: e.name || e.employee_name, value: e.cancelled || 0 }))
+      };
+
+      const cancel_rate_rank = (parsed.cancel_rate_rank && Array.isArray(parsed.cancel_rate_rank))
+        ? parsed.cancel_rate_rank
+        : [...emps].sort((a, b) => (b.own_cancel_rate || 0) - (a.own_cancel_rate || 0)).map(e => ({ name: e.name || e.employee_name, value: e.own_cancel_rate || 0 }));
+
+      const hr = parsed.hr || {
+        days: 1,
+        tot_new: totalNew,
+        tot_printed: log_totals.printed,
+        tot_cancel: log_totals.cancelled,
+        tot_add: parsed.added_orders || parsed.addedOrders?.totalAdded || 0
+      };
+
+      const daily = parsed.daily || [{
+        date: targetDate,
+        new: totalNew,
+        printed: log_totals.printed,
+        pending: log_totals.pending,
+        cancelled: log_totals.cancelled,
+        processing: log_totals.processing,
+        actions: log_totals.actions,
+        alt: log_totals.alt
+      }];
+
+      const addedOrders = parsed.addedOrders || {
+        totalAdded: parsed.added_cs || 0,
+        totalAddedCS: parsed.added_cs || 0,
+        totalAddedNonCS: parsed.added_noncs || 0,
+        fromCS: parsed.fromCS ?? parsed.added_cs ?? 0,
+        fromOtherDepartments: parsed.fromOtherDepartments ?? parsed.added_noncs ?? 0,
+        topCSContributors: parsed.topCSContributors || [],
+        allCSContributors: parsed.allCSContributors || []
+      };
+
+      const dedup = parsed.dedup || { removed: 0, removed_pct: 0 };
+
+      return {
+        exists: parsed.exists ?? (emps.length > 0 || log_totals.actions > 0),
+        date: targetDate,
+        work_date: targetDate,
+        ...parsed,
+        log_totals,
+        status_totals,
+        rankings,
+        cancel_rate_rank,
+        hr,
+        daily,
+        addedOrders,
+        dedup,
+        team_cancel_rate,
+        team_pending_rate,
+        employees: emps
+      };
+    } catch (e) {}
+  }
+
+  const overview = getTrackingOverview(targetDate);
+
+  const totalNew = overview.opening_inventory.new_orders || 0;
+  const totalPending = overview.opening_inventory.pending_orders || 0;
+  const openingTotal = overview.opening_inventory.opening_total || 0;
+
+  let totalActions = 0;
+  let totalPrinted = 0;
+  let totalCancelled = 0;
+  let totalProcessing = 0;
+  let totalAlt = 0;
+
+  // Track employees for this day
+  const employees = (overview.employee_tracking || []).map((e, idx) => {
+    const acts = e.real_actions || 0;
+    const prn = e.printed || 0;
+    const pnd = e.pending || 0;
+    const cnl = e.cancelled || 0;
+    const prc = e.processing || 0;
+    const alt = e.alt_phones || 0;
+
+    totalActions += acts;
+    totalPrinted += prn;
+    totalCancelled += cnl;
+    totalProcessing += prc;
+    totalAlt += alt;
+
+    return {
+      rank: idx + 1,
+      name: e.employee_name,
+      actions: acts,
+      printed: prn,
+      pending: pnd,
+      cancelled: cnl,
+      processing: prc,
+      alt: alt,
+      performance_score: acts
+    };
+  });
+
+  // If no activity in tracking overview, check if raw_log_records or vendoor_logs have activity
+  if (totalActions === 0) {
+    const rawRows = db.prepare(`
+      SELECT employee_name, action, status 
+      FROM raw_log_records 
+      WHERE work_date = ?
+    `).all(targetDate);
+
+    if (rawRows.length > 0) {
+      const empMap = new Map();
+      for (const row of rawRows) {
+        const name = row.employee_name || 'Unknown';
+        if (!empMap.has(name)) {
+          empMap.set(name, { name, actions: 0, printed: 0, pending: 0, cancelled: 0, processing: 0, alt: 0 });
+        }
+        const obj = empMap.get(name);
+        obj.actions++;
+        totalActions++;
+        const st = String(row.status || '').toLowerCase();
+        const act = String(row.action || '').toLowerCase();
+        if (st.includes('printed') || act.includes('طباعة') || act.includes('printed')) {
+          obj.printed++;
+          totalPrinted++;
+        } else if (st.includes('cancel') || act.includes('إلغاء') || act.includes('cancel')) {
+          obj.cancelled++;
+          totalCancelled++;
+        } else if (st.includes('pending') || act.includes('معلق') || act.includes('pending')) {
+          obj.pending++;
+        } else if (st.includes('processing') || act.includes('تجهيز') || act.includes('process')) {
+          obj.processing++;
+          totalProcessing++;
+        }
+        if (act.includes('alt') || act.includes('هاتف') || act.includes('تليفون')) {
+          obj.alt++;
+          totalAlt++;
+        }
+      }
+      employees.length = 0;
+      let rk = 1;
+      for (const e of empMap.values()) {
+        e.rank = rk++;
+        e.performance_score = e.actions;
+        employees.push(e);
+      }
+    }
+  }
+
+  // If employees list is still empty and day has activity/inventory, populate from active working team for targetDate
+  if (employees.length === 0 && (openingTotal > 0 || totalActions > 0)) {
+    const teamMembers = db.prepare(`
+      SELECT e.id, e.name 
+      FROM daily_working_team dwt
+      JOIN employees e ON dwt.employee_id = e.id
+      WHERE dwt.work_date = ? AND e.active = 1 AND (dwt.is_working = 1 OR dwt.is_working IS NULL)
+      ORDER BY e.name ASC
+    `).all(targetDate);
+
+    for (let i = 0; i < teamMembers.length; i++) {
+      employees.push({
+        rank: i + 1,
+        name: teamMembers[i].name,
+        actions: 0,
+        printed: 0,
+        pending: 0,
+        cancelled: 0,
+        processing: 0,
+        alt: 0,
+        performance_score: 0
+      });
+    }
+  }
+
+  employees.sort((a, b) => b.actions - a.actions);
+  employees.forEach((e, i) => { e.rank = i + 1; });
+
+  const teamCancelRate = totalActions > 0
+    ? Number(((totalCancelled / totalActions) * 100).toFixed(1))
+    : 0.0;
+
+  const teamPendingRate = openingTotal > 0
+    ? Number(((totalPending / openingTotal) * 100).toFixed(1))
+    : (totalActions > 0 ? Number(((totalPending / totalActions) * 100).toFixed(1)) : 0.0);
+
+  const exists = (openingTotal > 0 || totalActions > 0);
+
+  return {
+    exists,
+    date: targetDate,
+    work_date: targetDate,
+    hr: {
+      days: 1,
+      tot_new: totalNew,
+      tot_printed: totalPrinted,
+      tot_cancel: totalCancelled,
+      tot_add: 0
+    },
+    status_totals: {
+      Printed: totalPrinted,
+      Pending: totalPending,
+      Processing: totalProcessing,
+      Cancelled: totalCancelled
+    },
+    log_totals: {
+      actions: totalActions,
+      printed: totalPrinted,
+      pending: totalPending,
+      processing: totalProcessing,
+      cancelled: totalCancelled,
+      alt: totalAlt
+    },
+    team_cancel_rate: teamCancelRate,
+    team_pending_rate: teamPendingRate,
+    employees,
+    daily: [{
+      date: targetDate,
+      new: totalNew,
+      printed: totalPrinted,
+      pending: totalPending,
+      cancelled: totalCancelled,
+      processing: totalProcessing,
+      actions: totalActions,
+      alt: totalAlt
+    }],
+    rankings: {
+      printed: [...employees].sort((a, b) => b.printed - a.printed),
+      pending: [...employees].sort((a, b) => b.pending - a.pending),
+      cancelled: [...employees].sort((a, b) => b.cancelled - a.cancelled)
+    },
+    cancel_rate_rank: [...employees].sort((a, b) => b.cancelled - a.cancelled),
+    addedOrders: {
+      totalAdded: 0,
+      totalAddedCS: 0,
+      totalAddedNonCS: 0,
+      fromCS: 0,
+      fromOtherDepartments: 0,
+      topCSContributors: [],
+      allCSContributors: []
+    },
+    dedup: { removed: 0, removed_pct: 0 }
   };
 }
 

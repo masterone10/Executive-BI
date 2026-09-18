@@ -143,7 +143,9 @@ export async function runDispatcherCycle(options = {}) {
 
   try {
     // 2. Pre-condition Safety Checks
-    if (!cfg.enabled && !forceRun && !isDryRun) {
+    // INVARIANT 9: Dispatcher OFF -> zero live dispatcher execution.
+    // forceRun can NEVER bypass the master OFF switch in live production mode.
+    if (!cfg.enabled && !isDryRun) {
       releaseLock();
       return {
         success: false,
@@ -876,6 +878,85 @@ export function getDispatcherAlerts() {
   }
 
   return alerts;
+}
+
+/**
+ * Smart Dispatcher: Hook for newly arrived orders
+ * When a sync completes:
+ * - Checks if newly arrived unassigned orders match an existing allocation for their account
+ * - Adds them to eligible work (assigned to the current account owner)
+ * - NEVER re-allocates, changes, or steals work already completed or in progress
+ */
+export function attachEligibleArrivedOrders(workDate) {
+  const targetWorkDate = getEffectiveWorkDate(workDate);
+
+  // 1. Completed orders must never be touched
+  const completionData = getCompletedOrdersForDate(targetWorkDate);
+  const completedCodes = completionData.completed_order_codes || new Set();
+
+  // 2. Unassigned orders for today
+  const unassignedOrders = db.prepare(`
+    SELECT cwo.order_code, cwo.account, cwo.status
+    FROM current_work_orders cwo
+    WHERE cwo.work_date = ?
+      AND cwo.order_code NOT IN (
+        SELECT order_code FROM order_level_allocations WHERE allocation_date = ?
+      )
+  `).all(targetWorkDate, targetWorkDate);
+
+  if (unassignedOrders.length === 0) {
+    return { attached_count: 0, unassigned_count: 0, total_unassigned_checked: 0 };
+  }
+
+  // 3. Existing account assignments on targetWorkDate
+  const existingOwners = db.prepare(`
+    SELECT DISTINCT account, employee_name
+    FROM order_level_allocations
+    WHERE allocation_date = ? AND employee_name != 'UNASSIGNED'
+  `).all(targetWorkDate);
+
+  const accountOwnerMap = new Map();
+  for (const row of existingOwners) {
+    if (row.account && row.employee_name) {
+      accountOwnerMap.set(row.account, row.employee_name);
+    }
+  }
+
+  // Also check active working team for today
+  const workingTeam = db.prepare(`
+    SELECT e.name
+    FROM daily_working_team dwt
+    JOIN employees e ON dwt.employee_id = e.id
+    WHERE dwt.work_date = ? AND e.active = 1
+  `).all(targetWorkDate);
+  const workingTeamSet = new Set(workingTeam.map(w => w.name));
+
+  const insertStmt = db.prepare(`
+    INSERT OR IGNORE INTO order_level_allocations (
+      allocation_date, allocation_version, order_code, account, status, employee_name, method, rule_note
+    ) VALUES (?, 1, ?, ?, ?, ?, 'Smart Dispatcher', 'Auto-attached newly arrived order')
+  `);
+
+  let attachedCount = 0;
+  const tx = db.transaction(() => {
+    for (const ord of unassignedOrders) {
+      if (completedCodes.has(ord.order_code)) continue;
+
+      const owner = accountOwnerMap.get(ord.account);
+      if (owner && workingTeamSet.has(owner)) {
+        insertStmt.run(targetWorkDate, ord.order_code, ord.account, ord.status || 'New', owner);
+        attachedCount++;
+      }
+    }
+  });
+
+  tx();
+
+  return {
+    attached_count: attachedCount,
+    unassigned_count: unassignedOrders.length - attachedCount,
+    total_unassigned_checked: unassignedOrders.length
+  };
 }
 
 export const executeDispatchCycle = runDispatcherCycle;

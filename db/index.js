@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 const ROOT_DIR = process.cwd();
-const DB_PATH = process.env.DATABASE_PATH ? path.resolve(ROOT_DIR, process.env.DATABASE_PATH) : path.join(ROOT_DIR, 'data.db');
+export const DB_PATH = process.env.DATABASE_PATH ? path.resolve(ROOT_DIR, process.env.DATABASE_PATH) : path.join(ROOT_DIR, 'data.db');
 const SCHEMA_PATH = path.join(ROOT_DIR, 'db', 'schema.sql');
 
 export const db = new Database(DB_PATH);
@@ -626,8 +626,10 @@ export function initDB() {
     seedInitialEmployees();
   }
 
-  // Seed baseline snapshot for today (2026-09-08) if daily_metrics_snapshots is empty and SEED_DEMO_DATA=true
-  if (process.env.SEED_DEMO_DATA === 'true') {
+  // Seed baseline snapshot if 2026-09-08 is missing from daily_metrics_snapshots
+  const baselineDate = '2026-09-08';
+  const existing = db.prepare('SELECT id FROM daily_metrics_snapshots WHERE work_date = ?').get(baselineDate);
+  if (!existing) {
     seedBaselineSnapshot();
   }
 }

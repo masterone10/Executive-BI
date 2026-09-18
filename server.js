@@ -62,7 +62,8 @@ import {
   isDailyLogUploaded,
   getRangeTracking,
   getAccountsDirectory,
-  getAccountDetailedData
+  getAccountDetailedData,
+  getOperationalDashboardData
 } from './services/tracking.js';
 import {
   createExcelWorkbook,
@@ -72,6 +73,8 @@ import {
 } from './export_excel.js';
 import {
   getSafeVendoorStatus,
+  getVendoorConfig,
+  performVendoorAutoLogin,
   testVendoorOrdersAccess,
   testVendoorLogsAccess,
   testVendoorAuthAccess,
@@ -97,7 +100,12 @@ import {
   stopContinuousDispatcher,
   getDispatcherStatus,
   getDispatcherAuditHistory,
-  getDispatcherAlerts
+  getDispatcherAlerts,
+  reconcileHistoricalWindow,
+  startAutonomousVendoorPoller,
+  stopAutonomousVendoorPoller,
+  getAutonomousPollerStatus,
+  getEffectiveWorkDate
 } from './services/vendoor/index.js';
 import {
   generateExecutiveSummaryReport,
@@ -528,8 +536,8 @@ app.get('/api/global-context', (req, res) => {
     res.json({
       work_date: date,
       vendoor: {
-        connection_state: vendoor.connection_state || (vendoor.has_credentials ? 'CONNECTED' : 'NOT_CONFIGURED'),
-        session_state: vendoor.session_state || (vendoor.has_active_session ? 'ACTIVE' : 'NOT_AUTHENTICATED'),
+        connection_state: vendoor.connection_state || 'NOT_CONFIGURED',
+        session_state: vendoor.session_state || 'NOT_AUTHENTICATED',
         has_credentials: Boolean(vendoor.has_credentials),
         has_active_session: Boolean(vendoor.has_active_session),
         auth_method: vendoor.auth_method || 'AUTO_LOGIN',
@@ -909,41 +917,6 @@ app.post('/api/uploads/daily-log', upload.single('file'), (req, res) => {
 
     // 5. Save performance snapshot to DB (without auto-creating employees)
     savePerformanceSnapshotToDB(workDate, metrics, sourceFileId);
-
-    // 6. Sync updated metrics and added-orders to data.json if present
-    const dataJsonPath = path.join(ROOT_DIR, 'data.json');
-    if (fs.existsSync(dataJsonPath)) {
-      try {
-        const curData = JSON.parse(fs.readFileSync(dataJsonPath, 'utf-8'));
-        curData.employees = metrics.employees;
-        curData.log_totals = {
-          actions: metrics.summary.totalRealActions,
-          printed: metrics.summary.printedActions,
-          pending: metrics.summary.pendingActions,
-          processing: metrics.summary.processingActions,
-          cancelled: metrics.summary.cancelledActions,
-          alt: metrics.summary.totalAltPhones,
-        };
-        curData.status_totals = {
-          Printed: metrics.summary.printedActions,
-          Pending: metrics.summary.pendingActions,
-          Processing: metrics.summary.processingActions,
-          Cancelled: metrics.summary.cancelledActions,
-        };
-        curData.added_cs = metrics.addedOrders.totalAddedCS;
-        curData.added_noncs = metrics.addedOrders.totalAddedNonCS;
-        curData.fromCS = metrics.addedOrders.totalAddedCS;
-        curData.fromOtherDepartments = metrics.addedOrders.totalAddedNonCS;
-        curData.topCSContributor = metrics.addedOrders.topCSContributor;
-        curData.topCSContributors = metrics.addedOrders.topCSContributors;
-        curData.allCSContributors = metrics.addedOrders.allCSContributors;
-        curData.addedOrders = metrics.addedOrders;
-        curData.team_cancel_rate = metrics.summary.teamCancelRate;
-        fs.writeFileSync(dataJsonPath, JSON.stringify(curData, null, 2), 'utf-8');
-      } catch (syncErr) {
-        console.warn('Could not sync data.json after daily log upload:', syncErr.message);
-      }
-    }
 
     // Persist raw records for Order, Employee, and Account Tracking (Phase 22)
     persistDailyLogRecords(workDate, sourceFileId, records);
@@ -1705,179 +1678,93 @@ function reconstructPayloadFromSnapshots(date, rows) {
 // 7. COMPATIBILITY & EXPORTS (Part 58)
 // -------------------------------------------------------------
 app.get('/api/data', (req, res) => {
-  const reqDate = req.query.date;
+  const reqDate = req.query.date || getEffectiveWorkDate();
 
-  if (reqDate) {
-    try {
-      // 1. Check daily_metrics_snapshots table
-      const snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(reqDate);
-      if (snap && snap.metrics_json) {
-        const parsed = JSON.parse(snap.metrics_json);
-        return res.json({ exists: true, date: reqDate, work_date: reqDate, ...parsed });
-      }
-
-      // 2. Check performance_snapshots for this date
-      const rows = db.prepare('SELECT * FROM performance_snapshots WHERE date = ? ORDER BY performance_score DESC').all(reqDate);
-      if (rows && rows.length > 0) {
-        const payload = reconstructPayloadFromSnapshots(reqDate, rows);
-        return res.json({ exists: true, date: reqDate, work_date: reqDate, ...payload });
-      }
-
-      // 3. Baseline for 2026-09-08 or today
-      if (reqDate === '2026-09-08' || reqDate === new Date().toISOString().split('T')[0]) {
-        const dataJsonPath = path.join(ROOT_DIR, 'data.json');
-        if (fs.existsSync(dataJsonPath)) {
-          const data = JSON.parse(fs.readFileSync(dataJsonPath, 'utf-8'));
-          return res.json({ exists: true, date: reqDate, work_date: reqDate, ...data });
-        }
-      }
-
-      // 4. Return clear empty state for date with no data
-      return res.json({
-        exists: false,
-        date: reqDate,
-        work_date: reqDate,
-        employees: [],
-        log_totals: { actions: 0, printed: 0, pending: 0, processing: 0, cancelled: 0, alt: 0 },
-        message: `No performance data for ${reqDate}.`
-      });
-    } catch (err) {
-      return res.status(500).json({ exists: false, error: err.message });
-    }
+  try {
+    const dashboardData = getOperationalDashboardData(reqDate);
+    return res.json(dashboardData);
+  } catch (err) {
+    console.error('Failed to get operational dashboard data for date', reqDate, err);
+    return res.status(500).json({ exists: false, error: err.message });
   }
-
-  // Baseline if no date specified
-  const dataJsonPath = path.join(ROOT_DIR, 'data.json');
-  if (fs.existsSync(dataJsonPath)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(dataJsonPath, 'utf-8'));
-      return res.json({ exists: true, ...data });
-    } catch (err) {
-      return res.status(500).json({ error: 'Failed to read data.json' });
-    }
-  }
-  res.status(404).json({ exists: false, error: 'Data not found' });
 });
 
 // Added Orders CS Breakdown API Endpoint (Part 33, 34, 60, 85)
 app.get(['/api/added-orders', '/api/reports/added-orders'], (req, res) => {
-  const reqDate = req.query.date;
+  const reqDate = req.query.date || getEffectiveWorkDate();
 
-  if (reqDate) {
-    try {
-      // 1. Check daily_metrics_snapshots
-      const snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(reqDate);
-      if (snap && snap.metrics_json) {
-        const parsed = JSON.parse(snap.metrics_json);
-        const added = parsed.addedOrders || {};
-        return res.json({
-          exists: true,
-          date: reqDate,
-          totalAdded: added.totalAdded || ((parsed.added_cs || 0) + (parsed.added_noncs || 0)),
-          fromCS: parsed.fromCS ?? parsed.added_cs ?? 0,
-          fromOtherDepartments: parsed.fromOtherDepartments ?? parsed.added_noncs ?? 0,
-          topCSContributor: parsed.topCSContributor || added.topCSContributor || null,
-          topCSContributors: parsed.topCSContributors || added.topCSContributors || [],
-          allCSContributors: parsed.allCSContributors || added.allCSContributors || [],
-        });
-      }
-
-      // 2. Check performance_snapshots
-      const rows = db.prepare('SELECT employee_name, added_orders FROM performance_snapshots WHERE date = ? ORDER BY added_orders DESC').all(reqDate);
-      if (rows && rows.length > 0) {
-        const csRows = rows
-          .filter(r => r.employee_name.toLowerCase().endsWith('cs') && (r.added_orders || 0) > 0)
-          .map(r => ({ name: r.employee_name, count: r.added_orders, total: r.added_orders }));
-        const totalAdded = rows.reduce((s, r) => s + (r.added_orders || 0), 0);
-        const csAdded = csRows.reduce((s, r) => s + r.count, 0);
-        return res.json({
-          exists: true,
-          date: reqDate,
-          totalAdded,
-          fromCS: csAdded,
-          fromOtherDepartments: Math.max(0, totalAdded - csAdded),
-          topCSContributor: csRows[0] ? csRows[0].name : null,
-          topCSContributors: csRows.slice(0, 5),
-          allCSContributors: csRows,
-        });
-      }
-
-      // 3. Fallback for 2026-09-08
-      if (reqDate === '2026-09-08' || reqDate === new Date().toISOString().split('T')[0]) {
-        const dataJsonPath = path.join(ROOT_DIR, 'data.json');
-        if (fs.existsSync(dataJsonPath)) {
-          const data = JSON.parse(fs.readFileSync(dataJsonPath, 'utf-8'));
-          const addedOrders = data.addedOrders || {};
-          return res.json({
-            exists: true,
-            date: reqDate,
-            totalAdded: addedOrders.totalAdded || ((data.added_cs || 0) + (data.added_noncs || 0)),
-            fromCS: data.fromCS ?? data.added_cs ?? 0,
-            fromOtherDepartments: data.fromOtherDepartments ?? data.added_noncs ?? 0,
-            topCSContributor: data.topCSContributor || addedOrders.topCSContributor || null,
-            topCSContributors: data.topCSContributors || addedOrders.topCSContributors || [],
-            allCSContributors: data.allCSContributors || addedOrders.allCSContributors || [],
-          });
-        }
-      }
-
-      // 4. Empty state for date with no data
-      return res.json({
-        exists: false,
-        date: reqDate,
-        totalAdded: 0,
-        fromCS: 0,
-        fromOtherDepartments: 0,
-        topCSContributor: null,
-        topCSContributors: [],
-        allCSContributors: [],
-      });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  }
-
-  // Baseline if no date specified
-  const dataJsonPath = path.join(ROOT_DIR, 'data.json');
-  if (fs.existsSync(dataJsonPath)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(dataJsonPath, 'utf-8'));
-      const addedOrders = data.addedOrders || {};
+  try {
+    // 1. Check daily_metrics_snapshots
+    const snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(reqDate);
+    if (snap && snap.metrics_json) {
+      const parsed = JSON.parse(snap.metrics_json);
+      const added = parsed.addedOrders || {};
       return res.json({
         exists: true,
-        totalAdded: addedOrders.totalAdded || ((data.added_cs || 0) + (data.added_noncs || 0)),
-        fromCS: data.fromCS ?? data.added_cs ?? 0,
-        fromOtherDepartments: data.fromOtherDepartments ?? data.added_noncs ?? 0,
-        topCSContributor: data.topCSContributor || addedOrders.topCSContributor || null,
-        topCSContributors: data.topCSContributors || addedOrders.topCSContributors || [],
-        allCSContributors: data.allCSContributors || addedOrders.allCSContributors || [],
+        date: reqDate,
+        totalAdded: added.totalAdded || ((parsed.added_cs || 0) + (parsed.added_noncs || 0)),
+        fromCS: parsed.fromCS ?? parsed.added_cs ?? 0,
+        fromOtherDepartments: parsed.fromOtherDepartments ?? parsed.added_noncs ?? 0,
+        topCSContributor: parsed.topCSContributor || added.topCSContributor || null,
+        topCSContributors: parsed.topCSContributors || added.topCSContributors || [],
+        allCSContributors: parsed.allCSContributors || added.allCSContributors || [],
       });
-    } catch (err) {
-      return res.status(500).json({ error: 'Failed to read added orders: ' + err.message });
     }
+
+    // 2. Check performance_snapshots
+    const rows = db.prepare('SELECT employee_name, added_orders FROM performance_snapshots WHERE date = ? ORDER BY added_orders DESC').all(reqDate);
+    if (rows && rows.length > 0) {
+      const csRows = rows
+        .filter(r => r.employee_name.toLowerCase().endsWith('cs') && (r.added_orders || 0) > 0)
+        .map(r => ({ name: r.employee_name, count: r.added_orders, total: r.added_orders }));
+      const totalAdded = rows.reduce((s, r) => s + (r.added_orders || 0), 0);
+      const csAdded = csRows.reduce((s, r) => s + r.count, 0);
+      return res.json({
+        exists: true,
+        date: reqDate,
+        totalAdded,
+        fromCS: csAdded,
+        fromOtherDepartments: Math.max(0, totalAdded - csAdded),
+        topCSContributor: csRows[0] ? csRows[0].name : null,
+        topCSContributors: csRows.slice(0, 5),
+        allCSContributors: csRows,
+      });
+    }
+
+    // 3. Empty state for date with no data
+    return res.json({
+      exists: false,
+      date: reqDate,
+      totalAdded: 0,
+      fromCS: 0,
+      fromOtherDepartments: 0,
+      topCSContributor: null,
+      topCSContributors: [],
+      allCSContributors: [],
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
-  res.status(404).json({ error: 'Data not found' });
 });
 
 app.get(['/api/export/excel', '/Executive_Report_v3.xlsx'], (req, res) => {
-  const dataJsonPath = path.join(ROOT_DIR, 'data.json');
-  if (fs.existsSync(dataJsonPath)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(dataJsonPath, 'utf-8'));
-      const wb = createExcelWorkbook(data);
-      const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', 'attachment; filename="Executive_Report_v3.xlsx"');
-      return res.send(buffer);
-    } catch (err) {
-      console.error('Failed to generate dynamic Excel:', err);
+  const reqDate = req.query.date || getEffectiveWorkDate();
+  try {
+    const snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(reqDate);
+    const data = snap && snap.metrics_json ? JSON.parse(snap.metrics_json) : getOperationalDashboardData(reqDate);
+    const wb = createExcelWorkbook(data);
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="Executive_Report_v3.xlsx"');
+    return res.send(buffer);
+  } catch (err) {
+    console.error('Failed to generate dynamic Excel:', err);
+    const fallbackPath = path.join(PUBLIC_DIR, 'Executive_Report_v3.xlsx');
+    if (fs.existsSync(fallbackPath)) {
+      return res.sendFile(fallbackPath);
     }
+    return res.status(500).send('Failed to generate Excel report');
   }
-  const fallbackPath = path.join(PUBLIC_DIR, 'Executive_Report_v3.xlsx');
-  if (fs.existsSync(fallbackPath)) {
-    return res.sendFile(fallbackPath);
-  }
-  res.status(404).send('Excel report not found');
 });
 
 // -------------------------------------------------------------
@@ -2033,6 +1920,44 @@ app.get('/api/integrations/vendoor/sync/history', (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 20;
     const runs = getSyncRunsHistory(limit);
     return res.json({ success: true, runs });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/integrations/vendoor/reconcile-history', async (req, res) => {
+  try {
+    const days = parseInt(req.body?.days, 10) || 3;
+    const result = await reconcileHistoricalWindow({ days, forceMode: req.body?.forceMode });
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/integrations/vendoor/poller/status', (req, res) => {
+  try {
+    const status = getAutonomousPollerStatus();
+    return res.json({ success: true, ...status });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/integrations/vendoor/poller/start', (req, res) => {
+  try {
+    const intervalMs = parseInt(req.body?.intervalMs, 10) || 60000;
+    const result = startAutonomousVendoorPoller({ intervalMs, forceMode: req.body?.forceMode });
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/integrations/vendoor/poller/stop', (req, res) => {
+  try {
+    const result = stopAutonomousVendoorPoller();
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -2562,6 +2487,22 @@ if (process.env.SEED_DEMO_DATA === 'true') {
 if (process.env.NODE_ENV !== 'test') {
   const server = app.listen(PORT, HOST, () => {
     console.log(`CS Executive BI server running on http://${HOST}:${PORT}`);
+    try {
+      const cfg = getVendoorConfig();
+      if (cfg.hasAutoLoginCredentials) {
+        performVendoorAutoLogin().then(authRes => {
+          if (authRes.success) {
+            console.log('[AUTONOMOUS] Live Vendoor session authenticated.');
+          }
+        }).catch(err => {
+          console.warn('[AUTONOMOUS] Initial Vendoor auto-login notice:', err.message);
+        });
+      }
+      startAutonomousVendoorPoller({ intervalMs: 60000 });
+      console.log('[AUTONOMOUS] Background Vendoor poller initialized.');
+    } catch (pollerErr) {
+      console.warn('[AUTONOMOUS] Poller init warning:', pollerErr.message);
+    }
   });
 
   server.on('error', (err) => {

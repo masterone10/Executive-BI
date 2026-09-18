@@ -68,35 +68,53 @@ export class MockVendoorDataSource extends VendoorDataSource {
 
   async fetchOrders(options = {}) {
     const start = parseInt(options.start, 10) || 0;
-    const length = parseInt(options.length, 10) || 50;
+    const length = parseInt(options.length || options.pageSize, 10) || 300;
     const fromDate = options.fromDate || '2026-03-01';
     const toDate = options.toDate || '2026-03-02';
     const statusFilter = options.statusFilter || '';
 
-    // Rich mock pool supporting >50 orders for multi-page tests
+    // Accounts and cities for realistic pool generation
     const accounts = ['Vendoor Express', 'Alpha Merchant', 'Beta Logistics', 'Delta Direct', 'Gamma Trade'];
-    const statuses = ['New', 'Pending', 'Printed', 'Confirmed'];
     const cities = ['Cairo', 'Giza', 'Alexandria', 'Mansoura', 'Tanta', 'Suez'];
 
+    // Generate pool matching required pagination test scenario:
+    // 350 NEW orders, 620 PENDING orders (970 total)
     const mockPool = [];
-    for (let i = 1; i <= 150; i++) {
+
+    // 350 NEW orders
+    for (let i = 1; i <= 350; i++) {
       const padId = String(100000 + i);
       const acc = accounts[(i - 1) % accounts.length];
-      const st = statuses[(i - 1) % statuses.length];
       const city = cities[(i - 1) % cities.length];
       const d = (i % 2 === 0) ? toDate : fromDate;
       mockPool.push({
-        order_code: `VD-${padId}`,
-        status: st,
+        order_code: `VD-NEW-${padId}`,
+        status: 'New',
         account: acc,
         date: d,
         city,
-        total_price: 100 + ((i * 37) % 800)
+        total_price: 120 + ((i * 19) % 650)
+      });
+    }
+
+    // 620 PENDING orders
+    for (let i = 1; i <= 620; i++) {
+      const padId = String(200000 + i);
+      const acc = accounts[(i - 1) % accounts.length];
+      const city = cities[(i - 1) % cities.length];
+      const d = (i % 2 === 0) ? toDate : fromDate;
+      mockPool.push({
+        order_code: `VD-PEN-${padId}`,
+        status: 'Pending',
+        account: acc,
+        date: d,
+        city,
+        total_price: 150 + ((i * 23) % 750)
       });
     }
 
     let filtered = mockPool;
-    if (statusFilter) {
+    if (statusFilter && statusFilter !== 'ALL') {
       filtered = filtered.filter(o => o.status.toLowerCase() === statusFilter.toLowerCase());
     }
 
@@ -109,11 +127,13 @@ export class MockVendoorDataSource extends VendoorDataSource {
       resource: 'orders',
       adapter: 'MOCK',
       http_status: 200,
-      duration_ms: 24,
+      duration_ms: 12,
       content_type: 'application/json',
       pagination: {
         start,
         length,
+        page: Math.floor(start / length) + 1,
+        page_size: length,
         page_records_count: pageSlice.length,
         records_total: mockPool.length,
         records_filtered: filtered.length

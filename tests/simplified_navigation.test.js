@@ -24,11 +24,10 @@ assert(templateContent.includes('performance: {'), 'Performance config missing')
 
 // Subtabs verification
 assert(templateContent.includes("id: 'allocation'"), 'Allocation subtab missing');
-assert(templateContent.includes("id: 'uploads'"), 'Uploads subtab missing');
+assert(templateContent.includes("id: 'dispatcher'"), 'Dispatcher subtab missing');
 assert(templateContent.includes("id: 'working-team'"), 'Working team subtab missing');
 assert(templateContent.includes("id: 'orders-pool'"), 'Orders pool subtab missing');
 assert(templateContent.includes("id: 'history'"), 'History subtab missing');
-assert(templateContent.includes("id: 'upload-status'"), 'Upload status subtab missing');
 assert(templateContent.includes("id: 'scorecard'"), 'Scorecard subtab missing');
 console.log('✓ PASS: Subtabs configured for all 5 categories.');
 

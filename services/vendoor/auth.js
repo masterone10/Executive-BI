@@ -54,8 +54,14 @@ export function clearRuntimeVendoorCredentials() {
 }
 
 export function getVendoorConfig() {
-  const isEnabled = process.env.VENDOOR_INTEGRATION_ENABLED === 'true' || Boolean(runtimeEmployeeEmail && runtimeEmployeePassword);
+  const employeeEmail = runtimeEmployeeEmail || process.env.VENDOOR_EMPLOYEE_EMAIL || process.env.VENDOOR_EMAIL || '';
+  const employeePassword = runtimeEmployeePassword || process.env.VENDOOR_EMPLOYEE_PASSWORD || process.env.VENDOOR_PASSWORD || '';
   const isMockMode = process.env.VENDOOR_MOCK_MODE === 'true';
+  const hasAutoLoginCredentials = Boolean(employeeEmail && employeePassword);
+
+  // Enabled if explicitly true, or if valid credentials are provided
+  const isEnabled = process.env.VENDOOR_INTEGRATION_ENABLED === 'true' || hasAutoLoginCredentials || isMockMode;
+
   let rawBaseUrl = runtimeBaseUrl || process.env.VENDOOR_BASE_URL || 'https://aff.ven-door.com';
   
   // If user configured the full login URL as base URL, normalize it to origin
@@ -67,9 +73,6 @@ export function getVendoorConfig() {
   }
   const baseUrl = rawBaseUrl.replace(/\/+$/, '');
   
-  const employeeEmail = runtimeEmployeeEmail || process.env.VENDOOR_EMPLOYEE_EMAIL || process.env.VENDOOR_EMAIL || '';
-  const employeePassword = runtimeEmployeePassword || process.env.VENDOOR_EMPLOYEE_PASSWORD || process.env.VENDOOR_PASSWORD || '';
-  
   const staticSessionCookie = process.env.VENDOOR_SESSION_COOKIE || '';
   const staticCsrfToken = process.env.VENDOOR_CSRF_TOKEN || process.env.VENDOOR_XSRF_TOKEN || '';
   const apiToken = process.env.VENDOOR_API_TOKEN || process.env.VENDOOR_BEARER_TOKEN || '';
@@ -78,7 +81,6 @@ export function getVendoorConfig() {
   const effectiveSessionCookie = inMemorySessionCookie || staticSessionCookie;
   const effectiveCsrfToken = inMemoryCsrfToken || staticCsrfToken;
 
-  const hasAutoLoginCredentials = Boolean(employeeEmail && employeePassword);
   const hasCredentials = Boolean(hasAutoLoginCredentials || effectiveSessionCookie || apiToken || isMockMode);
 
   return {
@@ -128,11 +130,11 @@ export function getSafeVendoorStatus() {
       connectionState = 'CONNECTED';
       sessionState = 'ACTIVE';
     } else if (inMemorySessionCookie && inMemorySessionExpiry <= Date.now()) {
-      connectionState = 'NOT_CONNECTED';
+      connectionState = 'CONNECTED';
       sessionState = 'EXPIRED';
     } else {
-      connectionState = 'NOT_CONNECTED';
-      sessionState = 'NOT_AUTHENTICATED';
+      connectionState = 'CONNECTED';
+      sessionState = 'READY';
     }
   } else if (cfg.apiToken) {
     authMethod = 'BEARER_TOKEN';

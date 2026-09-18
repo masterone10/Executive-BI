@@ -25,8 +25,8 @@ export function normalizeVendoorOrder(rawOrder) {
 
   if (!orderCode) return null;
 
-  // Extract status
-  const status = String(
+  // Extract status & strip HTML wrapper if present
+  let rawStatus = String(
     rawOrder.status_name ||
     rawOrder.status ||
     rawOrder.order_status ||
@@ -34,7 +34,30 @@ export function normalizeVendoorOrder(rawOrder) {
     'Unknown'
   ).trim();
 
+  if (rawStatus.includes('<')) {
+    rawStatus = rawStatus.replace(/<[^>]*>/g, '').trim();
+    const cleanUpper = rawStatus.toUpperCase();
+    if (cleanUpper === 'NEW' || cleanUpper.includes('NEW')) rawStatus = 'New';
+    else if (cleanUpper === 'PENDING' || cleanUpper.includes('PENDING')) rawStatus = 'Pending';
+    else if (cleanUpper === 'PROCESSING' || cleanUpper.includes('PROCESSING')) rawStatus = 'Processing';
+    else if (cleanUpper === 'DELIVERED' || cleanUpper.includes('DELIVERED')) rawStatus = 'Delivered';
+    else if (cleanUpper === 'CANCELLED' || cleanUpper.includes('CANCEL')) rawStatus = 'Cancelled';
+  }
+  const status = rawStatus || 'Unknown';
+
   // Extract merchant / account / affiliate
+  const merchantCode = String(
+    rawOrder.merchant_code ||
+    rawOrder.merchant_id ||
+    rawOrder.merchant_key ||
+    rawOrder.client_code ||
+    rawOrder.affiliate_code ||
+    rawOrder.affiliate_id ||
+    rawOrder['كود التاجر'] ||
+    rawOrder['كود_التاجر'] ||
+    ''
+  ).trim();
+
   const account = String(
     rawOrder.merchant_name ||
     rawOrder.merchant ||
@@ -43,11 +66,13 @@ export function normalizeVendoorOrder(rawOrder) {
     rawOrder.affiliate_name ||
     rawOrder.affiliate ||
     rawOrder.client ||
+    rawOrder['اسم التاجر'] ||
+    rawOrder['اسم_التاجر'] ||
     'Unassigned'
   ).trim();
 
   // Extract creation / business date
-  const rawDate = rawOrder.created_at || rawOrder.date || rawOrder.order_date || rawOrder.created || null;
+  const rawDate = rawOrder.chipping || rawOrder.created_at || rawOrder.date || rawOrder.order_date || rawOrder.created || null;
   let dateStr = null;
   if (rawDate) {
     try {
@@ -63,18 +88,19 @@ export function normalizeVendoorOrder(rawOrder) {
   }
 
   // Extract customer and destination
-  const city = String(rawOrder.city || rawOrder.governorate || rawOrder.zone || '').trim();
+  const city = String(rawOrder.governrate_name || rawOrder.city || rawOrder.governorate || rawOrder.zone || '').trim();
   const totalPrice = parseFloat(rawOrder.grand_total || rawOrder.total || rawOrder.price || rawOrder.total_price || 0) || 0;
 
   return {
     order_code: orderCode,
     status,
     account,
+    merchant_code: merchantCode || null,
     date: dateStr,
     city,
     total_price: totalPrice,
     raw_source: {
-      client_name: rawOrder.client_name || rawOrder.customer_name || null,
+      client_name: rawOrder.full_name || rawOrder.client_name || rawOrder.customer_name || null,
       phone: rawOrder.phone || null,
       alt_phone: rawOrder.alt_phone || null
     }
@@ -87,12 +113,22 @@ export function normalizeVendoorOrder(rawOrder) {
 export function normalizeVendoorLogRow(rawRow) {
   if (!rawRow || typeof rawRow !== 'object') return null;
 
-  // Identify keys case-insensitively
+  // Identify keys case-insensitively, supporting Arabic and English headers
   const findValue = (possibleKeys) => {
     for (const key of Object.keys(rawRow)) {
-      const clean = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const trimmedKey = key.trim().toLowerCase();
       for (const pk of possibleKeys) {
-        if (clean === pk.toLowerCase().replace(/[^a-z0-9]/g, '')) {
+        if (trimmedKey === pk.trim().toLowerCase()) {
+          return rawRow[key];
+        }
+      }
+    }
+    // Also try stripping common punctuation/spaces without stripping unicode/Arabic letters
+    for (const key of Object.keys(rawRow)) {
+      const cleanKey = key.trim().toLowerCase().replace(/[\s_\-#:\.\(\)]/g, '');
+      for (const pk of possibleKeys) {
+        const cleanPk = pk.trim().toLowerCase().replace(/[\s_\-#:\.\(\)]/g, '');
+        if (cleanKey === cleanPk) {
           return rawRow[key];
         }
       }
@@ -100,38 +136,52 @@ export function normalizeVendoorLogRow(rawRow) {
     return null;
   };
 
-  // Find Employee Name
+  // Find Employee Name (supporting real Vendoor Arabic 'الاسم')
   const empCandidate = String(
-    findValue(['User', 'Employee', 'Agent', 'Created By', 'Admin', 'Employee Name', 'user_name', 'username']) || ''
+    findValue([
+      'الاسم', 'اسم الموظف', 'الموظف', 'المستخدم', 'اسم المستخدم',
+      'User', 'Employee', 'Agent', 'Created By', 'Admin', 'Employee Name', 'user_name', 'username'
+    ]) || ''
   ).trim();
 
-  // Find Order Code
+  // Find Order Code (supporting real Vendoor Arabic 'كود الطلب')
   const codeCandidate = String(
-    findValue(['Order Code', 'Order ID', 'Code', 'Order', 'order_code', 'reference', 'tracking_number']) || ''
+    findValue([
+      'كود الطلب', 'كود الاوردر', 'رقم الاوردر', 'كود_الطلب', 'رقم الطلب', 'الاوردر',
+      'Order Code', 'Order ID', 'Code', 'Order', 'order_code', 'reference', 'tracking_number'
+    ]) || ''
   ).trim();
 
-  // Find Action Description
+  // Find Action Description (supporting real Vendoor Arabic 'الاكشن')
   const actionCandidate = String(
-    findValue(['Action', 'Status', 'Event', 'Action Type', 'Operation', 'Title', 'activity']) || 'Action Recorded'
+    findValue([
+      'الاكشن', 'العملية', 'الحدث', 'الحالة', 'نوع العملية', 'نوع الاكشن',
+      'Action', 'Status', 'Event', 'Action Type', 'Operation', 'Title', 'activity'
+    ]) || 'Action Recorded'
   ).trim();
 
-  // Find Timestamp / Date
-  const dateCandidate = findValue(['Date', 'Timestamp', 'Created At', 'Time', 'created_at', 'date_time']);
+  // Find Timestamp / Date (supporting real Vendoor Arabic 'التاريخ')
+  const dateCandidate = findValue([
+    'التاريخ', 'تاريخ', 'وقت', 'الوقت', 'تاريخ العملية',
+    'Date', 'Timestamp', 'Created At', 'Time', 'created_at', 'date_time'
+  ]);
   let timestampStr = null;
   let dateStr = null;
 
   if (dateCandidate) {
     const s = String(dateCandidate).trim();
     if (s) {
-      const d = new Date(s);
-      if (!isNaN(d.getTime())) {
-        timestampStr = d.toISOString();
-        dateStr = timestampStr.slice(0, 10);
-      } else if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
         dateStr = s.slice(0, 10);
         timestampStr = s;
       } else {
-        timestampStr = s;
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) {
+          timestampStr = d.toISOString();
+          dateStr = timestampStr.slice(0, 10);
+        } else {
+          timestampStr = s;
+        }
       }
     }
   }

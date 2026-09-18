@@ -163,8 +163,23 @@ window.exportCurrentExcel = function() {
 `;
 html = html.replace('</body>', `${exportScript}\n</body>`);
 
-// Replace __DATA_PLACEHOLDER__
-html = html.replace('__DATA_PLACEHOLDER__', JSON.stringify(payload));
+// Replace __DATA_PLACEHOLDER__ with clean dynamic default state
+const defaultInitialData = {
+  exists: false,
+  date: null,
+  work_date: null,
+  employees: [],
+  log_totals: { actions: 0, printed: 0, pending: 0, processing: 0, cancelled: 0, alt: 0 },
+  status_totals: { Printed: 0, Pending: 0, Processing: 0, Cancelled: 0 },
+  hr: { days: 0, tot_new: 0, tot_printed: 0, tot_cancel: 0, tot_add: 0 },
+  daily: [],
+  rankings: { printed: [], pending: [], cancelled: [] },
+  cancel_rate_rank: [],
+  team_cancel_rate: 0,
+  team_pending_rate: 0,
+  addedOrders: { totalAdded: 0, totalAddedCS: 0, totalAddedNonCS: 0, fromCS: 0, fromOtherDepartments: 0, topCSContributors: [], allCSContributors: [] }
+};
+html = html.replace('__DATA_PLACEHOLDER__', JSON.stringify(defaultInitialData));
 
 // Write public/index.html
 fs.writeFileSync(path.join(PUBLIC_DIR, 'index.html'), html, 'utf-8');

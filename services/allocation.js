@@ -2070,31 +2070,29 @@ export function generateOrderLevelAllocation(workDate, options = {}) {
       chosen = eligible[0];
       chosenReason = `${ruleNote} → Assigned to ${chosen.name} (sole eligible candidate)`;
     } else {
-      // Capacity-Aware Candidate Filter (Section 16: Rate + Capacity):
-      // The decision must not ask only: 'Who is fastest?'
-      // It must ask: 'Who is fast enough AND has enough remaining capacity?'
-      // If candidates exist whose remaining capacity can absorb the entire account, prioritize them!
-      const activeCandidatePool = capableCandidates.length > 0 ? capableCandidates : candidateAssessments;
-
       // Primary balancing metric: NUMBER OF ACCOUNTS PER EMPLOYEE (Primary fairness invariant)
-      const minAccounts = Math.min(...activeCandidatePool.map(c => c.stat.accountsCount));
-      let bestCandidates = activeCandidatePool.filter(c => c.stat.accountsCount === minAccounts);
+      const minAccounts = Math.min(...candidateAssessments.map(c => c.stat.accountsCount));
+      let bestCandidates = candidateAssessments.filter(c => c.stat.accountsCount === minAccounts);
 
       if (bestCandidates.length > 1) {
-        // Among tied candidates with min accounts:
+        // Among tied candidates with min accounts, prioritize candidates with remaining capacity if available
+        const capableTied = bestCandidates.filter(c => c.remainingCapacity >= totalOrders);
+        const pool = capableTied.length > 0 ? capableTied : bestCandidates;
+
         // Rank by Smart Allocation Score (Performance + Capacity + Workload)
-        bestCandidates.sort((a, b) => {
+        pool.sort((a, b) => {
           if (Math.abs(b.compositeScore - a.compositeScore) > 0.05) {
             return b.compositeScore - a.compositeScore;
           }
           return b.remainingCapacity - a.remainingCapacity;
         });
+        bestCandidates = pool;
       }
 
       const topCandidate = bestCandidates[0];
       chosen = topCandidate.emp;
 
-      chosenReason = `Account ${accountName} — ${totalOrders} orders assigned entirely to ${chosen.name} because ${chosen.name} is eligible, has available capacity (${topCandidate.remainingCapacity} remaining of ${topCandidate.estCapacity}), and strong historical performance/rate (${topCandidate.histScore}) to handle the workload without requiring an unnecessary split.`;
+      chosenReason = `Account ${accountName} — ${totalOrders} orders assigned entirely to ${chosen.name} because ${chosen.name} is eligible, has balanced account distribution (${topCandidate.stat.accountsCount} accounts), available capacity (${topCandidate.remainingCapacity} remaining of ${topCandidate.estCapacity}), and strong historical performance/rate (${topCandidate.histScore}) to handle the workload without requiring an unnecessary split.`;
     }
 
     // Assign the ENTIRE account to this ONE chosen employee

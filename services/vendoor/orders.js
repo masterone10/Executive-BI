@@ -11,6 +11,7 @@
 
 import { vendoorFetch, VendoorClientError } from './client.js';
 import { normalizeVendoorOrder } from './normalize.js';
+import { getVendoorConfig } from './auth.js';
 
 /**
  * Fetch a single page of orders from Vendoor
@@ -24,22 +25,52 @@ import { normalizeVendoorOrder } from './normalize.js';
  * @param {string} [options.search]
  */
 export async function fetchVendoorOrdersPage(options = {}) {
+  const cfg = getVendoorConfig();
+  if (options.forceMode === 'mock' || cfg.mockMode) {
+    const { MockVendoorDataSource } = await import('./adapter.js');
+    return new MockVendoorDataSource().fetchOrders(options);
+  }
+
   const start = Math.max(0, parseInt(options.start, 10) || 0);
-  const length = Math.min(100, Math.max(1, parseInt(options.length, 10) || 50));
+  const length = Math.min(300, Math.max(1, parseInt(options.length, 10) || 300));
   const fromDate = options.fromDate || '';
   const toDate = options.toDate || '';
   const statusFilter = options.statusFilter || '';
   const search = options.search || '';
 
+  const pageNum = Math.floor(start / length) + 1;
   const queryParams = new URLSearchParams({
-    draw: String(Math.floor(start / length) + 1),
+    draw: String(pageNum),
     start: String(start),
-    length: String(length)
+    length: String(length),
+    page: String(pageNum),
+    page_size: String(length),
+    per_page: String(length),
+    limit: String(length)
   });
 
   if (fromDate) queryParams.set('from_date', fromDate);
   if (toDate) queryParams.set('to_date', toDate);
-  if (statusFilter) queryParams.set('status', statusFilter);
+  
+  if (statusFilter) {
+    let mappedStatus = statusFilter;
+    if (typeof statusFilter === 'string') {
+      const lowerStatus = statusFilter.toLowerCase();
+      if (lowerStatus === 'new') mappedStatus = '1';
+      else if (lowerStatus === 'pending') mappedStatus = '3';
+      else if (lowerStatus === 'printed') mappedStatus = '13';
+      else if (lowerStatus === 'canceled' || lowerStatus === 'cancelled') mappedStatus = '12';
+      else if (lowerStatus === 'shipped') mappedStatus = '4';
+      else if (lowerStatus === 'partial delivery') mappedStatus = '5';
+      else if (lowerStatus === 'delivered') mappedStatus = '8';
+      else if (lowerStatus === 'collected') mappedStatus = '9';
+    }
+    queryParams.set('status_filter', mappedStatus);
+    queryParams.set('status_id', mappedStatus);
+    queryParams.set('status', mappedStatus);
+    queryParams.set('order_status', mappedStatus);
+  }
+  
   if (search) queryParams.set('search[value]', search);
 
   const endpoint = `/dashboard/orders?${queryParams.toString()}`;
@@ -148,7 +179,7 @@ export async function fetchVendoorOrdersPage(options = {}) {
  * @param {string} [options.search]
  */
 export async function fetchAllVendoorOrders(options = {}) {
-  const pageSize = Math.min(100, Math.max(10, parseInt(options.pageSize, 10) || 50));
+  const pageSize = Math.min(300, Math.max(10, parseInt(options.pageSize, 10) || 300));
   const maxPages = Math.min(100, Math.max(1, parseInt(options.maxPages, 10) || 50));
 
   const allOrders = [];
@@ -211,6 +242,7 @@ export async function fetchAllVendoorOrders(options = {}) {
     resource: 'orders',
     pages_fetched: pagesFetched,
     total_records: allOrders.length,
+    total_orders: allOrders.length,
     reported_total: reportedTotal,
     duration_ms: totalDurationMs,
     filter_applied: {

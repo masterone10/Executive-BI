@@ -15,6 +15,8 @@ import { getVendoorDataSource } from './adapter.js';
 import { classifyVendoorAction } from './actions.js';
 import { getOperationalBusinessDate } from './normalize.js';
 import { resolveEmployeeIdentity } from './identity.js';
+import { computePerformanceFromRecords, savePerformanceSnapshotToDB } from '../performance.js';
+import { attachEligibleArrivedOrders } from './dispatcher.js';
 
 /**
  * Generate a unique run ID for the sync batch
@@ -88,8 +90,12 @@ export async function syncVendoorOrders(options = {}) {
 
   const fromDate = options.fromDate || '';
   const toDate = options.toDate || fromDate || '';
-  const pageSize = Math.min(100, Math.max(10, parseInt(options.pageSize, 10) || 50));
+  const pageSize = Math.min(300, Math.max(10, parseInt(options.pageSize, 10) || 300));
   const maxPages = Math.min(100, Math.max(1, parseInt(options.maxPages, 10) || 50));
+
+  const statusesToFetch = options.statusFilter 
+    ? [options.statusFilter] 
+    : (Array.isArray(options.statuses) && options.statuses.length > 0 ? options.statuses : ['New', 'Pending']);
 
   let totalFetched = 0;
   let totalAccepted = 0;
@@ -116,59 +122,98 @@ export async function syncVendoorOrders(options = {}) {
         imported_at = datetime('now')
     `);
 
+    const insertCwoStmt = db.prepare(`
+      INSERT INTO current_work_orders (
+        work_date, order_code, account, status, order_date, source_file_slot, merchant_code
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(work_date, order_code) DO UPDATE SET
+        account = excluded.account,
+        status = excluded.status,
+        source_file_slot = excluded.source_file_slot,
+        merchant_code = COALESCE(excluded.merchant_code, current_work_orders.merchant_code),
+        updated_at = datetime('now')
+    `);
+
     const checkExistingStmt = db.prepare('SELECT id, status, account FROM vendoor_orders WHERE order_code = ?');
 
-    for (let page = 0; page < maxPages; page++) {
-      const start = page * pageSize;
-      const res = await ds.fetchOrders({
-        start,
-        length: pageSize,
-        fromDate,
-        toDate,
-        statusFilter: options.statusFilter || '',
-        search: options.search || ''
-      });
+    for (const currentStatus of statusesToFetch) {
+      for (let page = 0; page < maxPages; page++) {
+        const start = page * pageSize;
+        const res = await ds.fetchOrders({
+          start,
+          length: pageSize,
+          fromDate,
+          toDate,
+          statusFilter: currentStatus,
+          search: options.search || ''
+        });
 
-      const orders = res.orders || res.orders_sample || [];
-      if (orders.length === 0) break;
+        const orders = res.orders || res.orders_sample || [];
+        if (orders.length === 0) break;
 
-      pagesProcessed++;
-      totalFetched += orders.length;
+        pagesProcessed++;
+        totalFetched += orders.length;
 
-      const tx = db.transaction(() => {
-        for (const ord of orders) {
-          if (!ord.order_code) {
-            totalRejected++;
-            continue;
+        const tx = db.transaction(() => {
+          for (const ord of orders) {
+            if (!ord.order_code) {
+              totalRejected++;
+              continue;
+            }
+
+            if (ord.account) sampleAccounts.add(ord.account);
+            if (ord.status) sampleStatuses.add(ord.status);
+
+            const existing = checkExistingStmt.get(ord.order_code);
+            if (existing) {
+              totalDuplicated++;
+            } else {
+              totalAccepted++;
+            }
+
+            const targetWorkDate = ord.date || fromDate || new Date().toISOString().slice(0, 10);
+            const ordStatus = ord.status || currentStatus || 'New';
+            const slot = (ordStatus && String(ordStatus).toLowerCase().includes('pending')) ? 2 : 1;
+
+            insertOrderStmt.run(
+              ord.order_code,
+              ordStatus,
+              ord.account || 'Unassigned',
+              targetWorkDate,
+              ord.city || null,
+              ord.total_price || 0,
+              JSON.stringify(ord),
+              syncRunId
+            );
+
+            try {
+              insertCwoStmt.run(
+                targetWorkDate,
+                ord.order_code,
+                ord.account || 'Unassigned',
+                ordStatus,
+                targetWorkDate,
+                slot,
+                ord.merchant_code || null
+              );
+            } catch (_) {}
           }
+        });
 
-          if (ord.account) sampleAccounts.add(ord.account);
-          if (ord.status) sampleStatuses.add(ord.status);
+        tx();
 
-          const existing = checkExistingStmt.get(ord.order_code);
-          if (existing) {
-            totalDuplicated++;
-          } else {
-            totalAccepted++;
-          }
+        // If fewer items than pageSize were returned, reached end for this status
+        if (orders.length < pageSize) break;
+      }
+    }
 
-          insertOrderStmt.run(
-            ord.order_code,
-            ord.status || 'Unknown',
-            ord.account || 'Unassigned',
-            ord.date || fromDate || null,
-            ord.city || null,
-            ord.total_price || 0,
-            JSON.stringify(ord),
-            syncRunId
-          );
-        }
-      });
-
-      tx();
-
-      // If fewer items than pageSize were returned, reached end
-      if (orders.length < pageSize) break;
+    // Smart Dispatcher: check if newly arrived orders match an existing allocation for their account
+    let smartDispatcherResult = null;
+    try {
+      const effectiveDate = fromDate || new Date().toISOString().slice(0, 10);
+      smartDispatcherResult = attachEligibleArrivedOrders(effectiveDate);
+    } catch (sdErr) {
+      console.warn('Smart dispatcher order attachment failed:', sdErr.message);
     }
 
     const durationMs = Date.now() - startTime;
@@ -181,7 +226,8 @@ export async function syncVendoorOrders(options = {}) {
       total_rejected: totalRejected,
       unique_accounts_count: sampleAccounts.size,
       sample_accounts: Array.from(sampleAccounts).slice(0, 10),
-      sample_statuses: Array.from(sampleStatuses).slice(0, 5)
+      sample_statuses: Array.from(sampleStatuses).slice(0, 5),
+      smart_dispatcher: smartDispatcherResult
     };
 
     recordSyncRun({
@@ -205,6 +251,11 @@ export async function syncVendoorOrders(options = {}) {
       resource: 'orders',
       date_range: { from_date: fromDate, to_date: toDate },
       duration_ms: durationMs,
+      total_fetched: totalFetched,
+      pages_processed: pagesProcessed,
+      page_size: pageSize,
+      total_accepted: totalAccepted,
+      total_duplicated: totalDuplicated,
       summary
     };
   } catch (err) {
@@ -360,6 +411,16 @@ export async function syncVendoorLogs(options = {}) {
 
     tx();
 
+    try {
+      const records = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all(startDate);
+      if (records && records.length > 0) {
+        const metrics = computePerformanceFromRecords(records, startDate);
+        savePerformanceSnapshotToDB(startDate, metrics);
+      }
+    } catch (snapErr) {
+      console.warn('[Vendoor Sync] Snapshot update notice:', snapErr.message);
+    }
+
     const durationMs = Date.now() - startTime;
     const summary = {
       total_rows: totalFetched,
@@ -442,3 +503,115 @@ export function getSyncRunsHistory(limit = 20) {
     return [];
   }
 }
+
+/**
+ * Continuous Historical Order & Log Reconciliation
+ * Reconciles current business date + recent previous business dates
+ */
+export async function reconcileHistoricalWindow(options = {}) {
+  const days = Math.min(14, Math.max(1, parseInt(options.days, 10) || 3));
+  const results = [];
+  const today = new Date();
+
+  for (let i = 0; i < days; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().slice(0, 10);
+
+    // 1. Sync orders for this business date
+    const ordersRes = await syncVendoorOrders({
+      fromDate: dateStr,
+      toDate: dateStr,
+      forceMode: options.forceMode
+    });
+
+    // 2. Sync logs for this business date
+    const logsRes = await syncVendoorLogs({
+      startDate: dateStr,
+      endDate: dateStr,
+      forceMode: options.forceMode
+    });
+
+    results.push({
+      date: dateStr,
+      orders: ordersRes,
+      logs: logsRes
+    });
+  }
+
+  return {
+    success: true,
+    reconciled_days: days,
+    dates: results.map(r => r.date),
+    details: results
+  };
+}
+
+// In-memory autonomous poller state
+const pollerState = {
+  isRunning: false,
+  isCycleActive: false,
+  lastRunAt: null,
+  runCount: 0,
+  lastResult: null,
+  activeTimerId: null
+};
+
+export function getAutonomousPollerStatus() {
+  return {
+    isRunning: pollerState.isRunning,
+    isCycleActive: pollerState.isCycleActive,
+    lastRunAt: pollerState.lastRunAt,
+    runCount: pollerState.runCount,
+    lastResult: pollerState.lastResult
+  };
+}
+
+/**
+ * Centralized Autonomous Poller for Orders & Logs
+ * Single-flight concurrency lock prevents overlapping cycles
+ */
+export function startAutonomousVendoorPoller(options = {}) {
+  if (pollerState.isRunning) {
+    return { success: true, message: 'Autonomous Vendoor Poller is already running' };
+  }
+
+  const intervalMs = Math.max(15000, parseInt(options.intervalMs, 10) || 60000);
+  pollerState.isRunning = true;
+
+  const runPollerCycle = async () => {
+    // Single-flight lock: never run concurrent overlapping cycles
+    if (pollerState.isCycleActive) return;
+    pollerState.isCycleActive = true;
+
+    try {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const ordersRes = await syncVendoorOrders({ fromDate: todayStr, toDate: todayStr, forceMode: options.forceMode });
+      const logsRes = await syncVendoorLogs({ startDate: todayStr, endDate: todayStr, forceMode: options.forceMode });
+
+      pollerState.runCount++;
+      pollerState.lastRunAt = new Date().toISOString();
+      pollerState.lastResult = { orders: ordersRes, logs: logsRes };
+    } catch (err) {
+      console.warn('[Autonomous Vendoor Poller] Cycle warning:', err.message);
+    } finally {
+      pollerState.isCycleActive = false;
+    }
+  };
+
+  // Run initial poll asynchronously
+  runPollerCycle().catch(() => {});
+
+  pollerState.activeTimerId = setInterval(runPollerCycle, intervalMs);
+  return { success: true, message: 'Autonomous Vendoor Poller started', interval_ms: intervalMs };
+}
+
+export function stopAutonomousVendoorPoller() {
+  if (pollerState.activeTimerId) {
+    clearInterval(pollerState.activeTimerId);
+    pollerState.activeTimerId = null;
+  }
+  pollerState.isRunning = false;
+  return { success: true, message: 'Autonomous Vendoor Poller stopped' };
+}
+
