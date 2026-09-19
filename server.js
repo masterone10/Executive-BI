@@ -105,7 +105,9 @@ import {
   startAutonomousVendoorPoller,
   stopAutonomousVendoorPoller,
   getAutonomousPollerStatus,
-  getEffectiveWorkDate
+  getEffectiveWorkDate,
+  bootstrapHistoricalTwoMonths,
+  getHistoricalBootstrapStatus
 } from './services/vendoor/index.js';
 import {
   generateExecutiveSummaryReport,
@@ -1935,6 +1937,29 @@ app.post('/api/integrations/vendoor/reconcile-history', async (req, res) => {
   }
 });
 
+app.post('/api/integrations/vendoor/bootstrap-2months', async (req, res) => {
+  try {
+    const { endDate, toDate, days, chunkDays } = req.body || {};
+    const result = await bootstrapHistoricalTwoMonths({
+      endDate: endDate || toDate,
+      days: days || 60,
+      chunkDays: chunkDays || 2
+    });
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/integrations/vendoor/bootstrap-status', (req, res) => {
+  try {
+    const status = getHistoricalBootstrapStatus();
+    return res.json({ success: true, ...status });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get('/api/integrations/vendoor/poller/status', (req, res) => {
   try {
     const status = getAutonomousPollerStatus();
@@ -2129,10 +2154,10 @@ app.get('/api/vendoor/dispatcher/alerts', (req, res) => {
 app.get('/api/reports/executive-summary', (req, res) => {
   try {
     const report = generateExecutiveSummaryReport({
-      dateMode: req.query.date_mode || 'day',
-      targetDate: req.query.target_date,
-      startDate: req.query.start_date,
-      endDate: req.query.end_date,
+      dateMode: req.query.date_mode || req.query.dateMode || 'day',
+      targetDate: req.query.target_date || req.query.targetDate || req.query.date,
+      startDate: req.query.start_date || req.query.startDate,
+      endDate: req.query.end_date || req.query.endDate,
       filters: req.query
     });
     saveReportRecord({

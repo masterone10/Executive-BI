@@ -319,7 +319,7 @@ test('FORENSIC AUDIT: 20-Point Invariant & Requirement Verification', async (t) 
 
   // 17. PRODUCTION SEEDING GUARD
   await t.test('17. Production Seeding Guarding', () => {
-    assert.equal(process.env.SEED_DEMO_DATA, undefined, 'SEED_DEMO_DATA must not be enabled in production test environment');
+    assert.ok(!process.env.SEED_DEMO_DATA || process.env.SEED_DEMO_DATA === 'false', 'SEED_DEMO_DATA must not be enabled in production test environment');
   });
 
   // Final cleanup

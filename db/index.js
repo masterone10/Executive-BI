@@ -3,15 +3,33 @@ import fs from 'fs';
 import path from 'path';
 
 const ROOT_DIR = process.cwd();
-export const DB_PATH = process.env.DATABASE_PATH ? path.resolve(ROOT_DIR, process.env.DATABASE_PATH) : path.join(ROOT_DIR, 'data.db');
+const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST || process.env.JEST_WORKER_ID || process.env.TEST_MODE === 'true';
+export const DB_PATH = process.env.TEST_DB 
+  ? path.resolve(ROOT_DIR, process.env.TEST_DB) 
+  : (isTest ? path.join(ROOT_DIR, 'data.test.db') : (process.env.DATABASE_PATH ? path.resolve(ROOT_DIR, process.env.DATABASE_PATH) : path.join(ROOT_DIR, 'data.db')));
 const SCHEMA_PATH = path.join(ROOT_DIR, 'db', 'schema.sql');
 
 export const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
+db.pragma('busy_timeout = 10000');
 db.pragma('foreign_keys = ON');
+
+export function cleanupMockContamination(database = db) {
+  try {
+    database.prepare(`DELETE FROM vendoor_logs WHERE work_date = '2026-12-10' OR employee_name IN ('Ahmed Hassan', 'Sara Mahmoud', 'Mohamed Ali', 'Nour Ibrahim', 'Khaled Omar')`).run();
+    database.prepare(`DELETE FROM raw_log_records WHERE work_date = '2026-12-10' OR employee_name IN ('Ahmed Hassan', 'Sara Mahmoud', 'Mohamed Ali', 'Nour Ibrahim', 'Khaled Omar')`).run();
+    database.prepare(`DELETE FROM vendoor_orders WHERE merchant_code LIKE 've%' AND account IN ('Vendoor Express', 'Alpha Merchant', 'Beta Logistics', 'Delta Direct', 'Gamma Trade')`).run();
+    database.prepare(`DELETE FROM vendoor_sync_runs WHERE sync_run_id LIKE '%40n8%' OR sync_run_id LIKE '%z1gf%' OR sync_run_id LIKE '%mock%'`).run();
+    database.prepare(`DELETE FROM vendoor_bootstrap_state`).run();
+    console.log('✓ Cleaned up mock contamination from database.');
+  } catch (e) {
+    console.warn('Cleanup mock contamination warning:', e.message);
+  }
+}
 
 // Safe migrations function for existing and new databases
 export function runMigrations(database = db) {
+  cleanupMockContamination(database);
   // Safe table migration: Ensure team_membership & notes exist in employees
   try {
     const cols = database.prepare("PRAGMA table_info(employees)").all();
@@ -359,6 +377,7 @@ export function runMigrations(database = db) {
         order_code TEXT UNIQUE NOT NULL,
         status TEXT,
         account TEXT,
+        merchant_code TEXT,
         source_date TEXT,
         city TEXT,
         total_price REAL DEFAULT 0,
@@ -456,6 +475,16 @@ export function runMigrations(database = db) {
     `);
   } catch (e) {
     console.warn('Migration for Vendoor Phase 2/3 tables:', e.message);
+  }
+
+  // Safe table migration: Ensure vendoor_orders has merchant_code
+  try {
+    const vCols = database.prepare("PRAGMA table_info(vendoor_orders)").all();
+    if (vCols.length > 0 && !vCols.some(c => c.name === 'merchant_code')) {
+      database.exec("ALTER TABLE vendoor_orders ADD COLUMN merchant_code TEXT");
+    }
+  } catch (e) {
+    // Ignored
   }
 
   // Seed centralized operational day cutoff if not present

@@ -1,5 +1,6 @@
 import { db } from '../db/index.js';
-import { formatDateKey, isCSName, normalizeEmployeeName, matchEmployeeInMaster } from './parser.js';
+import { formatDateKey, isCSName, normalizeEmployeeName, matchEmployeeInMaster, parseDate, KNOWN_STATUSES, STATUS_RE, ALT_RE, ADDED_RE } from './parser.js';
+import { extractCanonicalStatus } from './vendoor/actions.js';
 
 export function getSystemWeights() {
   const rows = db.prepare('SELECT key, value FROM system_configs').all();
@@ -38,6 +39,55 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
     return displayName;
   }
 
+  // Uniform record normalization: handles both parser records and raw_log_records database rows
+  const normalizedRecords = (records || []).map(r => {
+    const rawName = r.name || r.employee_name || '';
+    const orderCode = r.order || r.order_code || '';
+    const actionText = r.act || r.action || '';
+    let statusText = r.st || r.status || null;
+
+    let dt = r.dt;
+    if (!dt && r.event_datetime) {
+      dt = parseDate(r.event_datetime);
+    }
+
+    const isAlt = r.alt !== undefined ? Boolean(r.alt) : ALT_RE.test(actionText);
+    const isAdded = r.added !== undefined ? Boolean(r.added) : ADDED_RE.test(actionText);
+
+    if (r.st) {
+      statusText = r.st === 'Canceled' ? 'Cancelled' : r.st;
+    } else if (!isAlt && !isAdded) {
+      const m = STATUS_RE.exec(actionText);
+      if (m && KNOWN_STATUSES.has(m[1].trim() === 'Canceled' ? 'Cancelled' : m[1].trim())) {
+        statusText = m[1].trim() === 'Canceled' ? 'Cancelled' : m[1].trim();
+      } else if (r.status && KNOWN_STATUSES.has(r.status === 'Canceled' ? 'Cancelled' : r.status)) {
+        statusText = r.status === 'Canceled' ? 'Cancelled' : r.status;
+      } else {
+        const extracted = extractCanonicalStatus(actionText, r.status || '');
+        if (KNOWN_STATUSES.has(extracted)) {
+          statusText = extracted;
+        } else {
+          statusText = null;
+        }
+      }
+    } else {
+      statusText = null;
+    }
+
+    const isCS = r.isCS !== undefined ? Boolean(r.isCS) : (r.is_cs !== undefined ? Boolean(r.is_cs) : isCSName(rawName, dbEmployeesMap));
+
+    return {
+      order: orderCode,
+      name: rawName,
+      act: actionText,
+      st: statusText,
+      dt,
+      alt: isAlt,
+      added: isAdded,
+      isCS
+    };
+  });
+
   // 1. Group status actions for deduplication: (order + employee + status) within 2 min
   const statusGroups = new Map();
   // 2. Alt phone groups: (order + employee) within 2 min
@@ -54,9 +104,9 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
 
   let rawStatusCount = 0;
 
-  for (const r of records) {
+  for (const r of normalizedRecords) {
     const canonicalName = getCanonicalEmpName(r.name);
-    const isCS = r.isCS !== undefined ? r.isCS : isCSName(r.name, dbEmployeesMap);
+    const isCS = r.isCS;
 
     if (r.order) {
       if (r.dt) {
@@ -349,6 +399,41 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
 
   const dailyTrend = Array.from(dayMap.values()).sort((a, b) => a.date.localeCompare(b.date));
 
+  const log_totals = {
+    actions: totalActions,
+    printed: totalPrintedActions,
+    pending: totalPendingActions,
+    processing: totalProcessingActions,
+    cancelled: totalCancelledActions,
+    alt: totalAltPhones
+  };
+
+  const status_totals = {
+    Printed: totalPrintedActions,
+    Pending: totalPendingActions,
+    Processing: totalProcessingActions,
+    Cancelled: totalCancelledActions
+  };
+
+  const rankings = {
+    printed: [...employees].sort((a, b) => (b.printed || 0) - (a.printed || 0)).slice(0, 10).map(e => ({ name: e.name || e.employee_name, value: e.printed || 0 })),
+    pending: [...employees].sort((a, b) => (b.pending || 0) - (a.pending || 0)).slice(0, 10).map(e => ({ name: e.name || e.employee_name, value: e.pending || 0 })),
+    cancelled: [...employees].sort((a, b) => (b.cancelled || 0) - (a.cancelled || 0)).slice(0, 10).map(e => ({ name: e.name || e.employee_name, value: e.cancelled || 0 }))
+  };
+
+  const cancel_rate_rank = [...employees].sort((a, b) => (b.own_cancel_rate || 0) - (a.own_cancel_rate || 0)).map(e => ({ name: e.name || e.employee_name, value: e.own_cancel_rate || 0 }));
+
+  const team_cancel_rate = totalActions > 0 ? Number(((totalCancelledActions / totalActions) * 100).toFixed(1)) : 0.0;
+  const team_pending_rate = totalActions > 0 ? Number(((totalPendingActions / totalActions) * 100).toFixed(1)) : 0.0;
+
+  const hr = {
+    days: dailyTrend.length || 1,
+    tot_new: uniqueAddedOrders.size,
+    tot_printed: totalPrintedActions,
+    tot_cancel: totalCancelledActions,
+    tot_add: uniqueAddedOrders.size
+  };
+
   return {
     summary: {
       rawStatusCount,
@@ -366,6 +451,18 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
       processingActions: totalProcessingActions,
       cancelledActions: totalCancelledActions,
       teamCancelRate: Math.round(teamCancelRate * 10) / 10,
+    },
+    log_totals,
+    status_totals,
+    rankings,
+    cancel_rate_rank,
+    team_cancel_rate,
+    team_pending_rate,
+    hr,
+    daily: dailyTrend,
+    dedup: {
+      removed: Math.max(0, rawStatusCount - totalActions),
+      removed_pct: rawStatusCount > 0 ? Math.round(((rawStatusCount - totalActions) / rawStatusCount) * 1000) / 10 : 0
     },
     employees,
     top10Performers,

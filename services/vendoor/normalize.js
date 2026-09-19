@@ -7,18 +7,23 @@
  * - Strict isolation: Never creates DB employees, never modifies Smart Allocation rules.
  */
 
+import { extractCanonicalStatus } from './actions.js';
+export { extractCanonicalStatus };
+
 /**
  * Normalizes an individual order item from Vendoor order tables
  */
 export function normalizeVendoorOrder(rawOrder) {
   if (!rawOrder || typeof rawOrder !== 'object') return null;
 
-  // Extract order code / ID
+  // Extract order code / tracking number (Vendoor logs use random_number/tracking code)
   const orderCode = String(
+    rawOrder.random_number ||
+    rawOrder.order_no ||
     rawOrder.order_code ||
     rawOrder.code ||
-    rawOrder.id ||
     rawOrder.order_id ||
+    rawOrder.id ||
     rawOrder.reference ||
     ''
   ).trim();

@@ -12,6 +12,7 @@ import { getDispatcherStatus, getDispatcherConfig, getEffectiveWorkDate } from '
 import { getUnallocatedOrdersPool } from './vendoor/unallocated.js';
 import { classifyVendoorAction } from './vendoor/actions.js';
 import { getSafeVendoorStatus } from './vendoor/auth.js';
+import { computePerformanceFromRecords } from './performance.js';
 import * as XLSX from 'xlsx';
 
 /**
@@ -98,9 +99,50 @@ export function resolveDateRange(dateMode = 'day', targetDate, startDate, endDat
   };
 }
 
+export function getCanonicalRealActionsCount(workDate) {
+  const snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(workDate);
+  if (snap && snap.metrics_json) {
+    try {
+      const parsed = JSON.parse(snap.metrics_json);
+      const total = parsed.summary?.totalRealActions ?? parsed.log_totals?.actions;
+      if (typeof total === 'number') return total;
+    } catch (_) {}
+  }
+  const rows = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all(workDate);
+  if (rows.length === 0) return 0;
+  const perf = computePerformanceFromRecords(rows);
+  return perf.summary?.totalRealActions || 0;
+}
+
 export function getDayWorkloadSummary(workDate) {
+  // Query authoritative total orders and distinct accounts for the work date
+  let totalOrders = 0;
+  let totalAccounts = 0;
+
+  try {
+    const vRow = db.prepare(`
+      SELECT COUNT(DISTINCT order_code) as total_orders, COUNT(DISTINCT account) as total_accounts
+      FROM vendoor_orders
+      WHERE source_date = ?
+    `).get(workDate);
+
+    if (vRow && vRow.total_orders > 0) {
+      totalOrders = vRow.total_orders;
+      totalAccounts = vRow.total_accounts;
+    } else {
+      const cwRow = db.prepare(`
+        SELECT COUNT(DISTINCT order_code) as total_orders, COUNT(DISTINCT account) as total_accounts
+        FROM current_work_orders
+        WHERE work_date = ?
+      `).get(workDate);
+      if (cwRow && cwRow.total_orders > 0) {
+        totalOrders = cwRow.total_orders;
+        totalAccounts = cwRow.total_accounts;
+      }
+    }
+  } catch (_) {}
+
   const states = getEmployeeWorkloadAndRefillStates(workDate);
-  const unallocated = getUnallocatedOrdersPool(workDate);
   const accRow = db.prepare('SELECT COUNT(DISTINCT account) as c FROM order_level_allocations WHERE allocation_date = ?').get(workDate);
   const accountsCount = accRow?.c || 0;
 
@@ -116,14 +158,28 @@ export function getDayWorkloadSummary(workDate) {
     remainingOrders += s.remaining_work || 0;
   }
 
+  // If totalOrders was not found in inventory tables, fallback to states + unallocated
+  if (totalOrders === 0) {
+    const unallocatedPool = getUnallocatedOrdersPool(workDate);
+    totalOrders = assignedOrders + unallocatedPool.total_unallocated_orders;
+    totalAccounts = accountsCount + unallocatedPool.unique_accounts_count;
+  }
+
+  // Canonical Arithmetic: Total Orders = Allocated Orders + Unallocated Orders
+  const unallocatedOrders = Math.max(0, totalOrders - assignedOrders);
+  const unallocatedAccounts = Math.max(0, totalAccounts - accountsCount);
+
   return {
+    total_orders: totalOrders,
     assigned_orders: assignedOrders,
+    allocated_orders: assignedOrders,
     completed_orders: completedOrders,
     remaining_orders: remainingOrders,
     working_employees_count: workingEmployees,
     accounts_count: accountsCount,
-    unallocated_orders: unallocated.total_unallocated_orders,
-    unallocated_accounts: unallocated.unique_accounts_count
+    total_accounts: totalAccounts,
+    unallocated_orders: unallocatedOrders,
+    unallocated_accounts: unallocatedAccounts
   };
 }
 
@@ -149,24 +205,22 @@ export function generateExecutiveSummaryReport(opts = {}) {
   for (const d of range.dates) {
     const workload = getDayWorkloadSummary(d);
     
-    // Total raw actions from raw_log_records or vendoor_logs
-    const actionsRow = db.prepare(`
-      SELECT COUNT(*) as actions_count FROM raw_log_records WHERE work_date = ?
-    `).get(d);
-    const actionsCount = actionsRow?.actions_count || 0;
+    // Authoritative canonical deduplicated Real Actions
+    const actionsCount = getCanonicalRealActionsCount(d);
 
     const dayStat = {
       date: d,
-      total_orders: workload.assigned_orders + workload.unallocated_orders,
+      total_orders: workload.total_orders,
+      allocated_orders: workload.assigned_orders,
       assigned_orders: workload.assigned_orders,
       unallocated_orders: workload.unallocated_orders,
       completed_orders: workload.completed_orders,
       remaining_orders: workload.remaining_orders,
       active_employees: workload.working_employees_count,
       working_team_count: workload.working_employees_count,
-      total_accounts: workload.accounts_count + workload.unallocated_accounts,
-      allocation_coverage_pct: (workload.assigned_orders + workload.unallocated_orders) > 0
-        ? Math.round((workload.assigned_orders / (workload.assigned_orders + workload.unallocated_orders)) * 100)
+      total_accounts: workload.total_accounts,
+      allocation_coverage_pct: workload.total_orders > 0
+        ? Math.round((workload.assigned_orders / workload.total_orders) * 100)
         : 0,
       completion_pct: workload.assigned_orders > 0
         ? Math.round((workload.completed_orders / workload.assigned_orders) * 100)
@@ -197,6 +251,7 @@ export function generateExecutiveSummaryReport(opts = {}) {
     end_date: range.endDate,
     filters,
     total_orders: aggregateOrders,
+    allocated_orders: aggregateAssigned,
     assigned_orders: aggregateAssigned,
     unallocated_orders: aggregateUnallocated,
     completed_orders: aggregateCompleted,

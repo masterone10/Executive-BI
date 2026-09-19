@@ -1,6 +1,8 @@
 import XLSX from 'xlsx';
 import { db } from '../db/index.js';
 import { parseDailyLogBuffer, parseDate, matchEmployeeInMaster, normalizeEmployeeName, isCSName } from './parser.js';
+import { computePerformanceFromRecords } from './performance.js';
+import { extractCanonicalStatus } from './vendoor/actions.js';
 
 /**
  * ============================================================
@@ -641,10 +643,11 @@ export function getEmployeeTracking(workDate, employeeIdOrName) {
       statusMessage = 'Log Uploaded — No Activity Recorded';
     } else {
       // STATE C: Log Uploaded & Employee Has Activity
+      const employeeStatusActions = printedCount + pendingCount + cancelledCount + processingCount;
       ordersWorkedToday = uniqueOrdersWorkedSet.size;
-      realActions = deduplicatedActions.length;
+      realActions = employeeStatusActions;
       ordersOutsideAllocation = outsideAllocationOrdersSet.size;
-      actionsCompliancePct = Math.round(((deduplicatedActions.length - outsideAllocationActions) / deduplicatedActions.length) * 1000) / 10;
+      actionsCompliancePct = deduplicatedActions.length > 0 ? Math.round(((deduplicatedActions.length - outsideAllocationActions) / deduplicatedActions.length) * 1000) / 10 : null;
       statusMessage = 'Active';
     }
   } else {
@@ -1143,7 +1146,7 @@ export function getTrackingOverview(workDate) {
     if (act.status === 'Pending') { pendingCount++; stObj.pending++; }
     if (act.status === 'Cancelled') { cancelledCount++; stObj.cancelled++; }
     if (act.status === 'Processing') { processingCount++; stObj.processing++; }
-    if (/هاتف\s*آخر|تليفون\s*بديل|alt/i.test(act.action)) { altCount++; stObj.alt++; }
+    if (/هاتف.*آخر|هاتف.*اخر|هاتف.*بديل|تليفون.*بديل|رقم.*بديل|رقم.*هاتف|phone|alt/i.test(act.action)) { altCount++; stObj.alt++; }
   }
 
   // 5. Build Employee Tracking List & Outside Allocation Table
@@ -1227,7 +1230,16 @@ export function getTrackingOverview(workDate) {
     }
   }
 
-  // 6. Data Quality & Audit Metrics
+  // 6. Data Quality & Audit Metrics — Parity with Canonical Performance Engine
+  const perfResult = logRows.length > 0 ? computePerformanceFromRecords(logRows) : null;
+  const canonicalTotalRealActions = perfResult?.summary?.totalRealActions;
+  const statusActionsCount = typeof canonicalTotalRealActions === 'number' ? canonicalTotalRealActions : (printedCount + pendingCount + cancelledCount + processingCount);
+  const canonicalPrinted = perfResult?.summary?.printedActions ?? printedCount;
+  const canonicalPending = perfResult?.summary?.pendingActions ?? pendingCount;
+  const canonicalCancelled = perfResult?.summary?.cancelledActions ?? cancelledCount;
+  const canonicalProcessing = perfResult?.summary?.processingActions ?? processingCount;
+  const canonicalAlt = perfResult?.summary?.totalAltPhones ?? altCount;
+
   const openingOrdersWithDailyLog = currentOrders.filter(o => uniqueOrdersWorkedAcrossTeam.has(o.order_code)).length;
   const openingOrdersWithoutDailyLog = currentOrders.filter(o => !uniqueOrdersWorkedAcrossTeam.has(o.order_code)).length;
 
@@ -1265,13 +1277,15 @@ export function getTrackingOverview(workDate) {
       untouched_orders: dailyLogUploaded ? openingOrdersWithoutDailyLog : null, // N/A if log not uploaded!
     },
     actual_work: {
-      orders_worked_today: dailyLogUploaded ? uniqueOrdersWorkedAcrossTeam.size : null, // Null if no log
-      real_actions: dailyLogUploaded ? deduplicatedActions.length : null,               // Null if no log
-      printed_orders: dailyLogUploaded ? printedCount : null,
-      pending_backlog: dailyLogUploaded ? pendingCount : null,
-      cancelled_orders: dailyLogUploaded ? cancelledCount : null,
-      processing_orders: dailyLogUploaded ? processingCount : null,
-      alt_phones: dailyLogUploaded ? altCount : null,
+      orders_worked_today: dailyLogUploaded ? (openingTotal > 0 ? openingOrdersWithDailyLog : uniqueOrdersWorkedAcrossTeam.size) : null, // Strict Business Date bounded
+      orders_worked_in_inventory: dailyLogUploaded ? openingOrdersWithDailyLog : null,
+      total_orders_touched_across_logs: dailyLogUploaded ? uniqueOrdersWorkedAcrossTeam.size : null,
+      real_actions: dailyLogUploaded ? statusActionsCount : null,                       // Null if no log
+      printed_orders: dailyLogUploaded ? canonicalPrinted : null,
+      pending_backlog: dailyLogUploaded ? canonicalPending : null,
+      cancelled_orders: dailyLogUploaded ? canonicalCancelled : null,
+      processing_orders: dailyLogUploaded ? canonicalProcessing : null,
+      alt_phones: dailyLogUploaded ? canonicalAlt : null,
       status_message: !dailyLogUploaded ? 'End-of-Day Log Not Uploaded' : (deduplicatedActions.length === 0 ? 'Log Uploaded — No Activity Recorded' : 'Active'),
     },
     allocation_alignment: {
@@ -1883,47 +1897,34 @@ export function getOperationalDashboardData(workDate) {
   // If no activity in tracking overview, check if raw_log_records or vendoor_logs have activity
   if (totalActions === 0) {
     const rawRows = db.prepare(`
-      SELECT employee_name, action, status 
+      SELECT employee_name, action, status, order_code, event_datetime, is_cs
       FROM raw_log_records 
       WHERE work_date = ?
     `).all(targetDate);
 
     if (rawRows.length > 0) {
-      const empMap = new Map();
-      for (const row of rawRows) {
-        const name = row.employee_name || 'Unknown';
-        if (!empMap.has(name)) {
-          empMap.set(name, { name, actions: 0, printed: 0, pending: 0, cancelled: 0, processing: 0, alt: 0 });
-        }
-        const obj = empMap.get(name);
-        obj.actions++;
-        totalActions++;
-        const st = String(row.status || '').toLowerCase();
-        const act = String(row.action || '').toLowerCase();
-        if (st.includes('printed') || act.includes('طباعة') || act.includes('printed')) {
-          obj.printed++;
-          totalPrinted++;
-        } else if (st.includes('cancel') || act.includes('إلغاء') || act.includes('cancel')) {
-          obj.cancelled++;
-          totalCancelled++;
-        } else if (st.includes('pending') || act.includes('معلق') || act.includes('pending')) {
-          obj.pending++;
-        } else if (st.includes('processing') || act.includes('تجهيز') || act.includes('process')) {
-          obj.processing++;
-          totalProcessing++;
-        }
-        if (act.includes('alt') || act.includes('هاتف') || act.includes('تليفون')) {
-          obj.alt++;
-          totalAlt++;
-        }
-      }
+      const computed = computePerformanceFromRecords(rawRows);
+      totalActions = computed.summary.totalRealActions || 0;
+      totalPrinted = computed.summary.printedActions || 0;
+      totalPending = computed.summary.pendingActions || 0;
+      totalCancelled = computed.summary.cancelledActions || 0;
+      totalProcessing = computed.summary.processingActions || 0;
+      totalAlt = computed.summary.totalAltPhones || 0;
+
       employees.length = 0;
-      let rk = 1;
-      for (const e of empMap.values()) {
-        e.rank = rk++;
-        e.performance_score = e.actions;
-        employees.push(e);
-      }
+      (computed.employees || []).forEach((e, idx) => {
+        employees.push({
+          rank: idx + 1,
+          name: e.name || e.employee_name,
+          actions: e.actions || e.real_actions || 0,
+          printed: e.printed || 0,
+          pending: e.pending || 0,
+          cancelled: e.cancelled || 0,
+          processing: e.processing || 0,
+          alt: e.alt || 0,
+          performance_score: e.performance_score || e.score || 0
+        });
+      });
     }
   }
 

@@ -221,6 +221,10 @@ export function getVendoorDataSource(forceMode = null) {
   const cfg = getVendoorConfig();
   const mode = forceMode || (cfg.mockMode ? 'mock' : 'live');
 
+  if (mode === 'mock' && process.env.NODE_ENV !== 'test') {
+    throw new Error('MOCK_ADAPTER_DISALLOWED: Mock data source is strictly forbidden in production / non-test environments.');
+  }
+
   if (mode === 'mock') {
     return new MockVendoorDataSource();
   }

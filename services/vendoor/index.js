@@ -17,3 +17,4 @@ export * from './completion.js';
 export * from './workload.js';
 export * from './unallocated.js';
 export * from './dispatcher.js';
+export * from './bootstrap.js';

@@ -12,11 +12,11 @@
 
 import { db } from '../../db/index.js';
 import { getVendoorDataSource } from './adapter.js';
-import { classifyVendoorAction } from './actions.js';
+import { classifyVendoorAction, extractCanonicalStatus } from './actions.js';
 import { getOperationalBusinessDate } from './normalize.js';
 import { resolveEmployeeIdentity } from './identity.js';
 import { computePerformanceFromRecords, savePerformanceSnapshotToDB } from '../performance.js';
-import { attachEligibleArrivedOrders } from './dispatcher.js';
+import { attachEligibleArrivedOrders, getDispatcherConfig } from './dispatcher.js';
 
 /**
  * Generate a unique run ID for the sync batch
@@ -108,12 +108,13 @@ export async function syncVendoorOrders(options = {}) {
   try {
     const insertOrderStmt = db.prepare(`
       INSERT INTO vendoor_orders (
-        order_code, status, account, source_date, city, total_price,
+        order_code, status, account, merchant_code, source_date, city, total_price,
         raw_payload_json, sync_run_id, imported_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(order_code) DO UPDATE SET
         status = excluded.status,
         account = excluded.account,
+        merchant_code = excluded.merchant_code,
         source_date = excluded.source_date,
         city = excluded.city,
         total_price = excluded.total_price,
@@ -179,6 +180,7 @@ export async function syncVendoorOrders(options = {}) {
               ord.order_code,
               ordStatus,
               ord.account || 'Unassigned',
+              ord.merchant_code || null,
               targetWorkDate,
               ord.city || null,
               ord.total_price || 0,
@@ -207,11 +209,16 @@ export async function syncVendoorOrders(options = {}) {
       }
     }
 
-    // Smart Dispatcher: check if newly arrived orders match an existing allocation for their account
+    // Smart Dispatcher: check if newly arrived orders match an existing allocation for their account (strictly when dispatcher is ENABLED)
     let smartDispatcherResult = null;
     try {
-      const effectiveDate = fromDate || new Date().toISOString().slice(0, 10);
-      smartDispatcherResult = attachEligibleArrivedOrders(effectiveDate);
+      const dispCfg = getDispatcherConfig();
+      if (dispCfg && dispCfg.enabled) {
+        const effectiveDate = fromDate || new Date().toISOString().slice(0, 10);
+        smartDispatcherResult = attachEligibleArrivedOrders(effectiveDate);
+      } else {
+        smartDispatcherResult = { attached_count: 0, unassigned_count: 0, note: 'Dispatcher is OFF (safe sync)' };
+      }
     } catch (sdErr) {
       console.warn('Smart dispatcher order attachment failed:', sdErr.message);
     }
@@ -392,15 +399,16 @@ export async function syncVendoorLogs(options = {}) {
           syncRunId
         );
 
-        // 2. Insert into raw_log_records if not already present (idempotent bridging)
-        const isRawExisting = checkExistingRawLog.get(resolvedWorkDate, log.order_code, log.employee_name, rawTs, rawAction, rawAction);
+        // 2. Insert into raw_log_records with canonical normalized status
+        const canonicalStatus = extractCanonicalStatus(rawAction);
+        const isRawExisting = checkExistingRawLog.get(resolvedWorkDate, log.order_code, log.employee_name, rawTs, rawAction, canonicalStatus);
         if (!isRawExisting) {
           const isCS = identity.department === 'CS' || identity.department === null || identity.department === undefined ? 1 : (identity.department === 'CS' ? 1 : 0);
           insertRawLogStmt.run(
             resolvedWorkDate,
             log.order_code,
             identity.employee_name || log.employee_name,
-            rawAction,
+            canonicalStatus,
             rawAction,
             rawTs,
             isCS
@@ -411,11 +419,15 @@ export async function syncVendoorLogs(options = {}) {
 
     tx();
 
+    // Recompute canonical performance snapshots for all relevant dates
     try {
-      const records = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all(startDate);
-      if (records && records.length > 0) {
-        const metrics = computePerformanceFromRecords(records, startDate);
-        savePerformanceSnapshotToDB(startDate, metrics);
+      const datesToRecompute = new Set([startDate, endDate].filter(Boolean));
+      for (const d of datesToRecompute) {
+        const records = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all(d);
+        if (records && records.length > 0) {
+          const metrics = computePerformanceFromRecords(records, d);
+          savePerformanceSnapshotToDB(d, metrics);
+        }
       }
     } catch (snapErr) {
       console.warn('[Vendoor Sync] Snapshot update notice:', snapErr.message);

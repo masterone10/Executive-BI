@@ -173,3 +173,37 @@ export function isValidProductiveAction(actionText, statusText = '') {
 
 export const isProductiveVendoorAction = isValidProductiveAction;
 
+/**
+ * Canonical status extractor for universal normalization across Vendoor logs & SQL queries.
+ * Maps any Arabic / English action or status string to standard canonical status:
+ * 'Printed' | 'Pending' | 'Cancelled' | 'Processing' | 'Delivered' | 'Shipping' | 'Alt Phone' | 'Action Recorded'
+ */
+export function extractCanonicalStatus(actionText, statusText = '') {
+  const combined = `${actionText || ''} ${statusText || ''}`.trim();
+  if (!combined) return 'Action Recorded';
+
+  if (/cancel|ملغي|إلغاء|الغاء|رفض|مرتجع|reject|refused/i.test(combined)) {
+    return 'Cancelled';
+  }
+  if (/print|طبع|طباعة/i.test(combined)) {
+    return 'Printed';
+  }
+  if (/pending|معلق|انتظار/i.test(combined)) {
+    return 'Pending';
+  }
+  if (/processing|تجهيز|قيد.*التجهيز/i.test(combined)) {
+    return 'Processing';
+  }
+  if (/delivered|تسليم|تم.*التسليم/i.test(combined)) {
+    return 'Delivered';
+  }
+  if (/shipping|شحن/i.test(combined)) {
+    return 'Shipping';
+  }
+  if (/alt.*phone|رقم.*بديل|هاتف.*بديل|تليفون.*بديل|رقم.*هاتف.*آخر|رقم.*هاتف.*اخر|رقم.*آخر|رقم.*اخر/i.test(combined)) {
+    return 'Alt Phone';
+  }
+
+  return 'Action Recorded';
+}
+

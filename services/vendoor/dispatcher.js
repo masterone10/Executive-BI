@@ -887,7 +887,7 @@ export function getDispatcherAlerts() {
  * - Adds them to eligible work (assigned to the current account owner)
  * - NEVER re-allocates, changes, or steals work already completed or in progress
  */
-export function attachEligibleArrivedOrders(workDate) {
+export function attachEligibleArrivedOrders(workDate, options = {}) {
   const targetWorkDate = getEffectiveWorkDate(workDate);
 
   // 1. Completed orders must never be touched
