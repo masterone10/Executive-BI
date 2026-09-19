@@ -182,11 +182,70 @@ export async function fetchAllVendoorOrders(options = {}) {
   const pageSize = Math.min(300, Math.max(10, parseInt(options.pageSize, 10) || 300));
   const maxPages = Math.min(100, Math.max(1, parseInt(options.maxPages, 10) || 50));
 
+  // If statusFilter is an array (e.g. ['NEW', 'PENDING']), fetch each status completely
+  if (Array.isArray(options.statusFilter) && options.statusFilter.length > 1) {
+    const combinedOrders = [];
+    const seenCodes = new Set();
+    let totalPages = 0;
+    let totalDuration = 0;
+    let maxReported = 0;
+
+    for (const sf of options.statusFilter) {
+      const subRes = await fetchAllVendoorOrders({
+        ...options,
+        statusFilter: sf
+      });
+      totalPages += subRes.pages_fetched || 0;
+      totalDuration += subRes.duration_ms || 0;
+      if (subRes.reported_total > maxReported) maxReported = subRes.reported_total;
+
+      for (const ord of (subRes.orders || [])) {
+        if (ord.order_code && !seenCodes.has(ord.order_code)) {
+          seenCodes.add(ord.order_code);
+          combinedOrders.push(ord);
+        }
+      }
+    }
+
+    const accountsSet = new Set();
+    const statusesSet = new Set();
+    for (const ord of combinedOrders) {
+      if (ord.account) accountsSet.add(ord.account);
+      if (ord.status) statusesSet.add(ord.status);
+    }
+
+    return {
+      success: true,
+      resource: 'orders',
+      pages_fetched: totalPages,
+      total_records: combinedOrders.length,
+      total_orders: combinedOrders.length,
+      reported_total: maxReported,
+      duration_ms: totalDuration,
+      filter_applied: {
+        from_date: options.fromDate || null,
+        to_date: options.toDate || null,
+        status: options.statusFilter,
+        search: options.search || null
+      },
+      summary: {
+        received_orders_count: combinedOrders.length,
+        unique_accounts_count: accountsSet.size,
+        accounts_sample: Array.from(accountsSet).slice(0, 10),
+        statuses_sample: Array.from(statusesSet).slice(0, 10),
+        sample_order_codes: combinedOrders.slice(0, 10).map(o => o.order_code)
+      },
+      orders_sample: combinedOrders.slice(0, 10),
+      orders: combinedOrders
+    };
+  }
+
   const allOrders = [];
   const seenCodes = new Set();
   let pagesFetched = 0;
   let totalDurationMs = 0;
   let reportedTotal = null;
+  let reportedFiltered = null;
 
   for (let page = 0; page < maxPages; page++) {
     const start = page * pageSize;
@@ -201,6 +260,9 @@ export async function fetchAllVendoorOrders(options = {}) {
 
     if (pageRes.pagination?.records_total !== null && pageRes.pagination?.records_total !== undefined) {
       reportedTotal = pageRes.pagination.records_total;
+    }
+    if (pageRes.pagination?.records_filtered !== null && pageRes.pagination?.records_filtered !== undefined) {
+      reportedFiltered = pageRes.pagination.records_filtered;
     }
 
     const pageOrders = pageRes.orders || pageRes.orders_sample || [];
@@ -221,8 +283,9 @@ export async function fetchAllVendoorOrders(options = {}) {
       break;
     }
 
-    // If we've collected the total count reported by DataTables
-    if (reportedTotal !== null && allOrders.length >= reportedTotal) {
+    // If we've collected the target count reported by DataTables
+    const targetCount = (reportedFiltered !== null && reportedFiltered > 0) ? reportedFiltered : reportedTotal;
+    if (targetCount !== null && targetCount > 0 && allOrders.length >= targetCount) {
       break;
     }
 

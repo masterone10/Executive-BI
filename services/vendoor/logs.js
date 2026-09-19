@@ -68,7 +68,7 @@ async function fetchSingleLogsChunk(startDate, endDate) {
 
   const { response, durationMs, contentType, status } = await vendoorFetch(endpoint, {
     method: 'GET',
-    timeoutMs: 45000,
+    timeoutMs: 120000,
     headers: {
       'Accept': 'application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/json, text/html, */*'
     }

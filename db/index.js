@@ -11,17 +11,17 @@ const SCHEMA_PATH = path.join(ROOT_DIR, 'db', 'schema.sql');
 
 export const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
-db.pragma('busy_timeout = 10000');
+db.pragma('busy_timeout = 30000');
 db.pragma('foreign_keys = ON');
 
 export function cleanupMockContamination(database = db) {
   try {
     database.prepare(`DELETE FROM vendoor_logs WHERE work_date = '2026-12-10' OR employee_name IN ('Ahmed Hassan', 'Sara Mahmoud', 'Mohamed Ali', 'Nour Ibrahim', 'Khaled Omar')`).run();
     database.prepare(`DELETE FROM raw_log_records WHERE work_date = '2026-12-10' OR employee_name IN ('Ahmed Hassan', 'Sara Mahmoud', 'Mohamed Ali', 'Nour Ibrahim', 'Khaled Omar')`).run();
-    database.prepare(`DELETE FROM vendoor_orders WHERE merchant_code LIKE 've%' AND account IN ('Vendoor Express', 'Alpha Merchant', 'Beta Logistics', 'Delta Direct', 'Gamma Trade')`).run();
+    database.prepare(`DELETE FROM vendoor_orders WHERE account IN ('Vendoor Express', 'Alpha Merchant', 'Beta Logistics', 'Delta Direct', 'Gamma Trade')`).run();
+    database.prepare(`DELETE FROM current_work_orders WHERE merchant_code LIKE 've%' AND account IN ('Vendoor Express', 'Alpha Merchant', 'Beta Logistics', 'Delta Direct', 'Gamma Trade')`).run();
     database.prepare(`DELETE FROM vendoor_sync_runs WHERE sync_run_id LIKE '%40n8%' OR sync_run_id LIKE '%z1gf%' OR sync_run_id LIKE '%mock%'`).run();
-    database.prepare(`DELETE FROM vendoor_bootstrap_state`).run();
-    console.log('✓ Cleaned up mock contamination from database.');
+    database.prepare(`DELETE FROM vendoor_bootstrap_state WHERE job_id LIKE '%mock%'`).run();
   } catch (e) {
     console.warn('Cleanup mock contamination warning:', e.message);
   }
@@ -477,11 +477,32 @@ export function runMigrations(database = db) {
     console.warn('Migration for Vendoor Phase 2/3 tables:', e.message);
   }
 
-  // Safe table migration: Ensure vendoor_orders has merchant_code
+  // Safe table migration: Ensure vendoor_orders has merchant_code, business_date, active_status, is_active, last_synced_at, created_at_original
   try {
     const vCols = database.prepare("PRAGMA table_info(vendoor_orders)").all();
-    if (vCols.length > 0 && !vCols.some(c => c.name === 'merchant_code')) {
-      database.exec("ALTER TABLE vendoor_orders ADD COLUMN merchant_code TEXT");
+    if (vCols.length > 0) {
+      if (!vCols.some(c => c.name === 'merchant_code')) {
+        database.exec("ALTER TABLE vendoor_orders ADD COLUMN merchant_code TEXT");
+      }
+      if (!vCols.some(c => c.name === 'business_date')) {
+        database.exec("ALTER TABLE vendoor_orders ADD COLUMN business_date TEXT");
+      }
+      if (!vCols.some(c => c.name === 'active_status')) {
+        database.exec("ALTER TABLE vendoor_orders ADD COLUMN active_status TEXT");
+      }
+      if (!vCols.some(c => c.name === 'is_active')) {
+        database.exec("ALTER TABLE vendoor_orders ADD COLUMN is_active INTEGER DEFAULT 1");
+      }
+      if (!vCols.some(c => c.name === 'last_synced_at')) {
+        database.exec("ALTER TABLE vendoor_orders ADD COLUMN last_synced_at TEXT");
+      }
+      if (!vCols.some(c => c.name === 'created_at_original')) {
+        database.exec("ALTER TABLE vendoor_orders ADD COLUMN created_at_original TEXT");
+      }
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_vendoor_orders_bdate ON vendoor_orders(business_date);
+        CREATE INDEX IF NOT EXISTS idx_vendoor_orders_active ON vendoor_orders(is_active);
+      `);
     }
   } catch (e) {
     // Ignored

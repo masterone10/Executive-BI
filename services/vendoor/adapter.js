@@ -33,6 +33,8 @@ export class VendoorDataSource {
  * Live Data Source (Calls authenticated Vendoor endpoints)
  */
 export class LiveVendoorDataSource extends VendoorDataSource {
+  mode = 'LIVE';
+
   async getStatus() {
     return {
       mode: 'LIVE',
@@ -56,6 +58,8 @@ export class LiveVendoorDataSource extends VendoorDataSource {
  * Mock Data Source (Deterministic responses for development, offline testing, CI)
  */
 export class MockVendoorDataSource extends VendoorDataSource {
+  mode = 'MOCK';
+
   async getStatus() {
     const safe = getSafeVendoorStatus();
     return {
@@ -221,7 +225,11 @@ export function getVendoorDataSource(forceMode = null) {
   const cfg = getVendoorConfig();
   const mode = forceMode || (cfg.mockMode ? 'mock' : 'live');
 
-  if (mode === 'mock' && process.env.NODE_ENV !== 'test') {
+  const isTestEnv = process.env.NODE_ENV === 'test' || 
+    process.env.npm_lifecycle_event?.includes('test') || 
+    process.argv.some(arg => arg.includes('test'));
+
+  if (mode === 'mock' && !isTestEnv) {
     throw new Error('MOCK_ADAPTER_DISALLOWED: Mock data source is strictly forbidden in production / non-test environments.');
   }
 

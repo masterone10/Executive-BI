@@ -63,21 +63,22 @@ export function getUnallocatedOrdersPool(workDate, options = {}) {
   }
 
   // 3. Query candidate orders from vendoor_orders AND current_work_orders
+  // Workload rule: Only active New or Pending orders are unallocated candidates
   const vendoorCandidates = db.prepare(`
     SELECT 
       order_code, account, status, source_date as date, city, total_price
     FROM vendoor_orders
-    WHERE (source_date = ? OR source_date IS NULL OR source_date = '')
-      AND (status IS NULL OR LOWER(status) NOT IN ('cancelled', 'canceled', 'ملغي', 'الغاء', 'إلغاء', 'delivered', 'تم التسليم', 'shipped'))
+    WHERE (business_date = ? OR is_active = 1 OR source_date = ?)
+      AND (status IS NULL OR LOWER(status) NOT IN ('cancelled', 'canceled', 'ملغي', 'الغاء', 'إلغاء', 'delivered', 'تم التسليم', 'shipped', 'completed', 'مكتمل', 'processing', 'قيد التجهيز'))
     ORDER BY id ASC
-  `).all(workDate);
+  `).all(workDate, workDate);
 
   const currentWorkCandidates = db.prepare(`
     SELECT 
-      order_code, account, status, work_date as date
+      order_code, account, status, COALESCE(order_date, work_date) as date
     FROM current_work_orders
     WHERE work_date = ?
-      AND (status IS NULL OR LOWER(status) NOT IN ('cancelled', 'canceled', 'ملغي', 'الغاء', 'إلغاء', 'delivered', 'تم التسليم', 'shipped'))
+      AND (status IS NULL OR LOWER(status) NOT IN ('cancelled', 'canceled', 'ملغي', 'الغاء', 'إلغاء', 'delivered', 'تم التسليم', 'shipped', 'completed', 'مكتمل', 'processing', 'قيد التجهيز'))
     ORDER BY id ASC
   `).all(workDate);
 
@@ -126,6 +127,7 @@ export function getUnallocatedOrdersPool(workDate, options = {}) {
   const limitedPool = poolList.slice(0, effectiveLimit);
 
   return {
+    success: true,
     total_unallocated_orders: poolList.length,
     returned_orders_count: limitedPool.length,
     unique_accounts_count: accountsMap.size,

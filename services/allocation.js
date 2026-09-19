@@ -1608,22 +1608,26 @@ export function generateOrderLevelAllocation(workDate, options = {}) {
   `).all(workDate);
 
   if (orders.length === 0) {
-    // Check if vendoor_orders has records for this date or in general
+    // Check if vendoor_orders has records for this business date or active orders
     const vOrders = db.prepare(`
       SELECT order_code, account, status, source_date as order_date
       FROM vendoor_orders
-      WHERE source_date = ? OR source_date IS NULL OR source_date = ''
+      WHERE (business_date = ? OR is_active = 1 OR source_date = ?)
+        AND (status IS NULL OR LOWER(status) NOT IN ('cancelled', 'canceled', 'ملغي', 'الغاء', 'إلغاء', 'delivered', 'تم التسليم', 'shipped', 'completed', 'مكتمل', 'processing', 'قيد التجهيز'))
       ORDER BY account ASC, order_code ASC
-    `).all(workDate);
+    `).all(workDate, workDate);
 
     if (vOrders.length > 0) {
       const insertStmt = db.prepare(`
-        INSERT OR IGNORE INTO current_work_orders (work_date, order_code, account, status, order_date, source_file_slot)
-        VALUES (?, ?, ?, ?, ?, 1)
+        INSERT OR IGNORE INTO current_work_orders (work_date, order_code, account, status, order_date, source_file_slot, source_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
       db.transaction(() => {
         for (const vo of vOrders) {
-          insertStmt.run(workDate, vo.order_code, vo.account || 'Unassigned', vo.status || 'New', vo.order_date || workDate);
+          const isPending = (vo.status || '').toLowerCase().includes('pending');
+          const slot = isPending ? 2 : 1;
+          const sourceType = isPending ? 'PENDING' : 'NEW';
+          insertStmt.run(workDate, vo.order_code, vo.account || 'Unassigned', vo.status || 'New', vo.order_date || workDate, slot, sourceType);
         }
       })();
 

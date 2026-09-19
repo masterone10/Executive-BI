@@ -533,17 +533,29 @@ app.get('/api/global-context', (req, res) => {
     const date = req.query.date || new Date().toISOString().split('T')[0];
     const overview = getCurrentWorkOverview(date);
     const vendoor = getSafeVendoorStatus();
+    const poller = getAutonomousPollerStatus();
     const dispatcher = getDispatcherStatus ? getDispatcherStatus() : { is_running: false };
 
     res.json({
       work_date: date,
       vendoor: {
-        connection_state: vendoor.connection_state || 'NOT_CONFIGURED',
+        connection_state: poller.connection_state || vendoor.connection_state || 'NOT_CONFIGURED',
         session_state: vendoor.session_state || 'NOT_AUTHENTICATED',
         has_credentials: Boolean(vendoor.has_credentials),
         has_active_session: Boolean(vendoor.has_active_session),
         auth_method: vendoor.auth_method || 'AUTO_LOGIN',
-        email_preview: vendoor.email_preview || null
+        email_preview: vendoor.email_preview || null,
+        poller: {
+          is_running: poller.isRunning,
+          orders: poller.orders,
+          logs: poller.logs
+        },
+        last_orders_sync: poller.orders?.last_success_at || poller.orders?.last_run_at || null,
+        last_logs_sync: poller.logs?.last_success_at || poller.logs?.last_run_at || null,
+        orders_status: poller.orders?.status || 'IDLE',
+        logs_status: poller.logs?.status || 'IDLE',
+        orders_run_count: poller.orders?.run_count || 0,
+        logs_run_count: poller.logs?.run_count || 0
       },
       working_team_count: overview.working_team_count || 0,
       total_orders: overview.total_orders || 0,
@@ -1857,10 +1869,12 @@ app.get('/api/integrations/vendoor/history', (req, res) => {
 // -------------------------------------------------------------
 app.post('/api/integrations/vendoor/sync/orders', async (req, res) => {
   try {
-    const { fromDate, toDate, maxPages, pageSize, statusFilter, forceMode } = req.body || {};
+    const { fromDate, toDate, maxPages, pageSize, statusFilter, forceMode, businessDate, workDate, isHistoricalSync } = req.body || {};
     const result = await syncVendoorOrders({
       fromDate,
       toDate,
+      businessDate: businessDate || workDate,
+      isHistoricalSync: isHistoricalSync === true,
       maxPages,
       pageSize,
       statusFilter,
@@ -1888,14 +1902,17 @@ app.post('/api/integrations/vendoor/sync/logs', async (req, res) => {
 
 app.post('/api/integrations/vendoor/sync/all', async (req, res) => {
   try {
-    const { workDate, fromDate, toDate, forceMode } = req.body || {};
+    const { workDate, fromDate, toDate, forceMode, isHistoricalSync } = req.body || {};
     const targetDate = workDate || fromDate || new Date().toISOString().slice(0, 10);
     const targetEndDate = toDate || targetDate;
+    const isHistorical = isHistoricalSync === true;
 
-    // 1. Sync orders
+    // 1. Sync orders (status-driven active orders for targetDate business date)
     const ordersResult = await syncVendoorOrders({
-      fromDate: targetDate,
-      toDate: targetEndDate,
+      businessDate: targetDate,
+      fromDate: isHistorical ? targetDate : undefined,
+      toDate: isHistorical ? targetEndDate : undefined,
+      isHistoricalSync: isHistorical,
       forceMode
     });
 
@@ -2523,8 +2540,8 @@ if (process.env.NODE_ENV !== 'test') {
           console.warn('[AUTONOMOUS] Initial Vendoor auto-login notice:', err.message);
         });
       }
-      startAutonomousVendoorPoller({ intervalMs: 60000 });
-      console.log('[AUTONOMOUS] Background Vendoor poller initialized.');
+      startAutonomousVendoorPoller({ intervalMs: 30000, ordersIntervalMs: 30000, logsIntervalMs: 30000 });
+      console.log('[AUTONOMOUS] Decoupled 30-second background Vendoor poller initialized.');
     } catch (pollerErr) {
       console.warn('[AUTONOMOUS] Poller init warning:', pollerErr.message);
     }

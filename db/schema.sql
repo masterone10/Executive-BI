@@ -423,6 +423,28 @@ CREATE TABLE IF NOT EXISTS auto_dispatch_assignments (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS vendoor_bootstrap_state (
+  job_id TEXT PRIMARY KEY,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  current_phase TEXT NOT NULL,
+  state_status TEXT NOT NULL,
+  progress_json TEXT,
+  error_message TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- High-performance lookup & analytics indexes
+CREATE INDEX IF NOT EXISTS idx_raw_logs_lookup ON raw_log_records(work_date, order_code, employee_name, event_datetime);
+CREATE INDEX IF NOT EXISTS idx_raw_logs_workdate ON raw_log_records(work_date);
+CREATE INDEX IF NOT EXISTS idx_raw_logs_emp_date ON raw_log_records(employee_name, work_date);
+CREATE INDEX IF NOT EXISTS idx_vendoor_logs_lookup ON vendoor_logs(order_code, employee_name, timestamp_str, action);
+CREATE INDEX IF NOT EXISTS idx_vendoor_logs_workdate ON vendoor_logs(work_date);
+CREATE INDEX IF NOT EXISTS idx_vendoor_orders_date ON vendoor_orders(source_date);
+CREATE INDEX IF NOT EXISTS idx_cwo_date_code ON current_work_orders(work_date, order_code);
+CREATE INDEX IF NOT EXISTS idx_sync_runs_res_date ON vendoor_sync_runs(resource, start_date, end_date, status);
+
 CREATE TABLE IF NOT EXISTS report_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   report_type TEXT NOT NULL,

@@ -76,21 +76,37 @@ export function normalizeVendoorOrder(rawOrder) {
     'Unassigned'
   ).trim();
 
-  // Extract creation / business date
-  const rawDate = rawOrder.chipping || rawOrder.created_at || rawOrder.date || rawOrder.order_date || rawOrder.created || null;
-  let dateStr = null;
-  if (rawDate) {
+  // Extract creation / business date (preserve original creation date)
+  const rawCreatedAt = rawOrder.created_at || rawOrder.order_date || rawOrder.date || rawOrder.created || null;
+  let sourceDateStr = null;
+  if (rawCreatedAt) {
     try {
-      const d = new Date(rawDate);
+      const d = new Date(rawCreatedAt);
       if (!isNaN(d.getTime())) {
-        dateStr = d.toISOString().slice(0, 10);
-      } else if (typeof rawDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(rawDate)) {
-        dateStr = rawDate.slice(0, 10);
+        sourceDateStr = d.toISOString().slice(0, 10);
+      } else if (typeof rawCreatedAt === 'string' && /^\d{4}-\d{2}-\d{2}/.test(rawCreatedAt)) {
+        sourceDateStr = rawCreatedAt.slice(0, 10);
       }
     } catch {
-      dateStr = null;
+      sourceDateStr = null;
     }
   }
+  if (!sourceDateStr && rawOrder.chipping) {
+    try {
+      const d = new Date(rawOrder.chipping);
+      if (!isNaN(d.getTime())) {
+        sourceDateStr = d.toISOString().slice(0, 10);
+      } else if (typeof rawOrder.chipping === 'string' && /^\d{4}-\d{2}-\d{2}/.test(rawOrder.chipping)) {
+        sourceDateStr = rawOrder.chipping.slice(0, 10);
+      }
+    } catch {
+      sourceDateStr = null;
+    }
+  }
+
+  // Active status classification: Only New and Pending are active workload items
+  const cleanStatusLower = (status || '').toLowerCase();
+  const isOrderActive = ['new', 'pending', 'جديد', 'معلق'].includes(cleanStatusLower);
 
   // Extract customer and destination
   const city = String(rawOrder.governrate_name || rawOrder.city || rawOrder.governorate || rawOrder.zone || '').trim();
@@ -101,7 +117,11 @@ export function normalizeVendoorOrder(rawOrder) {
     status,
     account,
     merchant_code: merchantCode || null,
-    date: dateStr,
+    date: sourceDateStr,
+    source_date: sourceDateStr,
+    created_at: rawOrder.created_at || null,
+    created_at_original: rawOrder.created_at || null,
+    is_active: isOrderActive ? 1 : 0,
     city,
     total_price: totalPrice,
     raw_source: {

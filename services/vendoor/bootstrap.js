@@ -222,8 +222,8 @@ export async function bootstrapHistoricalTwoMonths(options = {}) {
       activeBootstrapMemory.currentPhase = 'LOGS_CHUNKS';
       console.log(`[BOOTSTRAP-2MONTHS] Processing Weekly Log Window ${i + 1}/${chunks.length} (${chunk.start} to ${chunk.end})...`);
 
-      // To guarantee zero timeouts and handle dense payloads safely, partition the week into complete contiguous sub-windows (2-day max)
-      const subWindows = partitionDateRange(chunk.start, chunk.end, 2);
+      // To guarantee zero timeouts and handle dense payloads safely, partition the week into complete contiguous single-day sub-windows
+      const subWindows = partitionDateRange(chunk.start, chunk.end, 1);
       let weekTotalFetched = 0;
       let weekTotalAccepted = 0;
       const subWindowResults = [];
@@ -233,28 +233,41 @@ export async function bootstrapHistoricalTwoMonths(options = {}) {
         const subKey = `${sub.start}->${sub.end}`;
         console.log(`[BOOTSTRAP-2MONTHS] Fetching Sub-Window ${sIdx + 1}/${subWindows.length} (${subKey}) for Weekly Window ${i + 1}...`);
 
-        let logRes;
-        try {
-          logRes = await syncVendoorLogs({
-            startDate: sub.start,
-            endDate: sub.end,
-            forceMode: effectiveMode
-          });
-        } catch (subErr) {
-          console.warn(`[BOOTSTRAP-2MONTHS] Sub-window ${subKey} failed:`, subErr.message);
-          // One safe retry
+        // Check if database already has a successful sync run with records for this exact date
+        const existingRun = db.prepare("SELECT * FROM vendoor_sync_runs WHERE resource = 'logs' AND start_date = ? AND end_date = ? AND status = 'SUCCESS' ORDER BY id DESC LIMIT 1").get(sub.start, sub.end);
+        const existingRecordsCount = db.prepare("SELECT COUNT(*) as c FROM vendoor_logs WHERE work_date = ?").get(sub.start)?.c || 0;
+        
+        if (existingRun && existingRecordsCount > 0) {
+          console.log(`[BOOTSTRAP-2MONTHS] Sub-window ${subKey} already populated in SQL DB (${existingRecordsCount} records, run ${existingRun.sync_run_id}), resuming without refetch.`);
+          weekTotalFetched += existingRun.records_fetched || existingRecordsCount;
+          weekTotalAccepted += existingRun.records_accepted || existingRecordsCount;
+          subWindowResults.push({ sub_key: subKey, start: sub.start, end: sub.end, fetched: existingRun.records_fetched || existingRecordsCount, accepted: existingRun.records_accepted || existingRecordsCount, cached: true });
+          continue;
+        }
+
+        let logRes = null;
+        let lastSubErr = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
           try {
-            await new Promise(r => setTimeout(r, 500));
             logRes = await syncVendoorLogs({
               startDate: sub.start,
               endDate: sub.end,
               forceMode: effectiveMode
             });
-          } catch (retryErr) {
-            progressObj.failed_chunks.push({ key: chunkKey, sub_key: subKey, error: retryErr.message, timestamp: new Date().toISOString() });
-            persistBootstrapState(jobId, startDate, endDate, 'LOGS_CHUNKS', 'FAILED', progressObj, retryErr.message);
-            throw new Error(`Weekly Window ${chunkKey} failed on sub-window ${subKey}: ${retryErr.message}`);
+            break;
+          } catch (subErr) {
+            lastSubErr = subErr;
+            console.warn(`[BOOTSTRAP-2MONTHS] Sub-window ${subKey} attempt ${attempt}/3 failed:`, subErr.message);
+            if (attempt < 3) {
+              await new Promise(r => setTimeout(r, attempt * 1500));
+            }
           }
+        }
+
+        if (!logRes) {
+          progressObj.failed_chunks.push({ key: chunkKey, sub_key: subKey, error: lastSubErr?.message, timestamp: new Date().toISOString() });
+          persistBootstrapState(jobId, startDate, endDate, 'LOGS_CHUNKS', 'FAILED', progressObj, lastSubErr?.message);
+          throw new Error(`Weekly Window ${chunkKey} failed on sub-window ${subKey}: ${lastSubErr?.message}`);
         }
 
         const fetched = logRes?.summary?.total_rows || logRes?.total_fetched || 0;
