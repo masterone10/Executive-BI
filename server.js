@@ -107,7 +107,9 @@ import {
   getAutonomousPollerStatus,
   getEffectiveWorkDate,
   bootstrapHistoricalTwoMonths,
-  getHistoricalBootstrapStatus
+  getHistoricalBootstrapStatus,
+  getLatestReconciliationAudit,
+  getReconciliationAuditHistory
 } from './services/vendoor/index.js';
 import {
   generateExecutiveSummaryReport,
@@ -125,6 +127,23 @@ import {
   getReportHistory,
   getReportById
 } from './services/reports.js';
+import {
+  getEmployeeLifecycleProfile,
+  getEmployeeActiveOrders,
+  analyzeDepartureImpact,
+  executeEmployeeDeparture,
+  updateEmployeeStatus,
+  getEmployeePreservedHistory,
+  getLifecycleAuditLogs,
+  getOrderReviewQueue,
+  resolveReviewQueueItem
+} from './services/employee_lifecycle.js';
+import {
+  getComprehensiveWorkingTeamStatus,
+  toggleWorkingTeamMember,
+  syncAndRestoreObservedTeam,
+  resetToObservedWorkingTeam
+} from './services/working_team_ops.js';
 
 const app = express();
 const PORT = 3000;
@@ -202,12 +221,16 @@ function normalizeEmpName(name) {
 
 app.get('/api/employees', (req, res) => {
   try {
-    const { department, active } = req.query;
-    let sql = 'SELECT id, name, department, active, team_membership, notes, created_at, updated_at FROM employees WHERE 1=1';
+    const { department, active, status } = req.query;
+    let sql = 'SELECT id, name, department, active, status, team_membership, notes, departure_date, departure_reason, created_at, updated_at FROM employees WHERE 1=1';
     const params = [];
     if (department) {
       sql += ' AND department = ?';
       params.push(department);
+    }
+    if (status) {
+      sql += ' AND UPPER(status) = ?';
+      params.push(String(status).trim().toUpperCase());
     }
     if (active !== undefined) {
       sql += ' AND active = ?';
@@ -227,7 +250,7 @@ app.get('/api/employees/:id', (req, res) => {
     if (isNaN(id) || id <= 0) {
       return res.status(400).json({ success: false, error: 'Invalid employee ID' });
     }
-    const emp = db.prepare('SELECT id, name, department, active, team_membership, notes, created_at, updated_at FROM employees WHERE id = ?').get(id);
+    const emp = getEmployeeLifecycleProfile(id);
     if (!emp) {
       return res.status(404).json({ success: false, error: 'Employee not found' });
     }
@@ -238,7 +261,7 @@ app.get('/api/employees/:id', (req, res) => {
 });
 
 app.post('/api/employees', (req, res) => {
-  const { name, department, active, team_membership, notes } = req.body || {};
+  const { name, department, active, status, team_membership, notes } = req.body || {};
   if (!name || typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ success: false, error: 'Employee name is required' });
   }
@@ -261,16 +284,21 @@ app.post('/api/employees', (req, res) => {
       activeVal = (active === 1 || active === true || active === '1' || active === 'true') ? 1 : 0;
     }
 
+    let statusVal = status ? String(status).toUpperCase() : (activeVal === 1 ? 'ACTIVE' : 'INACTIVE');
+    if (!['ACTIVE', 'INACTIVE', 'DEPARTED'].includes(statusVal)) {
+      statusVal = activeVal === 1 ? 'ACTIVE' : 'INACTIVE';
+    }
+
     let teamMem = 'Both';
     if (team_membership && ['New', 'Pending', 'Both'].includes(team_membership)) {
       teamMem = team_membership;
     }
 
     const info = db.prepare(
-      "INSERT INTO employees (name, department, active, team_membership, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))"
-    ).run(cleanName, dept, activeVal, teamMem, notes || null);
+      "INSERT INTO employees (name, department, active, status, team_membership, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))"
+    ).run(cleanName, dept, activeVal, statusVal, teamMem, notes || null);
 
-    const employee = db.prepare('SELECT * FROM employees WHERE id = ?').get(info.lastInsertRowid);
+    const employee = getEmployeeLifecycleProfile(info.lastInsertRowid);
     return res.status(201).json({
       success: true,
       employee,
@@ -278,6 +306,7 @@ app.post('/api/employees', (req, res) => {
       name: employee.name,
       department: employee.department,
       active: employee.active,
+      status: employee.status,
       team_membership: employee.team_membership,
       notes: employee.notes
     });
@@ -301,7 +330,7 @@ app.put('/api/employees/:id', (req, res) => {
       return res.status(404).json({ success: false, error: 'Employee not found' });
     }
 
-    const { name, department, active, team_membership, notes } = req.body || {};
+    const { name, department, active, status, team_membership, notes } = req.body || {};
     let updatedName = existing.name;
     if (name !== undefined) {
       if (typeof name !== 'string' || !name.trim()) {
@@ -327,6 +356,19 @@ app.put('/api/employees/:id', (req, res) => {
       updatedActive = (active === 1 || active === true || active === '1' || active === 'true') ? 1 : 0;
     }
 
+    let updatedStatus = existing.status || (updatedActive === 1 ? 'ACTIVE' : 'INACTIVE');
+    if (status !== undefined) {
+      const s = String(status).toUpperCase();
+      if (['ACTIVE', 'INACTIVE', 'DEPARTED'].includes(s)) {
+        updatedStatus = s;
+        if (s === 'DEPARTED' || s === 'INACTIVE') {
+          updatedActive = 0;
+        } else if (s === 'ACTIVE') {
+          updatedActive = 1;
+        }
+      }
+    }
+
     let updatedTeamMem = existing.team_membership || 'Both';
     if (team_membership !== undefined && ['New', 'Pending', 'Both'].includes(team_membership)) {
       updatedTeamMem = team_membership;
@@ -335,10 +377,10 @@ app.put('/api/employees/:id', (req, res) => {
     let updatedNotes = notes !== undefined ? notes : existing.notes;
 
     db.prepare(
-      "UPDATE employees SET name = ?, department = ?, active = ?, team_membership = ?, notes = ?, updated_at = datetime('now') WHERE id = ?"
-    ).run(updatedName, updatedDept, updatedActive, updatedTeamMem, updatedNotes, id);
+      "UPDATE employees SET name = ?, department = ?, active = ?, status = ?, team_membership = ?, notes = ?, updated_at = datetime('now') WHERE id = ?"
+    ).run(updatedName, updatedDept, updatedActive, updatedStatus, updatedTeamMem, updatedNotes, id);
 
-    const employee = db.prepare('SELECT * FROM employees WHERE id = ?').get(id);
+    const employee = getEmployeeLifecycleProfile(id);
     return res.json({
       success: true,
       employee,
@@ -346,6 +388,7 @@ app.put('/api/employees/:id', (req, res) => {
       name: employee.name,
       department: employee.department,
       active: employee.active,
+      status: employee.status,
       team_membership: employee.team_membership,
       notes: employee.notes
     });
@@ -369,17 +412,215 @@ app.patch('/api/employees/:id/status', (req, res) => {
       return res.status(404).json({ success: false, error: 'Employee not found' });
     }
 
-    const { active } = req.body || {};
-    const newActive = (active === 1 || active === true || active === '1' || active === 'true') ? 1 : 0;
+    const { active, status, reason, operator, workDate } = req.body || {};
+    let targetStatus = status;
+    if (!targetStatus && active !== undefined) {
+      targetStatus = (active === 1 || active === true || active === '1' || active === 'true') ? 'ACTIVE' : 'INACTIVE';
+    }
+    if (!targetStatus) {
+      return res.status(400).json({ success: false, error: 'active or status is required' });
+    }
 
-    db.prepare("UPDATE employees SET active = ?, updated_at = datetime('now') WHERE id = ?").run(newActive, id);
-    const employee = db.prepare('SELECT * FROM employees WHERE id = ?').get(id);
+    const result = updateEmployeeStatus(id, targetStatus, { reason, operator, workDate });
     return res.json({
       success: true,
-      employee,
-      id: employee.id,
-      name: employee.name,
-      active: employee.active
+      employee: result.employee,
+      id: result.employee.id,
+      name: result.employee.name,
+      active: result.employee.active,
+      status: result.employee.status
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// 2A. PRODUCTION EMPLOYEE LIFECYCLE & OPERATIONAL ENDPOINTS
+// -------------------------------------------------------------
+
+app.get('/api/employees/:id/active-orders', (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const workDate = req.query.date || req.query.work_date || new Date().toISOString().slice(0, 10);
+    const result = getEmployeeActiveOrders(id, workDate);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/employees/:id/history', (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const history = getEmployeePreservedHistory(id);
+    if (!history) {
+      return res.status(404).json({ success: false, error: 'Employee not found' });
+    }
+    res.json({ success: true, ...history });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/employees/:id/departure-impact', (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const workDate = req.query.date || req.query.work_date || new Date().toISOString().slice(0, 10);
+    const impact = analyzeDepartureImpact(id, workDate);
+    res.json({ success: true, impact });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/employees/:id/mark-departed', (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { departureDate, departureReason, reason, operator, reassignSafeOrders, workDate } = req.body || {};
+    const result = executeEmployeeDeparture(id, {
+      departureDate,
+      departureReason: departureReason || reason,
+      operator,
+      reassignSafeOrders,
+      workDate
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/lifecycle/audit', (req, res) => {
+  try {
+    const logs = getLifecycleAuditLogs({
+      employeeId: req.query.employee_id ? parseInt(req.query.employee_id, 10) : undefined,
+      limit: req.query.limit ? parseInt(req.query.limit, 10) : 100
+    });
+    res.json({ success: true, count: logs.length, logs });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/review-queue', (req, res) => {
+  try {
+    const items = getOrderReviewQueue({
+      workDate: req.query.date || req.query.work_date,
+      status: req.query.status,
+      all: req.query.all === 'true' || req.query.all === '1',
+      limit: req.query.limit ? parseInt(req.query.limit, 10) : 200
+    });
+    res.json({ success: true, count: items.length, items });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/review-queue/:id/resolve', (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { target_employee_id, notes, operator } = req.body || {};
+    if (!target_employee_id) {
+      return res.status(400).json({ success: false, error: 'target_employee_id is required' });
+    }
+    const result = resolveReviewQueueItem(id, target_employee_id, { notes, operator });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/operations/working-team/detailed', (req, res) => {
+  try {
+    const workDate = req.query.date || req.query.work_date || new Date().toISOString().slice(0, 10);
+    const result = getComprehensiveWorkingTeamStatus(workDate);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/operations/working-team/toggle', (req, res) => {
+  try {
+    const { date, employee_id, is_working } = req.body || {};
+    if (!employee_id) {
+      return res.status(400).json({ success: false, error: 'employee_id is required' });
+    }
+    const workDate = date || new Date().toISOString().slice(0, 10);
+    const result = toggleWorkingTeamMember(workDate, parseInt(employee_id, 10), is_working);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/operations/working-team/auto-restore', (req, res) => {
+  try {
+    const workDate = req.body?.date || req.query?.date || new Date().toISOString().slice(0, 10);
+    const forceReset = Boolean(req.body?.reset_manual);
+    let result;
+    if (forceReset) {
+      result = resetToObservedWorkingTeam(workDate);
+    } else {
+      result = syncAndRestoreObservedTeam(workDate);
+    }
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/vendoor/logs/live', (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const sinceId = parseInt(req.query.since_id, 10) || 0;
+    const workDate = req.query.date || req.query.work_date || new Date().toISOString().slice(0, 10);
+
+    let query = `
+      SELECT vl.id, vl.employee_name, vl.order_code, vl.action, vl.action_classification,
+             vl.is_productive, vl.timestamp_str, vl.work_date, vl.matched_employee_id,
+             e.name as matched_employee_name, e.department,
+             cwo.account, cwo.status as order_status
+      FROM vendoor_logs vl
+      LEFT JOIN employees e ON e.id = vl.matched_employee_id
+      LEFT JOIN current_work_orders cwo ON cwo.work_date = vl.work_date AND cwo.order_code = vl.order_code
+      WHERE vl.work_date = ?
+    `;
+    const params = [workDate];
+
+    if (sinceId > 0) {
+      query += ' AND vl.id > ? ';
+      params.push(sinceId);
+    }
+
+    if (req.query.employee_id) {
+      const empId = parseInt(req.query.employee_id, 10);
+      const empRow = db.prepare('SELECT name FROM employees WHERE id = ?').get(empId);
+      query += ' AND (vl.matched_employee_id = ? OR LOWER(vl.employee_name) = LOWER(?)) ';
+      params.push(empId, empRow ? empRow.name : '');
+    }
+
+    query += ' ORDER BY vl.timestamp_str DESC, vl.id DESC LIMIT ? ';
+    params.push(limit);
+
+    const logs = db.prepare(query).all(...params);
+
+    const stats = db.prepare(`
+      SELECT COUNT(*) as total_logs,
+             COUNT(DISTINCT employee_name) as distinct_employees,
+             COUNT(DISTINCT order_code) as distinct_orders,
+             MAX(timestamp_str) as latest_timestamp
+      FROM vendoor_logs
+      WHERE work_date = ?
+    `).get(workDate);
+
+    res.json({
+      success: true,
+      work_date: workDate,
+      count: logs.length,
+      stats: stats || {},
+      logs
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -536,6 +777,29 @@ app.get('/api/global-context', (req, res) => {
     const poller = getAutonomousPollerStatus();
     const dispatcher = getDispatcherStatus ? getDispatcherStatus() : { is_running: false };
 
+    const now = Date.now();
+    const ordersLastSuccess = poller.orders?.last_success_at ? new Date(poller.orders.last_success_at).getTime() : null;
+    const ordersSecAgo = ordersLastSuccess !== null ? Math.max(0, Math.floor((now - ordersLastSuccess) / 1000)) : null;
+    let ordersSyncState = 'NORMAL';
+    if (ordersSecAgo === null) {
+      ordersSyncState = 'UNKNOWN';
+    } else if ((poller.orders?.consecutive_errors || 0) >= 3 || ordersSecAgo >= 300) {
+      ordersSyncState = 'CRITICAL';
+    } else if (ordersSecAgo >= 90) {
+      ordersSyncState = 'STALE';
+    }
+
+    const logsLastSuccess = poller.logs?.last_success_at ? new Date(poller.logs.last_success_at).getTime() : null;
+    const logsSecAgo = logsLastSuccess !== null ? Math.max(0, Math.floor((now - logsLastSuccess) / 1000)) : null;
+    let logsSyncState = 'NORMAL';
+    if (logsSecAgo === null) {
+      logsSyncState = 'UNKNOWN';
+    } else if ((poller.logs?.consecutive_errors || 0) >= 3 || logsSecAgo >= 300) {
+      logsSyncState = 'CRITICAL';
+    } else if (logsSecAgo >= 90) {
+      logsSyncState = 'STALE';
+    }
+
     res.json({
       work_date: date,
       vendoor: {
@@ -555,7 +819,23 @@ app.get('/api/global-context', (req, res) => {
         orders_status: poller.orders?.status || 'IDLE',
         logs_status: poller.logs?.status || 'IDLE',
         orders_run_count: poller.orders?.run_count || 0,
-        logs_run_count: poller.logs?.run_count || 0
+        logs_run_count: poller.logs?.run_count || 0,
+        sync_indicators: {
+          orders: {
+            last_success_at: poller.orders?.last_success_at || null,
+            seconds_ago: ordersSecAgo,
+            state: ordersSyncState,
+            status: poller.orders?.status || 'IDLE',
+            consecutive_errors: poller.orders?.consecutive_errors || 0
+          },
+          logs: {
+            last_success_at: poller.logs?.last_success_at || null,
+            seconds_ago: logsSecAgo,
+            state: logsSyncState,
+            status: poller.logs?.status || 'IDLE',
+            consecutive_errors: poller.logs?.consecutive_errors || 0
+          }
+        }
       },
       working_team_count: overview.working_team_count || 0,
       total_orders: overview.total_orders || 0,
@@ -575,6 +855,71 @@ app.get('/api/global-context', (req, res) => {
     console.error('Error in /api/global-context:', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// GET /api/integrations/vendoor/reconciliation/latest (Live Reconciliation Diagnostic Panel - Enhancement 5)
+app.get(['/api/integrations/vendoor/reconciliation/latest', '/api/vendoor/reconciliation/latest', '/api/reconciliation/live'], (req, res) => {
+  const date = req.query.date || new Date().toISOString().slice(0, 10);
+  try {
+    const data = getLatestReconciliationAudit(date);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/integrations/vendoor/reconciliation/audit (Historical Audit Logs - Enhancement 4)
+app.get(['/api/integrations/vendoor/reconciliation/audit', '/api/vendoor/reconciliation/audit'], (req, res) => {
+  const limit = parseInt(req.query.limit || '50', 10);
+  try {
+    const data = getReconciliationAuditHistory(limit);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/system/trace/data-flow (Data Flow Walkthrough & Traceability - Enhancement 7)
+app.get('/api/system/trace/data-flow', (req, res) => {
+  res.json({
+    step_1_table: "current_work_orders (SQLite table storing current active work pool)",
+    step_2_backend_service: "getCurrentWorkOverview(workDate) & getAccountsDirectory(workDate) in services/tracking.js",
+    step_3_endpoint: "GET /api/global-context?date=YYYY-MM-DD in server.js",
+    step_4_frontend_fetch: "updateGlobalContextBar() & loadInitialData() in public/index.html / template.html",
+    step_5_state_update: "Updates DOM elements (gctxOrdersCount, gctxTeamCount, gctxOrdersSyncStatus, etc.)",
+    step_6_header_components: "Header UI Global Context Bar & navigation pills",
+    step_7_soft_refresh: "Autonomous 30s background poller fetches /api/global-context without triggering window.location.reload()",
+    step_8_date_preservation: "currentWorkDate JS variable persists across soft-refresh cycles",
+    step_9_stale_response_protection: "If response.work_date !== currentWorkDate, async payload is safely dropped to prevent overwriting active UI date state."
+  });
+});
+
+// GET /api/system/trace/error-handling (Vendoor Sync Error Handling Observability - Enhancement 8)
+app.get('/api/system/trace/error-handling', (req, res) => {
+  res.json({
+    step_1_request_failure: "Network or HTTP error during Vendoor API call in services/vendoor/client.js",
+    step_2_retry_decision: "Catch block triggers bounded exponential backoff retry pass",
+    step_3_backoff: "Waits 1000ms, 2000ms, 4000ms before retrying transient errors",
+    step_4_reauthentication: "If 401/419 or session expired is returned, invokes ensureAuthenticatedSession() in services/vendoor/auth.js to re-login",
+    step_5_retry: "Retries request with newly acquired Vendoor session cookie/token",
+    step_6_final_failure: "If max retries reached, records status = 'FAILED' in vendoor_sync_runs and updates pollerState.orders.lastError",
+    step_7_stale_data_protection: "Existing current_work_orders and vendoor_orders tables are NOT deleted or cleared on failure",
+    step_8_ui_source_health: "Global context connection state transitions to ERROR or RECONNECTING while preserving last-known-good active counts without displaying fake zeros or false CONNECTED state."
+  });
+});
+
+// GET /api/system/trace/order-identity (Canonical Order Identity & Idempotency - Enhancement 9)
+app.get('/api/system/trace/order-identity', (req, res) => {
+  res.json({
+    step_1_real_order: "Raw order object received from Vendoor /dashboard/orders API",
+    step_2_normalization: "normalizeOrder() in services/vendoor/normalize.js trims whitespace, standardizes casing, and extracts order_code",
+    step_3_canonical_identifier: "order_code (e.g. 'lz9878') is the single canonical identifier. Database id is internal autoincrement PK. merchant_code is stored separately.",
+    step_4_pagination_dedup: "activeOrderCodes Set prevents duplicates across pages during 300-item page retrieval",
+    step_5_db_upsert: "vendoor_orders table uses ON CONFLICT(order_code) DO UPDATE SET to update status/account without creating duplicate rows",
+    step_6_current_work_orders: "current_work_orders enforces UNIQUE(work_date, order_code) via ON CONFLICT(work_date, order_code) DO UPDATE SET status = excluded.status",
+    step_7_cycle_idempotency: "30-second polling cycles execute idempotent ON CONFLICT upserts, maintaining exact 1:1 parity without duplicating records regardless of sync_run_id",
+    step_8_history_preservation: "When an order transitions to a non-active status (Processing/Shipped/Cancelled), it is pruned from current_work_orders for today but remains permanently recorded in vendoor_orders with is_active = 0."
+  });
 });
 
 app.get('/api/work/current', (req, res) => {
@@ -1391,17 +1736,54 @@ app.get(['/api/accounts/details/:date/:account', '/api/accounts-details/:date/:a
   }
 });
 
-// GET /api/accounts/export/:date/:account (Account 4-Sheet Excel Workbook Export)
+// GET /api/accounts/export/:date/:account (Account Detailed Audit Export: XLSX / CSV)
 app.get(['/api/accounts/export/:date/:account', '/api/accounts-export/:date/:account'], (req, res) => {
   const { date, account } = req.params;
+  const format = String(req.query.format || 'xlsx').toLowerCase();
   try {
     const accountData = getAccountDetailedData(date, account);
-    const wb = createAccountWorkbook(accountData);
-    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     const safeName = (account || 'Account').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '_');
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="Account_${safeName}_${date}.xlsx"`);
-    return res.send(buffer);
+
+    if (format === 'csv') {
+      let csvContent = `Business Date,Selected Account\n"${date}","${account.replace(/"/g, '""')}"\n\n`;
+      csvContent += `=== SHEET 1: RECONCILIATION SUMMARY ===\nMetric,Value\n`;
+      csvContent += `"Total Orders in Pool",${accountData.total_orders || 0}\n`;
+      csvContent += `"New Orders",${accountData.new_orders || 0}\n`;
+      csvContent += `"Pending Orders",${accountData.pending_orders || 0}\n`;
+      csvContent += `"Conflict Orders",${accountData.conflict_orders || 0}\n`;
+      csvContent += `"Unique Orders Worked",${accountData.unique_orders_worked || 0}\n`;
+      csvContent += `"Real Actions",${accountData.real_actions || 0}\n`;
+      csvContent += `"Reconciliation Gap",${(accountData.total_orders || 0) - (accountData.unique_orders_worked || 0)}\n\n`;
+
+      csvContent += `=== SHEET 2: ASSIGNED EMPLOYEES ===\nEmployee Name,Is Assigned\n`;
+      (accountData.assigned_employees || []).forEach(emp => {
+        csvContent += `"${emp.replace(/"/g, '""')}",YES\n`;
+      });
+
+      csvContent += `\n=== SHEET 3: WORKED EMPLOYEES & ACTIONS ===\nEmployee Name,Is Assigned,Orders Worked,Real Actions\n`;
+      (accountData.worked_employees || []).forEach(emp => {
+        const empName = typeof emp === 'string' ? emp : (emp.employee_name || 'Unknown');
+        const isAssigned = typeof emp === 'object' ? emp.is_assigned : true;
+        const workedCount = typeof emp === 'object' ? (emp.orders_worked || 0) : 0;
+        const actionsCount = typeof emp === 'object' ? (emp.real_actions || 0) : 0;
+        csvContent += `"${empName.replace(/"/g, '""')}","${isAssigned ? 'YES' : 'NO (Outside)'}",${workedCount},${actionsCount}\n`;
+      });
+
+      csvContent += `\n=== SHEET 4: ORDERS LIST & RECONCILIATION DETAILS ===\nOrder Code,Status,Order Date,Assigned Employee,Worked By,Reconciliation State\n`;
+      (accountData.orders || []).forEach(ord => {
+        csvContent += `"${(ord.order_code || '').replace(/"/g, '""')}","${(ord.status || '').replace(/"/g, '""')}","${(ord.order_date || '').replace(/"/g, '""')}","${(ord.assigned_employee || '').replace(/"/g, '""')}","${(ord.worked_by || '').replace(/"/g, '""')}","${(ord.reconciliation_state || 'NORMAL').replace(/"/g, '""')}"\n`;
+      });
+
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="Account_${safeName}_${date}.csv"`);
+      return res.send(csvContent);
+    } else {
+      const wb = createAccountWorkbook(accountData);
+      const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="Account_${safeName}_${date}.xlsx"`);
+      return res.send(buffer);
+    }
   } catch (err) {
     console.error('Export account workbook error:', err);
     res.status(500).json({ error: err.message });

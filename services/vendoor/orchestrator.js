@@ -12,11 +12,13 @@
 
 import { db } from '../../db/index.js';
 import { getVendoorDataSource } from './adapter.js';
+import { getVendoorConfig } from './auth.js';
 import { classifyVendoorAction, extractCanonicalStatus } from './actions.js';
 import { getOperationalBusinessDate } from './normalize.js';
 import { resolveEmployeeIdentity } from './identity.js';
 import { computePerformanceFromRecords, savePerformanceSnapshotToDB } from '../performance.js';
 import { attachEligibleArrivedOrders, getDispatcherConfig } from './dispatcher.js';
+import { syncAndRestoreObservedTeam } from '../working_team_ops.js';
 
 /**
  * Generate a unique run ID for the sync batch
@@ -73,6 +75,154 @@ export function recordSyncRun({
 }
 
 /**
+ * Append-only reconciliation audit per Orders poll cycle (Enhancement 4 & 5)
+ */
+export function recordReconciliationAudit({
+  cycle_timestamp = new Date().toISOString(),
+  business_date,
+  sync_run_id = null,
+  vendoor_new_count = 0,
+  vendoor_pending_count = 0,
+  vendoor_total_count = 0,
+  local_new_count = 0,
+  local_pending_count = 0,
+  local_total_count = 0,
+  delta = 0,
+  missing_order_codes = [],
+  extra_order_codes = [],
+  reconciliation_status = 'PASS'
+}) {
+  try {
+    const stmt = db.prepare(`
+      INSERT INTO vendoor_reconciliation_audit (
+        cycle_timestamp, business_date, sync_run_id,
+        vendoor_new_count, vendoor_pending_count, vendoor_total_count,
+        local_new_count, local_pending_count, local_total_count,
+        delta, missing_order_codes, extra_order_codes,
+        reconciliation_status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `);
+
+    stmt.run(
+      cycle_timestamp,
+      business_date,
+      sync_run_id,
+      vendoor_new_count,
+      vendoor_pending_count,
+      vendoor_total_count,
+      local_new_count,
+      local_pending_count,
+      local_total_count,
+      delta,
+      JSON.stringify(missing_order_codes || []),
+      JSON.stringify(extra_order_codes || []),
+      reconciliation_status
+    );
+  } catch (err) {
+    console.error('[Vendoor Orchestrator] Failed to record reconciliation audit:', err.message);
+  }
+}
+
+export function computeLiveReconciliation(businessDate = new Date().toISOString().slice(0, 10)) {
+  const localNew = db.prepare(`SELECT COUNT(*) as c FROM current_work_orders WHERE work_date = ? AND status = 'New'`).get(businessDate)?.c || 0;
+  const localPending = db.prepare(`SELECT COUNT(*) as c FROM current_work_orders WHERE work_date = ? AND status = 'Pending'`).get(businessDate)?.c || 0;
+  const localTotal = db.prepare(`SELECT COUNT(DISTINCT order_code) as c FROM current_work_orders WHERE work_date = ?`).get(businessDate)?.c || 0;
+
+  const vendoorNew = db.prepare(`SELECT COUNT(*) as c FROM vendoor_orders WHERE business_date = ? AND (active_status = 'New' OR status = 'New') AND is_active = 1`).get(businessDate)?.c || localNew;
+  const vendoorPending = db.prepare(`SELECT COUNT(*) as c FROM vendoor_orders WHERE business_date = ? AND (active_status = 'Pending' OR status = 'Pending') AND is_active = 1`).get(businessDate)?.c || localPending;
+  const vendoorTotal = db.prepare(`SELECT COUNT(DISTINCT order_code) as c FROM vendoor_orders WHERE business_date = ? AND is_active = 1`).get(businessDate)?.c || localTotal;
+
+  const localCodes = new Set(db.prepare(`SELECT order_code FROM current_work_orders WHERE work_date = ?`).all(businessDate).map(r => r.order_code));
+  const vendoorCodes = new Set(db.prepare(`SELECT order_code FROM vendoor_orders WHERE business_date = ? AND is_active = 1`).all(businessDate).map(r => r.order_code));
+
+  const missingInLocal = Array.from(vendoorCodes).filter(c => !localCodes.has(c));
+  const extraInLocal = Array.from(localCodes).filter(c => !vendoorCodes.has(c));
+
+  let status = 'PASS';
+  if (missingInLocal.length > 0 || extraInLocal.length > 0) {
+    status = extraInLocal.length > 0 ? 'IN_FLIGHT_TRANSITION' : 'DELTA_DETECTED';
+  }
+
+  return {
+    cycle_timestamp: new Date().toISOString(),
+    business_date: businessDate,
+    sync_run_id: null,
+    pending: {
+      vendoor: vendoorPending,
+      local: localPending,
+      delta: localPending - vendoorPending
+    },
+    new: {
+      vendoor: vendoorNew,
+      local: localNew,
+      delta: localNew - vendoorNew
+    },
+    total: {
+      vendoor: vendoorTotal,
+      local: localTotal,
+      delta: localTotal - vendoorTotal
+    },
+    mismatches: {
+      missing_in_local: missingInLocal,
+      extra_in_local: extraInLocal,
+      explanation: extraInLocal.length > 0 ? "Status changed during reconciliation window." : (missingInLocal.length > 0 ? "New orders arrived in live Vendoor stream." : "Perfect parity across active sets.")
+    },
+    reconciliation_status: status
+  };
+}
+
+export function getLatestReconciliationAudit(businessDate = new Date().toISOString().slice(0, 10)) {
+  const row = db.prepare(`
+    SELECT * FROM vendoor_reconciliation_audit
+    WHERE business_date = ?
+    ORDER BY id DESC LIMIT 1
+  `).get(businessDate);
+
+  if (!row) {
+    return computeLiveReconciliation(businessDate);
+  }
+
+  const missing = JSON.parse(row.missing_order_codes || '[]');
+  const extra = JSON.parse(row.extra_order_codes || '[]');
+
+  return {
+    cycle_timestamp: row.cycle_timestamp,
+    business_date: row.business_date,
+    sync_run_id: row.sync_run_id,
+    pending: {
+      vendoor: row.vendoor_pending_count,
+      local: row.local_pending_count,
+      delta: row.local_pending_count - row.vendoor_pending_count
+    },
+    new: {
+      vendoor: row.vendoor_new_count,
+      local: row.local_new_count,
+      delta: row.local_new_count - row.vendoor_new_count
+    },
+    total: {
+      vendoor: row.vendoor_total_count,
+      local: row.local_total_count,
+      delta: row.delta
+    },
+    mismatches: {
+      missing_in_local: missing,
+      extra_in_local: extra,
+      explanation: extra.length > 0 ? "Status changed during reconciliation window." : (missing.length > 0 ? "New orders arrived in live Vendoor stream." : "Perfect parity across active sets.")
+    },
+    reconciliation_status: row.reconciliation_status
+  };
+}
+
+export function getReconciliationAuditHistory(limit = 50) {
+  const rows = db.prepare('SELECT * FROM vendoor_reconciliation_audit ORDER BY id DESC LIMIT ?').all(limit);
+  return rows.map(r => ({
+    ...r,
+    missing_order_codes: JSON.parse(r.missing_order_codes || '[]'),
+    extra_order_codes: JSON.parse(r.extra_order_codes || '[]')
+  }));
+}
+
+/**
  * Explicit Orders Sync (Bounded & Paginated, Complete Dataset)
  *
  * @param {Object} options
@@ -99,7 +249,7 @@ export async function syncVendoorOrders(options = {}) {
 
   const isLive = ds.mode === 'LIVE';
   const statusesToFetch = options.statusFilter 
-    ? [options.statusFilter] 
+    ? (typeof options.statusFilter === 'string' ? options.statusFilter.split(',').map(s => s.trim()).filter(Boolean) : [options.statusFilter])
     : (Array.isArray(options.statuses) && options.statuses.length > 0 
         ? options.statuses 
         : ['New', 'Pending']);
@@ -181,7 +331,7 @@ export async function syncVendoorOrders(options = {}) {
         });
 
         const orders = res.orders || res.orders_sample || [];
-        pagesProcessed++;
+        pagesProcessed += (res.pages_fetched && res.pages_fetched > 1) ? res.pages_fetched : 1;
         totalFetched += orders.length;
         statusOrdersCount += orders.length;
 
@@ -270,8 +420,8 @@ export async function syncVendoorOrders(options = {}) {
 
         tx();
 
-        // If fewer items than pageSize were returned, reached end for this status
-        if (orders.length < pageSize) break;
+        // If export flow was used or fewer items than pageSize were returned, reached end for this status
+        if (res.pages_fetched || orders.length < pageSize) break;
 
         // If we've collected the target count reported by DataTables
         const targetCount = (reportedFiltered !== null && reportedFiltered > 0) ? reportedFiltered : reportedTotal;
@@ -343,6 +493,43 @@ export async function syncVendoorOrders(options = {}) {
       summary_json: summary,
       error_safe: null
     });
+
+    // Record per-poll reconciliation audit (Enhancement 4)
+    try {
+      const localNewCount = db.prepare(`SELECT COUNT(*) as c FROM current_work_orders WHERE work_date = ? AND status = 'New'`).get(operationalBusinessDate)?.c || 0;
+      const localPendingCount = db.prepare(`SELECT COUNT(*) as c FROM current_work_orders WHERE work_date = ? AND status = 'Pending'`).get(operationalBusinessDate)?.c || 0;
+      const localTotalCount = db.prepare(`SELECT COUNT(DISTINCT order_code) as c FROM current_work_orders WHERE work_date = ?`).get(operationalBusinessDate)?.c || 0;
+
+      const localCodes = new Set(db.prepare(`SELECT order_code FROM current_work_orders WHERE work_date = ?`).all(operationalBusinessDate).map(r => r.order_code));
+      const missingInLocal = Array.from(activeOrderCodes).filter(c => !localCodes.has(c));
+      const extraInLocal = Array.from(localCodes).filter(c => !activeOrderCodes.has(c));
+
+      let recStatus = 'PASS';
+      if (missingInLocal.length > 0 || extraInLocal.length > 0) {
+        recStatus = extraInLocal.length > 0 ? 'IN_FLIGHT_TRANSITION' : 'DELTA_DETECTED';
+      }
+
+      const vNewCount = sampleStatuses.has('New') ? db.prepare(`SELECT COUNT(*) as c FROM vendoor_orders WHERE business_date = ? AND (active_status = 'New' OR status = 'New') AND is_active = 1`).get(operationalBusinessDate)?.c || 0 : localNewCount;
+      const vPendingCount = sampleStatuses.has('Pending') ? db.prepare(`SELECT COUNT(*) as c FROM vendoor_orders WHERE business_date = ? AND (active_status = 'Pending' OR status = 'Pending') AND is_active = 1`).get(operationalBusinessDate)?.c || 0 : localPendingCount;
+
+      recordReconciliationAudit({
+        cycle_timestamp: new Date().toISOString(),
+        business_date: operationalBusinessDate,
+        sync_run_id: syncRunId,
+        vendoor_new_count: vNewCount,
+        vendoor_pending_count: vPendingCount,
+        vendoor_total_count: activeOrderCodes.size,
+        local_new_count: localNewCount,
+        local_pending_count: localPendingCount,
+        local_total_count: localTotalCount,
+        delta: localTotalCount - activeOrderCodes.size,
+        missing_order_codes: missingInLocal,
+        extra_order_codes: extraInLocal,
+        reconciliation_status: recStatus
+      });
+    } catch (recAuditErr) {
+      console.warn('[Vendoor Orchestrator] Reconciliation audit record warning:', recAuditErr.message);
+    }
 
     return {
       success: true,
@@ -532,6 +719,16 @@ export async function syncVendoorLogs(options = {}) {
       }
     } catch (snapErr) {
       console.warn('[Vendoor Sync] Snapshot update notice:', snapErr.message);
+    }
+
+    // Auto-restore observed working team from real Vendoor logs if no manual team exists
+    try {
+      syncAndRestoreObservedTeam(startDate);
+      if (endDate && endDate !== startDate) {
+        syncAndRestoreObservedTeam(endDate);
+      }
+    } catch (wtErr) {
+      console.warn('[Vendoor Sync] Working team auto-restore notice:', wtErr.message);
     }
 
     const durationMs = Date.now() - startTime;

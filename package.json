@@ -1,14 +1,13 @@
 {
   "name": "cs-performance-dashboard",
   "version": "1.0.0",
-  "description": "CS Executive Performance Dashboard",
   "type": "module",
   "scripts": {
-    "dev": "node server.js",
     "build": "node build.js",
-    "start": "node server.js",
+    "dev": "node server.js",
     "lint": "node -c server.js analyze.js build.js export_excel.js services/*.js services/vendoor/*.js db/index.js tests/*.js",
-    "test": "NODE_ENV=test node tests/regression.test.js && NODE_ENV=test node tests/final_pass.test.js && NODE_ENV=test node tests/comprehensive_spec.test.js && NODE_ENV=test node tests/e2e_full_audit.test.js && NODE_ENV=test node --test tests/fragmentation_minimization.test.js && NODE_ENV=test node --test tests/simplified_navigation.test.js && NODE_ENV=test node --test tests/dynamic_batch_ui.test.js && NODE_ENV=test node --test tests/account_centric_allocation.test.js && NODE_ENV=test node --test tests/account_stream_eligibility.test.js && NODE_ENV=test node --test tests/audit_invariants_proof.test.js && NODE_ENV=test node --test tests/forensic_verification.test.js && NODE_ENV=test node --test tests/smart_allocation_engine.test.js && NODE_ENV=test node --test tests/forensic_allocation_integration.test.js && NODE_ENV=test node --test tests/vendoor_auth_forensic.test.js && NODE_ENV=test node --test tests/vendoor_phase1_integration.test.js && NODE_ENV=test node --test tests/vendoor_phase2_integration.test.js && NODE_ENV=test node --test tests/vendoor_phase3_integration.test.js && NODE_ENV=test node --test tests/reports_integration.test.js && NODE_ENV=test node --test tests/master_simulations.test.js && NODE_ENV=test node --test tests/execution_contract_lifecycle.test.js && NODE_ENV=test node --test tests/targeted_pagination_and_consistency.test.js && NODE_ENV=test node --test tests/dashboard_contract_cancelled_regression.test.js && NODE_ENV=test node --test tests/vendoor_status_driven_orders.test.js"
+    "start": "node server.js",
+    "test": "NODE_ENV=test node tests/regression.test.js \u0026\u0026 NODE_ENV=test node tests/final_pass.test.js \u0026\u0026 NODE_ENV=test node tests/comprehensive_spec.test.js \u0026\u0026 NODE_ENV=test node tests/e2e_full_audit.test.js \u0026\u0026 NODE_ENV=test node --test tests/fragmentation_minimization.test.js \u0026\u0026 NODE_ENV=test node --test tests/simplified_navigation.test.js \u0026\u0026 NODE_ENV=test node --test tests/dynamic_batch_ui.test.js \u0026\u0026 NODE_ENV=test node --test tests/account_centric_allocation.test.js \u0026\u0026 NODE_ENV=test node --test tests/account_stream_eligibility.test.js \u0026\u0026 NODE_ENV=test node --test tests/audit_invariants_proof.test.js \u0026\u0026 NODE_ENV=test node --test tests/forensic_verification.test.js \u0026\u0026 NODE_ENV=test node --test tests/smart_allocation_engine.test.js \u0026\u0026 NODE_ENV=test node --test tests/forensic_allocation_integration.test.js \u0026\u0026 NODE_ENV=test node --test tests/vendoor_auth_forensic.test.js \u0026\u0026 NODE_ENV=test node --test tests/vendoor_phase1_integration.test.js \u0026\u0026 NODE_ENV=test node --test tests/vendoor_phase2_integration.test.js \u0026\u0026 NODE_ENV=test node --test tests/vendoor_phase3_integration.test.js \u0026\u0026 NODE_ENV=test node --test tests/reports_integration.test.js \u0026\u0026 NODE_ENV=test node --test tests/master_simulations.test.js \u0026\u0026 NODE_ENV=test node --test tests/execution_contract_lifecycle.test.js \u0026\u0026 NODE_ENV=test node --test tests/targeted_pagination_and_consistency.test.js \u0026\u0026 NODE_ENV=test node --test tests/dashboard_contract_cancelled_regression.test.js \u0026\u0026 NODE_ENV=test node --test tests/vendoor_status_driven_orders.test.js"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
@@ -16,5 +15,6 @@
     "jszip": "^3.10.2",
     "multer": "^2.3.0",
     "xlsx": "^0.18.5"
-  }
+  },
+  "devDependencies": null
 }

@@ -8,6 +8,7 @@
  */
 
 import { fetchVendoorOrdersPage, fetchAllVendoorOrders } from './orders.js';
+import { exportAndParseVendoorOrders, mapStatusToCategoryId } from './export_sync.js';
 import { fetchVendoorLogsRange, isValidISODate } from './logs.js';
 import { getVendoorConfig, getSafeVendoorStatus } from './auth.js';
 import { summarizeNormalizedLogs } from './normalize.js';
@@ -43,6 +44,39 @@ export class LiveVendoorDataSource extends VendoorDataSource {
   }
 
   async fetchOrders(options = {}) {
+    // When export mode is requested or for full dataset sync with real merchant names
+    if (options.useExport !== false && (options.fetchAll || options.useExport === true || !options.start)) {
+      try {
+        const catId = mapStatusToCategoryId(options.statusFilter);
+        const exportRes = await exportAndParseVendoorOrders(catId, options);
+        return {
+          success: true,
+          resource: 'orders',
+          pages_fetched: exportRes.pagesFetched,
+          total_records: exportRes.uniqueOrdersCount,
+          total_orders: exportRes.uniqueOrdersCount,
+          reported_total: exportRes.reportedTotal,
+          reported_filtered: exportRes.reportedFiltered,
+          exported_rows_count: exportRes.exportedRowsCount,
+          duplicate_rows_count: exportRes.duplicateRowsCount,
+          pagination: {
+            start: 0,
+            length: exportRes.uniqueOrdersCount,
+            records_total: exportRes.reportedTotal,
+            records_filtered: exportRes.reportedFiltered
+          },
+          summary: {
+            received_orders_count: exportRes.uniqueOrdersCount,
+            unique_accounts_count: new Set(exportRes.orders.map(o => o.account)).size
+          },
+          orders: exportRes.orders,
+          orders_sample: exportRes.orders.slice(0, 10)
+        };
+      } catch (err) {
+        console.warn('[LiveVendoorDataSource] Export flow warning, falling back to paginated orders:', err.message);
+      }
+    }
+
     if (options.fetchAll) {
       return await fetchAllVendoorOrders(options);
     }

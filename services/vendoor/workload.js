@@ -106,9 +106,9 @@ export function getEmployeeWorkloadAndRefillStates(workDate, options = {}) {
 
   // 5. Fetch all active employees from Master
   const masterEmployees = db.prepare(`
-    SELECT id, name, department, team_membership, active
+    SELECT id, name, department, team_membership, active, status
     FROM employees
-    WHERE active = 1
+    WHERE active = 1 AND (status = 'ACTIVE' OR status IS NULL)
     ORDER BY name ASC
   `).all();
 
@@ -150,9 +150,15 @@ export function getEmployeeWorkloadAndRefillStates(workDate, options = {}) {
     let refillReason = '';
     let isEligible = false;
 
+    const isCS = String(emp.department || '').trim().toUpperCase() === 'CS';
+
     if (!isWorking) {
       refillState = REFILL_STATES.NOT_WORKING;
       refillReason = 'Employee is not active in today\'s Working Team';
+    } else if (!isCS) {
+      refillState = REFILL_STATES.NOT_WORKING;
+      refillReason = `Employee department is "${emp.department}". CS Work Allocation requires CS department only`;
+      isEligible = false;
     } else if (prod && prod.confidence === 'LOW' && prod.unique_orders_worked === 0 && !prod.is_measured_capacity && wtEntry?.notes?.includes('BLOCKED')) {
       refillState = REFILL_STATES.NEEDS_REVIEW;
       refillReason = 'Account/Supervisor block active or unverified identity';

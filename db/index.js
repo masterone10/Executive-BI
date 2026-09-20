@@ -30,7 +30,7 @@ export function cleanupMockContamination(database = db) {
 // Safe migrations function for existing and new databases
 export function runMigrations(database = db) {
   cleanupMockContamination(database);
-  // Safe table migration: Ensure team_membership & notes exist in employees
+  // Safe table migration: Ensure team_membership, status & notes exist in employees
   try {
     const cols = database.prepare("PRAGMA table_info(employees)").all();
     if (cols.length > 0) {
@@ -42,9 +42,82 @@ export function runMigrations(database = db) {
       if (!cols.some(c => c.name === 'notes')) {
         database.exec("ALTER TABLE employees ADD COLUMN notes TEXT");
       }
+      if (!cols.some(c => c.name === 'status')) {
+        database.exec("ALTER TABLE employees ADD COLUMN status TEXT NOT NULL DEFAULT 'ACTIVE'");
+        database.exec("UPDATE employees SET status = CASE WHEN active = 1 THEN 'ACTIVE' ELSE 'INACTIVE' END WHERE status IS NULL OR status = ''");
+        console.log('✓ Successfully migrated employees: added status column');
+      }
+      if (!cols.some(c => c.name === 'effective_from')) {
+        database.exec("ALTER TABLE employees ADD COLUMN effective_from TEXT");
+      }
+      if (!cols.some(c => c.name === 'effective_to')) {
+        database.exec("ALTER TABLE employees ADD COLUMN effective_to TEXT");
+      }
+      if (!cols.some(c => c.name === 'departure_date')) {
+        database.exec("ALTER TABLE employees ADD COLUMN departure_date TEXT");
+      }
+      if (!cols.some(c => c.name === 'departure_reason')) {
+        database.exec("ALTER TABLE employees ADD COLUMN departure_reason TEXT");
+      }
     }
   } catch (e) {
-    console.warn('Migration check for employees team_membership:', e.message);
+    console.warn('Migration check for employees team_membership & lifecycle columns:', e.message);
+  }
+
+  // Safe table migration: Ensure employee_lifecycle_audit and order_review_queue exist
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS employee_lifecycle_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_id INTEGER NOT NULL REFERENCES employees(id),
+        employee_name TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        previous_status TEXT,
+        new_status TEXT NOT NULL,
+        effective_date TEXT NOT NULL,
+        operator TEXT DEFAULT 'Supervisor',
+        reason TEXT,
+        impact_summary_json TEXT,
+        affected_orders_count INTEGER DEFAULT 0,
+        reassigned_orders_count INTEGER DEFAULT 0,
+        uncertain_orders_count INTEGER DEFAULT 0,
+        reassignments_json TEXT,
+        review_items_json TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_lifecycle_emp ON employee_lifecycle_audit(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_lifecycle_date ON employee_lifecycle_audit(effective_date);
+
+      CREATE TABLE IF NOT EXISTS order_review_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        work_date TEXT NOT NULL,
+        order_code TEXT NOT NULL,
+        account TEXT,
+        merchant_code TEXT,
+        current_status TEXT,
+        previous_employee_id INTEGER,
+        previous_employee_name TEXT,
+        reason_code TEXT NOT NULL,
+        reason_detail TEXT,
+        suggested_employee_id INTEGER,
+        suggested_employee_name TEXT,
+        suggested_score REAL,
+        review_status TEXT NOT NULL DEFAULT 'PENDING',
+        resolved_employee_id INTEGER,
+        resolved_employee_name TEXT,
+        resolved_by TEXT,
+        resolved_at TEXT,
+        resolution_notes TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(work_date, order_code)
+      );
+      CREATE INDEX IF NOT EXISTS idx_review_queue_date ON order_review_queue(work_date);
+      CREATE INDEX IF NOT EXISTS idx_review_queue_status ON order_review_queue(review_status);
+      CREATE INDEX IF NOT EXISTS idx_review_queue_emp ON order_review_queue(previous_employee_id);
+    `);
+  } catch (e) {
+    console.warn('Migration for employee_lifecycle_audit & order_review_queue:', e.message);
   }
 
   // Safe table migration: Ensure preparation_batches exists
@@ -205,14 +278,29 @@ export function runMigrations(database = db) {
   }
   try {
     const cols = database.prepare("PRAGMA table_info(daily_working_team)").all();
-    if (cols.length > 0 && !cols.some(c => c.name === 'is_working')) {
-      database.exec("ALTER TABLE daily_working_team ADD COLUMN is_working INTEGER NOT NULL DEFAULT 1");
-      // Explicitly guarantee all pre-existing rows have is_working = 1
-      database.exec("UPDATE daily_working_team SET is_working = 1 WHERE is_working IS NULL");
-      console.log('✓ Successfully migrated daily_working_team: added is_working column');
+    if (cols.length > 0) {
+      if (!cols.some(c => c.name === 'is_working')) {
+        database.exec("ALTER TABLE daily_working_team ADD COLUMN is_working INTEGER NOT NULL DEFAULT 1");
+        // Explicitly guarantee all pre-existing rows have is_working = 1
+        database.exec("UPDATE daily_working_team SET is_working = 1 WHERE is_working IS NULL");
+        console.log('✓ Successfully migrated daily_working_team: added is_working column');
+      }
+      if (!cols.some(c => c.name === 'source')) {
+        database.exec("ALTER TABLE daily_working_team ADD COLUMN source TEXT NOT NULL DEFAULT 'MANUAL'");
+        console.log('✓ Successfully migrated daily_working_team: added source column');
+      }
+      if (!cols.some(c => c.name === 'observed_at')) {
+        database.exec("ALTER TABLE daily_working_team ADD COLUMN observed_at TEXT");
+      }
+      if (!cols.some(c => c.name === 'last_activity_at')) {
+        database.exec("ALTER TABLE daily_working_team ADD COLUMN last_activity_at TEXT");
+      }
+      if (!cols.some(c => c.name === 'updated_at')) {
+        database.exec("ALTER TABLE daily_working_team ADD COLUMN updated_at TEXT");
+      }
     }
   } catch (e) {
-    console.warn('Migration check for daily_working_team is_working:', e.message);
+    console.warn('Migration check for daily_working_team columns:', e.message);
   }
 
   // Safe table migration: Ensure source_file_slot, source_type, merchant_code, file_name exist in current_work_orders
@@ -369,6 +457,24 @@ export function runMigrations(database = db) {
         duration_ms INTEGER DEFAULT 0,
         summary_json TEXT,
         error_safe TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS vendoor_reconciliation_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cycle_timestamp TEXT NOT NULL,
+        business_date TEXT NOT NULL,
+        sync_run_id TEXT,
+        vendoor_new_count INTEGER DEFAULT 0,
+        vendoor_pending_count INTEGER DEFAULT 0,
+        vendoor_total_count INTEGER DEFAULT 0,
+        local_new_count INTEGER DEFAULT 0,
+        local_pending_count INTEGER DEFAULT 0,
+        local_total_count INTEGER DEFAULT 0,
+        delta INTEGER DEFAULT 0,
+        missing_order_codes TEXT,
+        extra_order_codes TEXT,
+        reconciliation_status TEXT DEFAULT 'PASS',
         created_at TEXT DEFAULT (datetime('now'))
       );
 

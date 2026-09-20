@@ -14,6 +14,11 @@ CREATE TABLE IF NOT EXISTS employees (
   department TEXT NOT NULL DEFAULT 'CS', -- 'CS', 'Data Entry', 'Other'
   team_membership TEXT NOT NULL DEFAULT 'Both', -- 'New', 'Pending', 'Both'
   active INTEGER NOT NULL DEFAULT 1,     -- 1 for active, 0 for inactive
+  status TEXT NOT NULL DEFAULT 'ACTIVE', -- 'ACTIVE', 'INACTIVE', 'DEPARTED'
+  effective_from TEXT,
+  effective_to TEXT,
+  departure_date TEXT,
+  departure_reason TEXT,
   notes TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
@@ -24,7 +29,11 @@ CREATE TABLE IF NOT EXISTS daily_working_team (
   work_date TEXT NOT NULL, -- YYYY-MM-DD
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   is_working INTEGER NOT NULL DEFAULT 1,
+  source TEXT NOT NULL DEFAULT 'MANUAL', -- 'MANUAL', 'VENDOOR_OBSERVED'
+  observed_at TEXT,
+  last_activity_at TEXT,
   created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
   UNIQUE(work_date, employee_id)
 );
 
@@ -337,6 +346,24 @@ CREATE TABLE IF NOT EXISTS vendoor_sync_runs (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS vendoor_reconciliation_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cycle_timestamp TEXT NOT NULL,
+  business_date TEXT NOT NULL,
+  sync_run_id TEXT,
+  vendoor_new_count INTEGER DEFAULT 0,
+  vendoor_pending_count INTEGER DEFAULT 0,
+  vendoor_total_count INTEGER DEFAULT 0,
+  local_new_count INTEGER DEFAULT 0,
+  local_pending_count INTEGER DEFAULT 0,
+  local_total_count INTEGER DEFAULT 0,
+  delta INTEGER DEFAULT 0,
+  missing_order_codes TEXT,
+  extra_order_codes TEXT,
+  reconciliation_status TEXT DEFAULT 'PASS',
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS vendoor_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_code TEXT UNIQUE NOT NULL,
@@ -457,6 +484,57 @@ CREATE TABLE IF NOT EXISTS report_history (
   status TEXT DEFAULT 'COMPLETED',
   created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Operational Lifecycle & Reassignment Audit Tables
+CREATE TABLE IF NOT EXISTS employee_lifecycle_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  employee_name TEXT NOT NULL,
+  action_type TEXT NOT NULL, -- 'STATUS_CHANGE', 'DEPARTURE', 'REACTIVATION', 'REASSIGNMENT'
+  previous_status TEXT,
+  new_status TEXT NOT NULL,
+  effective_date TEXT NOT NULL,
+  operator TEXT DEFAULT 'Supervisor',
+  reason TEXT,
+  impact_summary_json TEXT,
+  affected_orders_count INTEGER DEFAULT 0,
+  reassigned_orders_count INTEGER DEFAULT 0,
+  uncertain_orders_count INTEGER DEFAULT 0,
+  reassignments_json TEXT,
+  review_items_json TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS order_review_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_date TEXT NOT NULL,
+  order_code TEXT NOT NULL,
+  account TEXT,
+  merchant_code TEXT,
+  current_status TEXT,
+  previous_employee_id INTEGER,
+  previous_employee_name TEXT,
+  reason_code TEXT NOT NULL, -- 'DEPARTED_EMPLOYEE_UNCERTAIN', 'UNRESOLVED_IDENTITY', 'STREAM_MISMATCH', 'STATUS_UNCERTAINTY', 'CAPACITY_EXHAUSTED'
+  reason_detail TEXT,
+  suggested_employee_id INTEGER,
+  suggested_employee_name TEXT,
+  suggested_score REAL,
+  review_status TEXT NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'RESOLVED', 'DISMISSED'
+  resolved_employee_id INTEGER,
+  resolved_employee_name TEXT,
+  resolved_by TEXT,
+  resolved_at TEXT,
+  resolution_notes TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(work_date, order_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lifecycle_emp ON employee_lifecycle_audit(employee_id);
+CREATE INDEX IF NOT EXISTS idx_lifecycle_date ON employee_lifecycle_audit(effective_date);
+CREATE INDEX IF NOT EXISTS idx_review_queue_date ON order_review_queue(work_date);
+CREATE INDEX IF NOT EXISTS idx_review_queue_status ON order_review_queue(review_status);
+CREATE INDEX IF NOT EXISTS idx_review_queue_emp ON order_review_queue(previous_employee_id);
 
 -- Optimized Indexes for Performance & Joins
 CREATE INDEX IF NOT EXISTS idx_report_history_type ON report_history(report_type);

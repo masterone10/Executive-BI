@@ -19,6 +19,7 @@ import { getEmployeeWorkloadAndRefillStates, REFILL_STATES, getRefillThreshold }
 import { getUnallocatedOrdersPool } from './unallocated.js';
 import { getCompletedOrdersForDate } from './completion.js';
 import { getOperationalBusinessDate } from '../parser.js';
+import { syncAndRestoreObservedTeam } from '../working_team_ops.js';
 
 export function getEffectiveWorkDate(dateInput) {
   if (dateInput) return dateInput;
@@ -179,12 +180,23 @@ export async function runDispatcherCycle(options = {}) {
     }
 
     // A. Working Team Check (Mandatory Invariant)
-    const workingTeamCountRow = db.prepare(`
+    let workingTeamCountRow = db.prepare(`
       SELECT COUNT(*) as c FROM daily_working_team
       WHERE work_date = ? AND is_working = 1
     `).get(workDate);
 
-    const workingTeamCount = workingTeamCountRow ? workingTeamCountRow.c : 0;
+    let workingTeamCount = workingTeamCountRow ? workingTeamCountRow.c : 0;
+    if (workingTeamCount === 0) {
+      try {
+        syncAndRestoreObservedTeam(workDate);
+        workingTeamCountRow = db.prepare(`
+          SELECT COUNT(*) as c FROM daily_working_team
+          WHERE work_date = ? AND is_working = 1
+        `).get(workDate);
+        workingTeamCount = workingTeamCountRow ? workingTeamCountRow.c : 0;
+      } catch (e) {}
+    }
+
     if (workingTeamCount === 0) {
       recordCycleAudit({
         cycle_id: cycleId,
@@ -805,8 +817,15 @@ export function getDispatcherStatus() {
   const workDate = getEffectiveWorkDate();
 
   // Working team count
-  const wtRow = db.prepare('SELECT COUNT(*) as c FROM daily_working_team WHERE work_date = ? AND is_working = 1').get(workDate);
-  const wtCount = wtRow ? wtRow.c : 0;
+  let wtRow = db.prepare('SELECT COUNT(*) as c FROM daily_working_team WHERE work_date = ? AND is_working = 1').get(workDate);
+  let wtCount = wtRow ? wtRow.c : 0;
+  if (wtCount === 0) {
+    try {
+      syncAndRestoreObservedTeam(workDate);
+      wtRow = db.prepare('SELECT COUNT(*) as c FROM daily_working_team WHERE work_date = ? AND is_working = 1').get(workDate);
+      wtCount = wtRow ? wtRow.c : 0;
+    } catch (e) {}
+  }
 
   // Unallocated orders count
   const unallocated = getUnallocatedOrdersPool(workDate, { limit: 1 });
@@ -858,8 +877,16 @@ export function getDispatcherAlerts() {
   const alerts = [];
 
   // Alert 1: Empty Working Team
-  const wtRow = db.prepare('SELECT COUNT(*) as c FROM daily_working_team WHERE work_date = ? AND is_working = 1').get(workDate);
-  if (!wtRow || wtRow.c === 0) {
+  let wtRow = db.prepare('SELECT COUNT(*) as c FROM daily_working_team WHERE work_date = ? AND is_working = 1').get(workDate);
+  let wtCount = wtRow ? wtRow.c : 0;
+  if (wtCount === 0) {
+    try {
+      syncAndRestoreObservedTeam(workDate);
+      wtRow = db.prepare('SELECT COUNT(*) as c FROM daily_working_team WHERE work_date = ? AND is_working = 1').get(workDate);
+      wtCount = wtRow ? wtRow.c : 0;
+    } catch (e) {}
+  }
+  if (wtCount === 0) {
     alerts.push({
       severity: 'WARNING',
       code: 'EMPTY_WORKING_TEAM',
@@ -927,7 +954,7 @@ export function attachEligibleArrivedOrders(workDate, options = {}) {
     SELECT e.name
     FROM daily_working_team dwt
     JOIN employees e ON dwt.employee_id = e.id
-    WHERE dwt.work_date = ? AND e.active = 1
+    WHERE dwt.work_date = ? AND dwt.is_working = 1 AND e.active = 1 AND (e.status = 'ACTIVE' OR e.status IS NULL)
   `).all(targetWorkDate);
   const workingTeamSet = new Set(workingTeam.map(w => w.name));
 

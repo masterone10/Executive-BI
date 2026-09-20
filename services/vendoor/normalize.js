@@ -11,6 +11,80 @@ import { extractCanonicalStatus } from './actions.js';
 export { extractCanonicalStatus };
 
 /**
+ * Safely extracts canonical string merchant/account name from raw Vendoor payload
+ */
+export function extractCanonicalAccountName(rawOrder) {
+  if (!rawOrder) return 'Vendoor Express';
+
+  // If rawOrder itself is a string
+  if (typeof rawOrder === 'string') {
+    const s = rawOrder.trim();
+    if (s && s !== '[object Object]' && s !== 'undefined' && s !== 'null') {
+      return s;
+    }
+    return 'Vendoor Express';
+  }
+
+  if (typeof rawOrder !== 'object') return 'Vendoor Express';
+
+  const candidateFields = [
+    rawOrder.merchant_name,
+    rawOrder.merchant,
+    rawOrder.store_name,
+    rawOrder.store,
+    rawOrder.account_name,
+    rawOrder.account,
+    rawOrder['اسم المتجر'],
+    rawOrder['اسم_المتجر'],
+    rawOrder['المتجر'],
+    rawOrder['اسم التاجر'],
+    rawOrder['اسم_التاجر'],
+    rawOrder['التاجر'],
+    rawOrder.company_name,
+    rawOrder.company,
+    rawOrder.brand_name,
+    rawOrder.brand,
+    rawOrder.vendor_name,
+    rawOrder.vendor,
+    rawOrder.warehouse_name,
+    rawOrder.warehouse
+  ];
+
+  for (const c of candidateFields) {
+    if (!c) continue;
+    if (typeof c === 'string') {
+      const s = c.trim();
+      if (s && s !== '[object Object]' && s !== 'undefined' && s !== 'null') {
+        return s;
+      }
+    } else if (typeof c === 'object') {
+      const nested = c.name || c.account_name || c.merchant_name || c.store_name || c.company_name || c.title || c.label || c.account || c.merchant;
+      if (typeof nested === 'string') {
+        const s = nested.trim();
+        if (s && s !== '[object Object]' && s !== 'undefined' && s !== 'null') {
+          return s;
+        }
+      }
+    }
+  }
+
+  // Check if product names or items contain a warehouse/merchant identifier like "(مخزنHB)"
+  if (Array.isArray(rawOrder.products) && rawOrder.products.length > 0) {
+    for (const p of rawOrder.products) {
+      if (p && typeof p.name === 'string') {
+        const match = p.name.match(/\(([^)]+)\)/);
+        if (match && match[1] && match[1].trim()) {
+          const s = match[1].trim();
+          if (s && s !== '[object Object]') return s;
+        }
+      }
+    }
+  }
+
+  return 'Vendoor Express';
+}
+
+/**
  * Normalizes an individual order item from Vendoor order tables
  */
 export function normalizeVendoorOrder(rawOrder) {
@@ -50,31 +124,18 @@ export function normalizeVendoorOrder(rawOrder) {
   }
   const status = rawStatus || 'Unknown';
 
-  // Extract merchant / account / affiliate
+  // Extract merchant / account (Never fallback to affiliate or marketer)
   const merchantCode = String(
     rawOrder.merchant_code ||
     rawOrder.merchant_id ||
     rawOrder.merchant_key ||
     rawOrder.client_code ||
-    rawOrder.affiliate_code ||
-    rawOrder.affiliate_id ||
     rawOrder['كود التاجر'] ||
     rawOrder['كود_التاجر'] ||
     ''
   ).trim();
 
-  const account = String(
-    rawOrder.merchant_name ||
-    rawOrder.merchant ||
-    rawOrder.account_name ||
-    rawOrder.account ||
-    rawOrder.affiliate_name ||
-    rawOrder.affiliate ||
-    rawOrder.client ||
-    rawOrder['اسم التاجر'] ||
-    rawOrder['اسم_التاجر'] ||
-    'Unassigned'
-  ).trim();
+  const account = extractCanonicalAccountName(rawOrder);
 
   // Extract creation / business date (preserve original creation date)
   const rawCreatedAt = rawOrder.created_at || rawOrder.order_date || rawOrder.date || rawOrder.created || null;

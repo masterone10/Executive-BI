@@ -1477,14 +1477,17 @@ export function getAccountsDirectory(workDate) {
 
   // 3. Process logs if uploaded
   const dailyLogUploaded = isDailyLogUploaded(workDate);
-  if (dailyLogUploaded) {
-    for (const [accName, item] of accMap.entries()) {
+  for (const [accName, item] of accMap.entries()) {
+    if (dailyLogUploaded) {
       const tracking = getAccountTracking(workDate, accName);
       item.worked_employees = tracking.actual_employees || [];
       item.outside_employees = tracking.unassigned_employees || [];
       item.unique_orders_worked = tracking.unique_orders_worked || 0;
       item.real_actions = tracking.real_actions_count || 0;
     }
+    item.assigned_orders = item.total_orders || 0;
+    item.actual_orders_worked = item.unique_orders_worked || 0;
+    item.reconciliation_gap = item.assigned_orders - item.actual_orders_worked;
   }
 
   const list = Array.from(accMap.values()).sort((a, b) => b.total_orders - a.total_orders || a.account_name.localeCompare(b.account_name));

@@ -288,6 +288,17 @@ input:checked + .slider:before{transform:translateX(16px)}
   .panel, .kpi, .prof { box-shadow: none !important; border: 1px solid #ccc !important; break-inside: avoid; }
 </style>
 
+
+<style media="print">
+  @page { size: landscape; margin: 12mm; }
+  .side, .top .actions, #importToast, #shareModal { display: none !important; }
+  .main { margin-left: 0 !important; width: 100% !important; }
+  .top { position: static !important; box-shadow: none !important; border: none !important; padding: 0 0 16px 0 !important; }
+  .wrap { padding: 0 !important; }
+  body { background: #fff !important; color: #000 !important; }
+  .panel, .kpi, .prof { box-shadow: none !important; border: 1px solid #ccc !important; break-inside: avoid; }
+</style>
+
 </head>
 <body>
 <div class="app">
@@ -363,6 +374,16 @@ input:checked + .slider:before{transform:translateX(16px)}
         <div class="global-ctx-item" title="Vendoor Employee Portal Live Status" style="cursor:pointer" onclick="show('management', 'vendoor')">
           <span>Vendoor:</span>
           <span class="global-ctx-pill" id="gctxVendoorStatus" style="background:#F1F5F9;color:#64748B">CHECKING...</span>
+        </div>
+        <div class="global-ctx-item" title="Orders Autonomous Sync Health & Timestamp" style="cursor:pointer" onclick="openLiveDiagnosticModal()">
+          <span>🔄 Orders Sync:</span>
+          <span class="global-ctx-pill" id="gctxOrdersSyncStatus" style="background:#DCFCE7;color:#15803D">NORMAL</span>
+          <span style="font-size:11px;color:var(--slate)" id="gctxOrdersSyncTime">0s ago</span>
+        </div>
+        <div class="global-ctx-item" title="Logs Autonomous Sync Health & Timestamp" style="cursor:pointer" onclick="openLiveDiagnosticModal()">
+          <span>📋 Logs Sync:</span>
+          <span class="global-ctx-pill" id="gctxLogsSyncStatus" style="background:#DCFCE7;color:#15803D">NORMAL</span>
+          <span style="font-size:11px;color:var(--slate)" id="gctxLogsSyncTime">0s ago</span>
         </div>
         <div class="global-ctx-item" title="Today's Working Team Active Count" style="cursor:pointer" onclick="show('operations', 'working-team')">
           <span>👥 Team:</span>
@@ -556,6 +577,38 @@ async function updateGlobalContextBar() {
       vEl.textContent = conn;
       vEl.style.background = isConn ? '#DCFCE7' : (conn === 'NOT_CONFIGURED' ? '#F1F5F9' : '#FEE2E2');
       vEl.style.color = isConn ? '#15803D' : (conn === 'NOT_CONFIGURED' ? '#64748B' : '#DC2626');
+    }
+
+    // Orders Sync Indicator
+    const oSync = res.vendoor?.sync_indicators?.orders;
+    const oStatusEl = document.getElementById('gctxOrdersSyncStatus');
+    const oTimeEl = document.getElementById('gctxOrdersSyncTime');
+    if (oStatusEl && oTimeEl && oSync) {
+      oStatusEl.textContent = oSync.state;
+      if (oSync.state === 'NORMAL') {
+        oStatusEl.style.background = '#DCFCE7'; oStatusEl.style.color = '#15803D';
+      } else if (oSync.state === 'STALE') {
+        oStatusEl.style.background = '#FEF3C7'; oStatusEl.style.color = '#D97706';
+      } else {
+        oStatusEl.style.background = '#FEE2E2'; oStatusEl.style.color = '#DC2626';
+      }
+      oTimeEl.textContent = oSync.seconds_ago !== null ? `${oSync.seconds_ago}s ago` : 'Never';
+    }
+
+    // Logs Sync Indicator
+    const lSync = res.vendoor?.sync_indicators?.logs;
+    const lStatusEl = document.getElementById('gctxLogsSyncStatus');
+    const lTimeEl = document.getElementById('gctxLogsSyncTime');
+    if (lStatusEl && lTimeEl && lSync) {
+      lStatusEl.textContent = lSync.state;
+      if (lSync.state === 'NORMAL') {
+        lStatusEl.style.background = '#DCFCE7'; lStatusEl.style.color = '#15803D';
+      } else if (lSync.state === 'STALE') {
+        lStatusEl.style.background = '#FEF3C7'; lStatusEl.style.color = '#D97706';
+      } else {
+        lStatusEl.style.background = '#FEE2E2'; lStatusEl.style.color = '#DC2626';
+      }
+      lTimeEl.textContent = lSync.seconds_ago !== null ? `${lSync.seconds_ago}s ago` : 'Never';
     }
 
     // Team
@@ -770,6 +823,10 @@ function renderEmptyState(title, subtitle, icon, canUploadDaily = true) {
 
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
+  if (typeof str === 'object') {
+    const extracted = extractAccountDisplayName(str);
+    return escapeHtml(extracted);
+  }
   return String(str).replace(/[&<>"']/g, m => ({
     '&': '&amp;',
     '<': '&lt;',
@@ -777,6 +834,29 @@ function escapeHtml(str) {
     '"': '&quot;',
     "'": '&#39;'
   }[m]));
+}
+
+function extractAccountDisplayName(val) {
+  if (val === null || val === undefined) return 'Unassigned';
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed && trimmed !== '[object Object]' && trimmed !== 'undefined' && trimmed !== 'null') {
+      return trimmed;
+    }
+    return 'Unassigned';
+  }
+  if (typeof val === 'object') {
+    const candidate = val.name || val.account_name || val.merchant_name || val.store_name || val.company_name || val.title || val.label || val.account || val.merchant;
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed && trimmed !== '[object Object]' && trimmed !== 'undefined' && trimmed !== 'null') {
+        return trimmed;
+      }
+    } else if (typeof candidate === 'object' && candidate !== null) {
+      return extractAccountDisplayName(candidate);
+    }
+  }
+  return 'Unassigned';
 }
 
 async function apiFetch(url, options = {}) {
@@ -825,7 +905,7 @@ async function loadWorkAllocationData() {
     ]);
 
     currentAccountsList = accRes || [];
-    todayWorkingEmployees = (teamRes || []).filter(e => e.is_working);
+    todayWorkingEmployees = (teamRes || []).filter(e => e.is_working && String(e.department || '').trim().toUpperCase() === 'CS');
 
     if (allocRes && allocRes.exists && allocRes.items) {
       activeAllocations = allocRes.items.map(it => ({
@@ -976,7 +1056,8 @@ function renderWorkAllocationUI(overview) {
     // Extract all distinct (Account, Status) pairs from currentAccountsList and activeAllocations
     const accountGroups = [];
     currentAccountsList.forEach(acc => {
-      const accName = typeof acc === 'string' ? acc : (acc.account || acc.account_name || 'Unknown');
+      const accName = extractAccountDisplayName(acc);
+      if (!accName || accName === '[object Object]') return;
       const newCount = acc.new_orders || 0;
       const penCount = acc.pending_orders || 0;
       const totCount = acc.total_orders || (newCount + penCount) || 0;
@@ -996,24 +1077,27 @@ function renderWorkAllocationUI(overview) {
     if (accountGroups.length === 0 && activeAllocations.length > 0) {
       const seenAccStatus = new Set();
       activeAllocations.forEach(a => {
-        const key = `${a.account}|${a.status}`;
+        const cleanAcc = extractAccountDisplayName(a.account || a);
+        if (!cleanAcc || cleanAcc === '[object Object]') return;
+        const key = `${cleanAcc}|${a.status}`;
         if (!seenAccStatus.has(key)) {
           seenAccStatus.add(key);
-          accountGroups.push({ account: a.account, status: a.status || 'NEW', total_orders: a.available_orders || 0 });
+          accountGroups.push({ account: cleanAcc, status: a.status || 'NEW', total_orders: a.available_orders || 0 });
         }
       });
     }
 
     accountGroups.forEach(grp => {
-      const accName = grp.account;
+      const accName = extractAccountDisplayName(grp.account);
       const grpStatus = (grp.status || 'NEW').toUpperCase();
       const isNew = grpStatus.includes('NEW');
       const isPending = grpStatus.includes('PENDING');
       
-      const accAssigned = activeAllocations.filter(a => 
-        a.account && a.account.toLowerCase() === accName.toLowerCase() &&
-        (!grp.status || (a.status || '').toUpperCase().includes(grpStatus) || (grpStatus.includes('NEW') && (a.status || '').toLowerCase().includes('new')) || (grpStatus.includes('PEN') && (a.status || '').toLowerCase().includes('pen')))
-      );
+      const accAssigned = activeAllocations.filter(a => {
+        const aName = extractAccountDisplayName(a.account || a);
+        return aName.toLowerCase() === accName.toLowerCase() &&
+          (!grp.status || (a.status || '').toUpperCase().includes(grpStatus) || (grpStatus.includes('NEW') && (a.status || '').toLowerCase().includes('new')) || (grpStatus.includes('PEN') && (a.status || '').toLowerCase().includes('pen')));
+      });
 
       const totalAssignedOrders = accAssigned.reduce((s, a) => s + (a.available_orders || 0), 0);
       const displayTotalOrders = grp.total_orders || totalAssignedOrders;
@@ -1140,10 +1224,12 @@ function renderWorkAllocationUI(overview) {
 }
 
 function renderSingleAssignmentRow(empId, rowIdx, selectedAccount, selectedStatus, availableCount) {
+  const cleanSelectedAccount = extractAccountDisplayName(selectedAccount);
   const accOptions = currentAccountsList.map(a => {
-    const name = typeof a === 'string' ? a : (a.account || a.account_name || '');
-    return `<option value="${escapeHtml(name)}" ${name === selectedAccount ? 'selected' : ''}>${escapeHtml(name)}</option>`;
-  }).join('');
+    const name = extractAccountDisplayName(a);
+    if (!name || name === '[object Object]') return '';
+    return `<option value="${escapeHtml(name)}" ${name.toLowerCase() === cleanSelectedAccount.toLowerCase() ? 'selected' : ''}>${escapeHtml(name)}</option>`;
+  }).filter(Boolean).join('');
 
   return `
     <div class="alloc-row" id="row-${empId}-${rowIdx}">
@@ -1167,7 +1253,7 @@ function addAssignmentRow(empId) {
   if (emptyMsg) emptyMsg.remove();
 
   const firstAcc = currentAccountsList[0];
-  const firstAccName = typeof firstAcc === 'string' ? firstAcc : (firstAcc ? firstAcc.account || firstAcc.account_name || '' : '');
+  const firstAccName = extractAccountDisplayName(firstAcc);
   const rowIdx = Date.now() + Math.floor(Math.random() * 1000);
 
   const newAssign = {
@@ -1184,7 +1270,7 @@ function addAssignmentRow(empId) {
     div.innerHTML = renderSingleAssignmentRow(empId, rowIdx, newAssign.account, newAssign.status, 0);
     container.appendChild(div.firstElementChild);
 
-    if (newAssign.account) {
+    if (newAssign.account && newAssign.account !== 'Unassigned') {
       updateAvailableCount(empId, rowIdx, newAssign.account, newAssign.status);
     }
   }
@@ -1381,9 +1467,10 @@ async function openCopyModal() {
   const accSelect = document.getElementById('copyModalAccSelect');
   if (accSelect) {
     accSelect.innerHTML = currentAccountsList.map(a => {
-      const name = typeof a === 'string' ? a : (a.account || a.account_name || '');
+      const name = extractAccountDisplayName(a);
+      if (!name || name === '[object Object]') return '';
       return `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
-    }).join('');
+    }).filter(Boolean).join('');
   }
 
   modal.style.display = 'flex';
@@ -4638,6 +4725,52 @@ let accDirectoryViewMode = 'grid'; // 'grid' | 'table'
 let currentAccDetailData = null;
 let currentAccDetailTab = 'overview';
 
+function renderReconciliationGapChart(accounts) {
+  if (!accounts || accounts.length === 0) return '';
+
+  const sorted = accounts.slice().sort((a, b) => (b.total_orders || 0) - (a.total_orders || 0)).slice(0, 8);
+  const maxVal = Math.max(1, ...sorted.map(a => Math.max(a.assigned_orders || a.total_orders || 0, a.actual_orders_worked || a.unique_orders_worked || 0)));
+
+  return `
+    <div class="panel" style="margin-bottom:20px;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+        <div>
+          <h3 style="margin:0;font-size:15px;font-weight:800;color:var(--navy)">📊 Reconciliation Gap Chart</h3>
+          <p style="margin:3px 0 0 0;font-size:12px;color:var(--mut)">Assigned Orders vs. Actual Orders Worked per Account (Gap = Assigned - Worked)</p>
+        </div>
+        <div style="display:flex;gap:12px;font-size:12px;font-weight:600">
+          <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:12px;height:12px;background:#2563EB;border-radius:3px;display:inline-block"></span> Assigned Orders</span>
+          <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:12px;height:12px;background:#16A34A;border-radius:3px;display:inline-block"></span> Actual Worked</span>
+          <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:12px;height:12px;background:#F59E0B;border-radius:3px;display:inline-block"></span> Gap</span>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        ${sorted.map(a => {
+          const assigned = a.assigned_orders || a.total_orders || 0;
+          const worked = a.actual_orders_worked || a.unique_orders_worked || 0;
+          const gap = assigned - worked;
+          const assignedPct = Math.min(100, Math.round((assigned / maxVal) * 100));
+          const workedPct = Math.min(100, Math.round((worked / maxVal) * 100));
+
+          return `
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;font-weight:600;color:var(--ink)">
+                <span>${escapeHtml(a.account_name)}</span>
+                <span style="color:var(--mut)">Assigned: <b>${assigned}</b> | Worked: <b style="color:#16A34A">${worked}</b> | Gap: <b style="color:${gap > 0 ? '#D97706' : '#16A34A'}">${gap}</b></span>
+              </div>
+              <div style="height:14px;background:#F1F5F9;border-radius:7px;overflow:hidden;position:relative;display:flex">
+                <div style="width:${assignedPct}%;background:#2563EB;height:100%;transition:width .3s" title="Assigned: ${assigned}"></div>
+                <div style="width:${workedPct}%;background:#16A34A;height:100%;margin-left:-${Math.min(assignedPct, workedPct)}%;transition:width .3s;opacity:0.9" title="Worked: ${worked}"></div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
 async function loadAccountsDirectoryView() {
   const container = document.getElementById('accountsDirectoryContainer');
   if (!container) return;
@@ -4694,6 +4827,9 @@ function renderAccountsDirectoryUI(data) {
       ${kpiCard('✓', workedAccounts.length, 'Worked Accounts', `${accounts.length > 0 ? ((workedAccounts.length / accounts.length) * 100).toFixed(1) : 0}% touched in Daily Log`, GREEN)}
       ${kpiCard('⚠️', unassignedWorkAccounts.length, 'Outside Allocation', 'Accounts touched by unassigned agents', unassignedWorkAccounts.length > 0 ? AMBER : GREEN)}
     </div>
+
+    <!-- Reconciliation Gap Chart (Enhancement 2) -->
+    ${renderReconciliationGapChart(accounts)}
 
     <!-- Toolbar: Search, Filter, and Toggle -->
     <div class="panel" style="margin-bottom:20px;padding:14px 20px">
@@ -4917,6 +5053,8 @@ async function openAccountDetailModal(accountName) {
   document.getElementById('accDetailTitle').textContent = `Account: ${accountName}`;
   document.getElementById('accDetailSub').textContent = `Full 4-Sheet reconciliation & audit trail for ${formatDisplayDate(currentWorkDate)}`;
   document.getElementById('accDetailExportLink').href = `/api/accounts/export/${currentWorkDate}/${encodeURIComponent(accountName)}`;
+  const csvLink = document.getElementById('accDetailExportCsvLink');
+  if (csvLink) csvLink.href = `/api/accounts/export/${currentWorkDate}/${encodeURIComponent(accountName)}?format=csv`;
   
   const content = document.getElementById('accDetailContent');
   content.innerHTML = `<div style="text-align:center;padding:50px;color:var(--mut)">Loading account audit details...</div>`;
@@ -4938,6 +5076,155 @@ async function openAccountDetailModal(accountName) {
 function closeAccountDetailModal() {
   const modal = document.getElementById('accountDetailModal');
   if (modal) modal.style.display = 'none';
+}
+
+async function openLiveDiagnosticModal() {
+  const modal = document.getElementById('liveDiagnosticModal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  renderLiveDiagnosticContent();
+}
+
+function closeLiveDiagnosticModal() {
+  const modal = document.getElementById('liveDiagnosticModal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function renderLiveDiagnosticContent() {
+  const container = document.getElementById('liveDiagnosticContent');
+  if (!container) return;
+  container.innerHTML = `<div style="text-align:center;padding:40px;color:var(--mut)">Loading live reconciliation audit and diagnostic logs...</div>`;
+
+  try {
+    const [latest, auditHistory] = await Promise.all([
+      apiFetch(`/api/integrations/vendoor/reconciliation/latest?date=${currentWorkDate}`).catch(() => null),
+      apiFetch(`/api/integrations/vendoor/reconciliation/audit?limit=15`).catch(() => [])
+    ]);
+
+    if (!latest) {
+      container.innerHTML = `<div style="text-align:center;padding:30px;color:#991B1B">Failed to fetch live reconciliation data.</div>`;
+      return;
+    }
+
+    const st = latest.reconciliation_status || 'PASS';
+    let badgeBg = '#DCFCE7', badgeFg = '#15803D';
+    if (st === 'IN_FLIGHT_TRANSITION') { badgeBg = '#DBEAFE'; badgeFg = '#1E40AF'; }
+    else if (st === 'DELTA_DETECTED') { badgeBg = '#FEF3C7'; badgeFg = '#92400E'; }
+
+    const missing = latest.mismatches?.missing_in_local || [];
+    const extra = latest.mismatches?.extra_in_local || [];
+
+    let html = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+        <div>
+          <span style="font-size:12px;color:var(--mut)">Business Date: <b>${latest.business_date || currentWorkDate}</b></span>
+          <span style="margin:0 8px;color:var(--line)">|</span>
+          <span style="font-size:12px;color:var(--mut)">Last Cycle: <b>${formatTimeAgo(latest.cycle_timestamp)}</b></span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="tag" style="background:${badgeBg};color:${badgeFg};font-weight:800;font-size:13px;padding:6px 12px;border-radius:20px">
+            STATUS: ${st}
+          </span>
+          <button class="btn sm primary" onclick="renderLiveDiagnosticContent()">⚡ Soft Refresh</button>
+        </div>
+      </div>
+
+      <!-- Live Parity Table -->
+      <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:14px;margin-bottom:20px">
+        <div class="panel" style="padding:14px;text-align:center">
+          <div style="font-size:12px;color:var(--mut);margin-bottom:4px">NEW ORDERS</div>
+          <div style="font-size:20px;font-weight:800;color:var(--navy)">
+            ${latest.new?.vendoor || 0} <span style="font-size:12px;font-weight:400;color:var(--mut)">Vendoor</span> /
+            ${latest.new?.local || 0} <span style="font-size:12px;font-weight:400;color:var(--mut)">Local</span>
+          </div>
+          <div style="font-size:12px;margin-top:4px;font-weight:600;color:${latest.new?.delta === 0 ? '#16A34A' : '#D97706'}">
+            Delta: ${latest.new?.delta || 0}
+          </div>
+        </div>
+
+        <div class="panel" style="padding:14px;text-align:center">
+          <div style="font-size:12px;color:var(--mut);margin-bottom:4px">PENDING ORDERS</div>
+          <div style="font-size:20px;font-weight:800;color:var(--navy)">
+            ${latest.pending?.vendoor || 0} <span style="font-size:12px;font-weight:400;color:var(--mut)">Vendoor</span> /
+            ${latest.pending?.local || 0} <span style="font-size:12px;font-weight:400;color:var(--mut)">Local</span>
+          </div>
+          <div style="font-size:12px;margin-top:4px;font-weight:600;color:${latest.pending?.delta === 0 ? '#16A34A' : '#D97706'}">
+            Delta: ${latest.pending?.delta || 0}
+          </div>
+        </div>
+
+        <div class="panel" style="padding:14px;text-align:center">
+          <div style="font-size:12px;color:var(--mut);margin-bottom:4px">TOTAL ACTIVE WORKLOAD</div>
+          <div style="font-size:20px;font-weight:800;color:var(--navy)">
+            ${latest.total?.vendoor || 0} <span style="font-size:12px;font-weight:400;color:var(--mut)">Vendoor</span> /
+            ${latest.total?.local || 0} <span style="font-size:12px;font-weight:400;color:var(--mut)">Local</span>
+          </div>
+          <div style="font-size:12px;margin-top:4px;font-weight:600;color:${latest.total?.delta === 0 ? '#16A34A' : '#D97706'}">
+            Delta: ${latest.total?.delta || 0}
+          </div>
+        </div>
+      </div>
+
+      <!-- Explanation Box -->
+      <div style="padding:12px 16px;background:#F8FAFC;border:1px solid var(--line);border-radius:10px;margin-bottom:20px;font-size:13px;color:var(--ink)">
+        <b>💡 Operational Analysis:</b> ${escapeHtml(latest.mismatches?.explanation || 'All active work orders match exactly.')}
+      </div>
+
+      <!-- Order Code Mismatch Detail Tables -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
+        <div class="panel" style="padding:14px">
+          <h4 style="margin:0 0 8px 0;font-size:13px;color:var(--navy)">📥 Missing in Local (${missing.length})</h4>
+          <div style="max-height:120px;overflow-y:auto;font-size:12px;font-family:monospace;color:var(--ink)">
+            ${missing.length === 0 ? '<i style="color:var(--mut)">None</i>' : missing.map(c => `<div>• ${escapeHtml(c)}</div>`).join('')}
+          </div>
+        </div>
+
+        <div class="panel" style="padding:14px">
+          <h4 style="margin:0 0 8px 0;font-size:13px;color:var(--navy)">📤 In-Flight Transitioned in Local (${extra.length})</h4>
+          <div style="max-height:120px;overflow-y:auto;font-size:12px;font-family:monospace;color:var(--ink)">
+            ${extra.length === 0 ? '<i style="color:var(--mut)">None</i>' : extra.map(c => `<div>• ${escapeHtml(c)}</div>`).join('')}
+          </div>
+        </div>
+      </div>
+
+      <!-- Historical Poll Audit Log -->
+      <div class="panel" style="padding:16px">
+        <h4 style="margin:0 0 12px 0;font-size:14px;color:var(--navy)">📜 Per-Poll Reconciliation Audit Log (Last 15 Cycles)</h4>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead>
+              <tr style="border-bottom:1px solid var(--line);text-align:left;color:var(--slate)">
+                <th style="padding:6px 8px">Timestamp</th>
+                <th style="padding:6px 8px">Vendoor Tot</th>
+                <th style="padding:6px 8px">Local Tot</th>
+                <th style="padding:6px 8px">Delta</th>
+                <th style="padding:6px 8px">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(auditHistory || []).map(r => `
+                <tr style="border-bottom:1px solid #F1F5F9">
+                  <td style="padding:6px 8px">${formatTimeAgo(r.cycle_timestamp)}</td>
+                  <td style="padding:6px 8px;font-weight:600">${r.vendoor_total_count}</td>
+                  <td style="padding:6px 8px;font-weight:600">${r.local_total_count}</td>
+                  <td style="padding:6px 8px;font-weight:600;color:${r.delta === 0 ? '#16A34A' : '#D97706'}">${r.delta}</td>
+                  <td style="padding:6px 8px">
+                    <span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;background:${r.reconciliation_status === 'PASS' ? '#DCFCE7' : '#DBEAFE'};color:${r.reconciliation_status === 'PASS' ? '#15803D' : '#1E40AF'}">
+                      ${r.reconciliation_status}
+                    </span>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = `<div style="text-align:center;padding:30px;color:#991B1B">Error loading diagnostic: ${escapeHtml(err.message)}</div>`;
+  }
 }
 
 function setAccountDetailTab(tab) {
@@ -7907,6 +8194,7 @@ initApp();
       </div>
       <div style="display:flex;align-items:center;gap:10px">
         <a id="accDetailExportLink" class="btn sm" href="#" download style="background:#DCFCE7;color:#15803D;border-color:#BBF7D0;font-weight:700">📥 Export 4-Sheet XLSX</a>
+        <a id="accDetailExportCsvLink" class="btn sm" href="#" download style="background:#E0F2FE;color:#0369A1;border-color:#BAE6FD;font-weight:700">📄 Export CSV</a>
         <button class="btn sm" onclick="closeAccountDetailModal()" type="button" style="padding:4px 9px">✕ Close</button>
       </div>
     </div>
@@ -7972,6 +8260,20 @@ initApp();
   </div>
 </div>
 
+<!-- Live Reconciliation Diagnostic Modal (Enhancement 5 & 6) -->
+<div id="liveDiagnosticModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:9999;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)closeLiveDiagnosticModal()">
+  <div style="background:#fff;border-radius:16px;max-width:850px;width:100%;box-shadow:var(--shadow-lg);overflow:hidden;display:flex;flex-direction:column;max-height:90vh">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:#F8FAFC">
+      <div>
+        <h3 style="margin:0;font-size:16px;font-weight:800;color:var(--navy)">🔍 Live Vendoor Reconciliation Diagnostic</h3>
+        <p style="margin:3px 0 0 0;font-size:12px;color:var(--mut)">Real-time parity audit between REAL Vendoor stream and Local current_work_orders</p>
+      </div>
+      <button class="btn sm" onclick="closeLiveDiagnosticModal()" type="button" style="padding:4px 9px">✕ Close</button>
+    </div>
+    <div id="liveDiagnosticContent" style="padding:20px;overflow-y:auto;flex:1"></div>
+  </div>
+</div>
+
 <div id="shareModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:100;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.style.display='none'">
   <div style="background:#fff;max-width:560px;width:100%;border-radius:16px;padding:26px;box-shadow:0 24px 60px rgba(0,0,0,.3)">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -7995,6 +8297,93 @@ function downloadSelf(){
   a.remove();
 }
 </script>
+
+<script>
+window.exportCurrentExcel = function() {
+  if (typeof XLSX === 'undefined') {
+    window.location.href = '/Executive_Report_v3.xlsx';
+    return;
+  }
+  try {
+    var wb = XLSX.utils.book_new();
+    var tot = D.log_totals, hs = D.hr || {}, ded = D.dedup || {}, emp = D.employees || [];
+    
+    // Executive Summary
+    var sRows = [
+      ['CUSTOMER SERVICE — EXECUTIVE REPORT (DEDUPLICATED)'],
+      ['Each status change counted once per order+employee+status. Removed ' + (ded.removed||0).toLocaleString() + ' duplicate rows (' + (ded.removed_pct||0) + '% of raw).'],
+      [],
+      ['KEY PERFORMANCE INDICATORS', 'VALUE'],
+      ['Total Real Actions', (tot.actions||0).toLocaleString()],
+      ['Raw Rows (before dedup)', (ded.raw_cs_status||0).toLocaleString()],
+      ['New Orders', (hs.tot_new||0).toLocaleString()],
+      ['Printed', (tot.printed||0).toLocaleString()],
+      ['Team Print Rate', (tot.actions ? (tot.printed/tot.actions*100).toFixed(1) : 0) + '%'],
+      ['Pending', (tot.pending||0).toLocaleString()],
+      ['Team Pending Rate', (D.team_pending_rate||0) + '%'],
+      ['Cancelled', (tot.cancelled||0).toLocaleString()],
+      ['Team Cancel Rate', (D.team_cancel_rate||0) + '%'],
+      ['Alt Phones Added', (tot.alt||0).toLocaleString()],
+      ['Top Performer', emp[0] ? emp[0].name : '-'],
+      [],
+      ['EXECUTIVE INSIGHTS']
+    ];
+    if (D.insights) {
+      D.insights.forEach(function(ins) { sRows.push(['• ' + ins]); });
+    }
+    var wsS = XLSX.utils.aoa_to_sheet(sRows);
+    wsS['!cols'] = [{ wch: 45 }, { wch: 25 }];
+    XLSX.utils.book_append_sheet(wb, wsS, 'Executive Summary');
+
+    // Daily Trend
+    var dRows = [['Date', 'Day', 'New Orders', 'Printed', 'Printed %', 'Cancelled', 'Cancel %']];
+    (D.daily || []).forEach(function(d) {
+      dRows.push([d.day, d.dow, d.new, d.printed, d.printed_pct + '%', d.cancel, d.cancel_pct + '%']);
+    });
+    var wsD = XLSX.utils.aoa_to_sheet(dRows);
+    wsD['!cols'] = [{ wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsD, 'Daily Trend');
+
+    // Scorecard
+    var scRows = [['Rank', 'Employee', 'Total Actions', 'Printed', 'Print %', 'Pending', 'Pend %', 'Processing', 'Cancelled', 'Cancel %', 'Alt Phone', 'Alt %', 'Added Orders', 'Contribution %', 'Grade', 'Segment', 'Cancel Risk']];
+    emp.forEach(function(e) {
+      scRows.push([e.rank, e.name, e.actions, e.printed, e.own_printed_rate + '%', e.pending, e.own_pending_rate + '%', e.processing, e.cancelled, e.own_cancel_rate + '%', e.alt, e.own_alt_rate + '%', e.added, e.contribution_pct + '%', e.grade, e.segment, e.cancel_risk]);
+    });
+    var wsSc = XLSX.utils.aoa_to_sheet(scRows);
+    wsSc['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 18 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsSc, 'Agent Scorecard');
+
+    // Cancellation
+    var cRows = [['Rank', 'Employee', 'Total Actions', 'Cancelled', 'Own Cancel Rate %', '% of Team Cancels', 'Risk']];
+    var cdf = emp.slice().filter(function(e) { return e.cancelled > 0; }).sort(function(a, b) { return b.own_cancel_rate - a.own_cancel_rate; });
+    cdf.forEach(function(e, idx) {
+      cRows.push([idx + 1, e.name, e.actions, e.cancelled, e.own_cancel_rate + '%', e.canc_share_pct + '%', e.cancel_risk]);
+    });
+    var wsC = XLSX.utils.aoa_to_sheet(cRows);
+    wsC['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsC, 'Cancellation Analysis');
+
+    // Status Distribution
+    var st = D.status_totals || {};
+    var distRows = [
+      ['Status', 'Count', 'Share %'],
+      ['Printed', st.Printed || 0, (tot.actions ? ((st.Printed || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
+      ['Pending', st.Pending || 0, (tot.actions ? ((st.Pending || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
+      ['Processing', st.Processing || 0, (tot.actions ? ((st.Processing || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
+      ['Cancelled', st.Cancelled || 0, (tot.actions ? ((st.Cancelled || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
+    ];
+    var wsDist = XLSX.utils.aoa_to_sheet(distRows);
+    wsDist['!cols'] = [{ wch: 16 }, { wch: 12 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsDist, 'Status Distribution');
+
+    XLSX.writeFile(wb, 'Executive_Report.xlsx');
+  } catch(err) {
+    console.error('Export failed, falling back to static download:', err);
+    window.location.href = '/Executive_Report_v3.xlsx';
+  }
+};
+</script>
+
 
 <script>
 window.exportCurrentExcel = function() {
