@@ -7,7 +7,7 @@
 <meta name="description" content="Executive BI dashboard for Customer Service operational logs with deduplication, employee scorecards, cancellation risk analysis, and interactive reporting.">
 <meta property="og:title" content="CS Executive Performance Dashboard">
 <meta property="og:description" content="Executive BI dashboard for Customer Service operational logs with deduplication, employee scorecards, cancellation risk analysis, and interactive reporting.">
-<script src="/xlsx.full.min.js"></script>
+
 <style>
 :root{
   --navy:#1E3A8A;--blue:#2563EB;--green:#16A34A;--amber:#F59E0B;--red:#DC2626;--purple:#7C3AED;
@@ -316,6 +316,7 @@ input:checked + .slider:before{transform:translateX(16px)}
       <a data-p="tracking" onclick="show('tracking')"><span class="ic">🛡️</span> Tracking</a>
       <a data-p="management" onclick="show('management')"><span class="ic">⚙️</span> Management</a>
       <a data-p="performance" onclick="show('performance')"><span class="ic">📈</span> Performance</a>
+      <a data-p="reports" onclick="show('reports')"><span class="ic">📑</span> Reports</a>
     </nav>
     <div class="foot">
       Deduplicated · SQLite Persistent<br>
@@ -564,7 +565,14 @@ function updateGlobalDateUI() {
   updateGlobalContextBar();
 }
 
-async function updateGlobalContextBar() {
+let lastGlobalContextCall = { date: null, time: 0 };
+async function updateGlobalContextBar(force = false) {
+  const now = Date.now();
+  if (!force && lastGlobalContextCall.date === currentWorkDate && (now - lastGlobalContextCall.time < 3000)) {
+    return;
+  }
+  lastGlobalContextCall = { date: currentWorkDate, time: now };
+
   try {
     const res = await apiFetch(`/api/global-context?date=${currentWorkDate}`).catch(() => null);
     if (!res) return;
@@ -703,8 +711,11 @@ function onGlobalDatePicked(val) {
   }
 }
 
+let globalDateRequestId = 0;
+
 async function setGlobalSelectedDate(newDate) {
   if (!newDate || !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return;
+  const requestId = ++globalDateRequestId;
   currentWorkDate = newDate;
 
   updateUrlDate(newDate);
@@ -713,6 +724,9 @@ async function setGlobalSelectedDate(newDate) {
 
   // Fetch performance metrics for this date
   await fetchPerformanceDataForDate(newDate);
+
+  // If a newer date request was initiated, discard obsolete render
+  if (requestId !== globalDateRequestId) return;
 
   // Re-render
   RENDERED = pages();
@@ -859,39 +873,90 @@ function extractAccountDisplayName(val) {
   return 'Unassigned';
 }
 
+const clientApiCache = new Map();
+const inFlightRequests = new Map();
+const CLIENT_CACHE_TTL = 4000;
+
+function clearClientApiCache() {
+  clientApiCache.clear();
+}
+
 async function apiFetch(url, options = {}) {
-  const res = await fetch(url, options);
-  const contentType = res.headers.get('content-type') || '';
-  let data;
+  const method = (options.method || 'GET').toUpperCase();
+  const isGet = method === 'GET';
 
-  if (contentType.includes('application/json')) {
-    try {
-      data = await res.json();
-    } catch (e) {
-      data = null;
-    }
-  } else {
-    const rawText = await res.text();
-    try {
-      data = JSON.parse(rawText);
-    } catch (e) {
-      // Remove HTML tags, styles, scripts and redundant whitespace
-      const cleanText = rawText.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-                               .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-                               .replace(/<[^>]+>/g, ' ')
-                               .replace(/\s+/g, ' ')
-                               .trim();
-      const preview = cleanText.length > 250 ? cleanText.substring(0, 250) + '...' : cleanText;
-      throw new Error(preview || `Server returned HTTP ${res.status}: ${res.statusText}`);
+  // For non-GET requests (mutations), invalidate client-side cache
+  if (!isGet) {
+    clearClientApiCache();
+  }
+
+  // If GET and cached and valid, return cached clone
+  if (isGet && !options.skipCache) {
+    const cached = clientApiCache.get(url);
+    if (cached && (Date.now() - cached.timestamp < CLIENT_CACHE_TTL)) {
+      return JSON.parse(JSON.stringify(cached.data));
     }
   }
 
-  if (!res.ok) {
-    const errMsg = (data && (data.error || data.message)) || `Server returned HTTP ${res.status}`;
-    throw new Error(errMsg);
+  // Deduplicate in-flight GET requests
+  if (isGet && inFlightRequests.has(url)) {
+    return inFlightRequests.get(url);
   }
 
-  return data;
+  const fetchPromise = (async () => {
+    try {
+      const res = await fetch(url, options);
+      const contentType = res.headers.get('content-type') || '';
+      let data;
+
+      if (contentType.includes('application/json')) {
+        try {
+          data = await res.json();
+        } catch (e) {
+          data = null;
+        }
+      } else {
+        const rawText = await res.text();
+        try {
+          data = JSON.parse(rawText);
+        } catch (e) {
+          // Remove HTML tags, styles, scripts and redundant whitespace
+          const cleanText = rawText.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                                   .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                                   .replace(/<[^>]+>/g, ' ')
+                                   .replace(/\s+/g, ' ')
+                                   .trim();
+          const preview = cleanText.length > 250 ? cleanText.substring(0, 250) + '...' : cleanText;
+          throw new Error(preview || `Server returned HTTP ${res.status}: ${res.statusText}`);
+        }
+      }
+
+      if (!res.ok) {
+        const errMsg = (data && (data.error || data.message)) || `Server returned HTTP ${res.status}`;
+        throw new Error(errMsg);
+      }
+
+      if (isGet && data) {
+        clientApiCache.set(url, { timestamp: Date.now(), data });
+        if (clientApiCache.size > 150) {
+          const firstKey = clientApiCache.keys().next().value;
+          clientApiCache.delete(firstKey);
+        }
+      }
+
+      return data;
+    } finally {
+      if (isGet) {
+        inFlightRequests.delete(url);
+      }
+    }
+  })();
+
+  if (isGet) {
+    inFlightRequests.set(url, fetchPromise);
+  }
+
+  return fetchPromise;
 }
 
 async function loadWorkAllocationData() {
@@ -7489,6 +7554,18 @@ const MAIN_PAGES_CONFIG = {
       { id: 'orders', label: 'Added Orders', icon: '＋' },
       { id: 'data', label: 'Detailed Data', icon: '▦' }
     ]
+  },
+  reports: {
+    title: 'Reports & Analytics',
+    sub: 'Multi-Period Operational Reports, CS Performance, Allocation & Activity Audits',
+    defaultTab: 'executive',
+    tabs: [
+      { id: 'executive', label: 'Executive Summary', icon: '📊' },
+      { id: 'employee', label: 'CS Performance', icon: '👤' },
+      { id: 'allocation', label: 'Work Allocation', icon: '⚡' },
+      { id: 'accounts', label: 'Accounts & Merchants', icon: '📑' },
+      { id: 'activity', label: 'Vendoor Activity Audit', icon: '📋' }
+    ]
   }
 };
 
@@ -7497,7 +7574,8 @@ let currentSubTabs = {
   operations: 'allocation',
   tracking: 'overview',
   management: 'employees',
-  performance: 'scorecard'
+  performance: 'scorecard',
+  reports: 'executive'
 };
 
 const LEGACY_ROUTE_MAP = {
@@ -7527,7 +7605,13 @@ const LEGACY_ROUTE_MAP = {
   printed: { page: 'performance', tab: 'printed' },
   phone: { page: 'performance', tab: 'phone' },
   orders: { page: 'performance', tab: 'orders' },
-  data: { page: 'performance', tab: 'data' }
+  data: { page: 'performance', tab: 'data' },
+  reports: { page: 'reports', tab: 'executive' },
+  'reports-executive': { page: 'reports', tab: 'executive' },
+  'reports-employee': { page: 'reports', tab: 'employee' },
+  'reports-allocation': { page: 'reports', tab: 'allocation' },
+  'reports-accounts': { page: 'reports', tab: 'accounts' },
+  'reports-activity': { page: 'reports', tab: 'activity' }
 };
 
 function renderTabContent(mainPage, tab) {
@@ -7562,6 +7646,8 @@ function renderTabContent(mainPage, tab) {
     if (tab === 'phone') return RENDERED.phone || '';
     if (tab === 'orders') return RENDERED.orders || '';
     if (tab === 'data') return RENDERED.data || '';
+  } else if (mainPage === 'reports') {
+    return `<div id="reportsMainContainer"><div class="panel" style="text-align:center;padding:40px;color:var(--slate)">Loading Report...</div></div>`;
   }
   return '<div class="panel empty-alloc">No content available for this section.</div>';
 }
@@ -7585,6 +7671,328 @@ function triggerTabLoaders(mainPage, tab) {
     else if (tab === 'teams') loadTeamSetupView();
     else if (tab === 'accounts') loadAccountConfigView();
     else if (tab === 'vendoor') loadVendoorIntegrationView();
+  } else if (mainPage === 'reports') {
+    loadReportsView(tab);
+  }
+}
+
+let currentReportMode = 'day';
+let currentReportStartDate = '';
+let currentReportEndDate = '';
+
+async function loadOperationsOverviewView() {
+  const container = document.getElementById('operationsOverviewContainer');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="panel" style="margin-bottom:20px;background:linear-gradient(135deg,#EFF6FF,#F8FAFC);border:1px solid #BFDBFE">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <div>
+          <h3 style="font-size:16px;font-weight:800;color:var(--navy);margin-bottom:4px">⚡ Operations Control Center</h3>
+          <p style="font-size:13px;color:var(--slate);margin:0">Active business date: <b>${formatDisplayDate(currentWorkDate)}</b></p>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button class="btn primary sm" onclick="show('operations', 'allocation')">Work Allocation</button>
+          <button class="btn sm" onclick="show('operations', 'working-team')">Working Team</button>
+          <button class="btn sm" onclick="show('operations', 'dispatcher')">Auto Dispatcher</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function setReportPeriodMode(mode, subTab) {
+  currentReportMode = mode;
+  await loadReportsView(subTab || 'executive');
+}
+
+async function loadReportsView(tab = 'executive') {
+  const container = document.getElementById('reportsMainContainer');
+  if (!container) return;
+
+  const activeDate = currentWorkDate || new Date().toISOString().slice(0, 10);
+  if (!currentReportStartDate) currentReportStartDate = activeDate;
+  if (!currentReportEndDate) currentReportEndDate = activeDate;
+
+  container.innerHTML = `
+    <!-- Top Filter Bar -->
+    <div class="panel" style="margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px">
+        <div>
+          <h3 style="font-size:16px;font-weight:800;color:var(--navy);margin-bottom:4px">📑 Authoritative Operational Reports</h3>
+          <p style="font-size:12.5px;color:var(--slate);margin:0">Period analysis and audited operational metrics directly from SQLite database</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;background:#F1F5F9;padding:3px;border-radius:8px;border:1px solid #CBD5E1">
+            <button class="btn sm ${currentReportMode === 'day' ? 'primary' : ''}" style="padding:4px 12px;font-size:12px;border:none;cursor:pointer" onclick="setReportPeriodMode('day', '${tab}')">Today</button>
+            <button class="btn sm ${currentReportMode === 'week' ? 'primary' : ''}" style="padding:4px 12px;font-size:12px;border:none;cursor:pointer" onclick="setReportPeriodMode('week', '${tab}')">Week (7d)</button>
+            <button class="btn sm ${currentReportMode === 'month' ? 'primary' : ''}" style="padding:4px 12px;font-size:12px;border:none;cursor:pointer" onclick="setReportPeriodMode('month', '${tab}')">Month (30d)</button>
+            <button class="btn sm ${currentReportMode === 'custom' ? 'primary' : ''}" style="padding:4px 12px;font-size:12px;border:none;cursor:pointer" onclick="setReportPeriodMode('custom', '${tab}')">Custom</button>
+          </div>
+          ${currentReportMode === 'custom' ? `
+            <div style="display:flex;align-items:center;gap:6px">
+              <input type="date" id="repStartDate" value="${currentReportStartDate}" class="inp sm" style="width:130px" onchange="currentReportStartDate=this.value;loadReportsView('${tab}')">
+              <span style="font-size:12px;color:var(--slate)">to</span>
+              <input type="date" id="repEndDate" value="${currentReportEndDate}" class="inp sm" style="width:130px" onchange="currentReportEndDate=this.value;loadReportsView('${tab}')">
+            </div>
+          ` : ''}
+          <div style="display:flex;gap:6px">
+            <a href="/api/reports/export/excel?type=${tab === 'executive' ? 'executive_summary' : tab}&date_mode=${currentReportMode}&target_date=${activeDate}&start_date=${currentReportStartDate}&end_date=${currentReportEndDate}" target="_blank" class="btn sm" style="background:#16A34A;color:#fff;text-decoration:none;font-size:12px;padding:6px 12px;border-radius:6px;font-weight:700">⬇ Excel</a>
+            <a href="/api/reports/export/csv?type=${tab === 'executive' ? 'executive_summary' : tab}&date_mode=${currentReportMode}&target_date=${activeDate}&start_date=${currentReportStartDate}&end_date=${currentReportEndDate}" target="_blank" class="btn sm" style="background:#0284C7;color:#fff;text-decoration:none;font-size:12px;padding:6px 12px;border-radius:6px;font-weight:700">⬇ CSV</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="reportsDataView"><div style="text-align:center;padding:40px;color:var(--slate)">Fetching report records...</div></div>
+  `;
+
+  const viewContainer = document.getElementById('reportsDataView');
+  if (!viewContainer) return;
+
+  try {
+    const queryParams = `?date_mode=${currentReportMode}&target_date=${activeDate}&start_date=${currentReportStartDate}&end_date=${currentReportEndDate}`;
+    
+    if (tab === 'executive') {
+      const res = await apiFetch(`/api/reports/executive-summary${queryParams}`);
+      const r = (res && res.data) ? res.data : res;
+
+      viewContainer.innerHTML = `
+        <!-- Metrics Grid -->
+        <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px;margin-bottom:20px">
+          <div class="card" style="padding:16px;border-left:4px solid var(--blue)">
+            <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Total Orders</div>
+            <div style="font-size:24px;font-weight:900;color:var(--navy);margin-top:4px">${fmt(r.total_orders || 0)}</div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">New: ${fmt(r.new_orders || 0)} | Pending: ${fmt(r.pending_orders || 0)}</div>
+          </div>
+          <div class="card" style="padding:16px;border-left:4px solid #16A34A">
+            <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Allocated Orders</div>
+            <div style="font-size:24px;font-weight:900;color:#16A34A;margin-top:4px">${fmt(r.allocated_orders || 0)}</div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">Coverage: ${(r.allocation_coverage_pct || 0).toFixed(1)}%</div>
+          </div>
+          <div class="card" style="padding:16px;border-left:4px solid #8B5CF6">
+            <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Completed Orders</div>
+            <div style="font-size:24px;font-weight:900;color:#8B5CF6;margin-top:4px">${fmt(r.completed_orders || 0)}</div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">Real Actions: ${fmt(r.total_actions || 0)}</div>
+          </div>
+          <div class="card" style="padding:16px;border-left:4px solid #F59E0B">
+            <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Active CS Working</div>
+            <div style="font-size:24px;font-weight:900;color:#D97706;margin-top:4px">${fmt(r.active_working_employees || 0)}</div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">Total Pool: ${fmt(r.total_master_employees || 0)}</div>
+          </div>
+        </div>
+
+        <!-- Daily Breakdown Table -->
+        <div class="panel">
+          <div class="hd">
+            <h3>📅 Period Daily Breakdown (${r.start_date} to ${r.end_date})</h3>
+          </div>
+          <div class="tbl-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th style="text-align:right">Total Orders</th>
+                  <th style="text-align:right">Allocated</th>
+                  <th style="text-align:right">Unallocated</th>
+                  <th style="text-align:right">Completed</th>
+                  <th style="text-align:right">Actions</th>
+                  <th style="text-align:right">Working CS</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(r.daily_breakdown || []).map(d => `
+                  <tr>
+                    <td><b>${d.work_date}</b></td>
+                    <td style="text-align:right">${fmt(d.total_orders)}</td>
+                    <td style="text-align:right;color:#16A34A;font-weight:700">${fmt(d.allocated_orders)}</td>
+                    <td style="text-align:right;color:#D97706">${fmt(d.unallocated_orders)}</td>
+                    <td style="text-align:right;color:#8B5CF6;font-weight:700">${fmt(d.completed_orders)}</td>
+                    <td style="text-align:right">${fmt(d.real_actions)}</td>
+                    <td style="text-align:right">${fmt(d.working_employees)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    } else if (tab === 'employee') {
+      const res = await apiFetch(`/api/reports/employee${queryParams}`);
+      const r = (res && res.data) ? res.data : res;
+
+      viewContainer.innerHTML = `
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h3>👤 CS Operational Employee Performance (${r.total_employees || (r.rows || []).length} CS Agents)</h3>
+              <p>Performance profiles, rates, and workload capacity strictly filtered for Customer Service</p>
+            </div>
+          </div>
+          <div class="tbl-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Employee Name</th>
+                  <th>Team</th>
+                  <th style="text-align:center">Working Days</th>
+                  <th style="text-align:right">Rate / 10m</th>
+                  <th style="text-align:right">Assigned Orders</th>
+                  <th style="text-align:right">Unique Worked</th>
+                  <th style="text-align:right">Completed</th>
+                  <th style="text-align:right">Completion %</th>
+                  <th style="text-align:right">Capacity</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(r.rows || []).map(row => `
+                  <tr>
+                    <td><b>${escapeHtml(row.employee_name)}</b></td>
+                    <td><span class="tag">${escapeHtml(row.team_membership || 'STANDARD')}</span></td>
+                    <td style="text-align:center">${row.working_days}</td>
+                    <td style="text-align:right;font-weight:700">${(row.typical_orders_10m || 0).toFixed(1)}</td>
+                    <td style="text-align:right">${fmt(row.total_assigned)}</td>
+                    <td style="text-align:right">${fmt(row.unique_orders_worked)}</td>
+                    <td style="text-align:right;color:#16A34A;font-weight:700">${fmt(row.completed_orders)}</td>
+                    <td style="text-align:right;font-weight:700">${row.completion_pct}%</td>
+                    <td style="text-align:right">${fmt(row.remaining_capacity)}</td>
+                    <td>
+                      <span class="tag" style="background:${row.operational_status === 'ACTIVE_WORKING' ? '#DCFCE7;color:#15803D' : '#F1F5F9;color:#64748B'}">
+                        ${row.operational_status}
+                      </span>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    } else if (tab === 'allocation') {
+      const res = await apiFetch(`/api/reports/allocation${queryParams}`);
+      const r = (res && res.data) ? res.data : res;
+
+      viewContainer.innerHTML = `
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h3>⚡ Work Allocation Audit (${r.total_allocations || (r.rows || []).length} Records)</h3>
+              <p>Order assignment mapping to CS employees with single-owner and split integrity</p>
+            </div>
+          </div>
+          <div class="tbl-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Order Code</th>
+                  <th>Account / Merchant</th>
+                  <th>Status</th>
+                  <th>Assigned To (CS)</th>
+                  <th>Method / Source</th>
+                  <th>Distribution</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(r.rows || []).slice(0, 500).map(row => `
+                  <tr>
+                    <td>${row.allocation_date}</td>
+                    <td><span style="font-family:monospace;font-weight:700;color:var(--blue)">${escapeHtml(row.order_code)}</span></td>
+                    <td><b>${escapeHtml(row.account)}</b></td>
+                    <td><span class="tag">${escapeHtml(row.status)}</span></td>
+                    <td style="font-weight:700;color:var(--navy)">${escapeHtml(row.employee_name)}</td>
+                    <td><span class="tag" style="font-size:11px">${escapeHtml(row.source)}</span></td>
+                    <td><span class="tag" style="background:${row.unified_or_split === 'UNIFIED' ? '#EFF6FF;color:#1D4ED8' : '#FEF3C7;color:#D97706'}">${row.unified_or_split}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+            ${(r.rows || []).length > 500 ? `<div style="padding:10px;text-align:center;color:var(--slate);font-size:12px">Showing first 500 records. Export to Excel for full list.</div>` : ''}
+          </div>
+        </div>
+      `;
+    } else if (tab === 'accounts') {
+      const res = await apiFetch(`/api/reports/account${queryParams}`);
+      const r = (res && res.data) ? res.data : res;
+
+      viewContainer.innerHTML = `
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h3>📑 Accounts & Merchant Distribution (${r.total_accounts || (r.rows || []).length} Accounts)</h3>
+              <p>Account volume, ownership stability, and CS assignment structure</p>
+            </div>
+          </div>
+          <div class="tbl-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Account / Merchant</th>
+                  <th style="text-align:right">Total Orders</th>
+                  <th style="text-align:right">New</th>
+                  <th style="text-align:right">Pending</th>
+                  <th>CS Owner(s)</th>
+                  <th>Structure</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(r.rows || []).map(row => `
+                  <tr>
+                    <td><b>${escapeHtml(row.account_name)}</b></td>
+                    <td style="text-align:right;font-weight:700">${fmt(row.total_orders)}</td>
+                    <td style="text-align:right">${fmt(row.new_orders)}</td>
+                    <td style="text-align:right">${fmt(row.pending_orders)}</td>
+                    <td style="color:var(--navy);font-weight:700">${escapeHtml(row.owner_name)}</td>
+                    <td><span class="tag" style="background:${row.distribution_type === 'UNIFIED' ? '#EFF6FF;color:#1D4ED8' : '#FEF3C7;color:#D97706'}">${row.distribution_type}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    } else if (tab === 'activity') {
+      const res = await apiFetch(`/api/reports/activity-logs${queryParams}`);
+      const r = (res && res.data) ? res.data : res;
+
+      viewContainer.innerHTML = `
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h3>📋 Vendoor Activity & Audit Logs (${r.total_actions} Actions)</h3>
+              <p>Complete historical activity records preserving original Vendoor actor identities for audit</p>
+            </div>
+          </div>
+          <div class="tbl-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Order Code</th>
+                  <th>Action / Type</th>
+                  <th>Added By / Vendoor Actor</th>
+                  <th>Productive</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(r.rows || []).slice(0, 500).map(row => `
+                  <tr>
+                    <td style="font-size:12px;color:var(--slate)">${row.action_timestamp || row.work_date}</td>
+                    <td><span style="font-family:monospace;font-weight:700;color:var(--blue)">${escapeHtml(row.order_code)}</span></td>
+                    <td><b>${escapeHtml(row.action_type)}</b></td>
+                    <td style="color:var(--navy);font-weight:700">${escapeHtml(row.raw_actor || 'Unknown')}</td>
+                    <td><span class="tag" style="background:${row.is_productive ? '#DCFCE7;color:#15803D' : '#F1F5F9;color:#64748B'}">${row.is_productive ? 'YES' : 'NO'}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+            ${(r.rows || []).length > 500 ? `<div style="padding:10px;text-align:center;color:var(--slate);font-size:12px">Showing first 500 audit rows. Export to Excel for full history.</div>` : ''}
+          </div>
+        </div>
+      `;
+    }
+  } catch (err) {
+    viewContainer.innerHTML = `<div class="panel" style="color:#DC2626;padding:24px;text-align:center">Error loading report: ${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -7997,18 +8405,20 @@ async function initApp() {
   updateUrlDate(currentWorkDate);
   updateGlobalDateUI();
 
-  await fetchPerformanceDataForDate(currentWorkDate);
-
+  // Phase 1: Render shell immediately
   render();
+
+  // Phase 2: Fetch performance data in background and update view
+  fetchPerformanceDataForDate(currentWorkDate).then(() => {
+    RENDERED = pages();
+    show(currentMainPage, currentSubTabs[currentMainPage]);
+  });
 }
 
 window.addEventListener('popstate', async () => {
   const newDate = getInitialDate();
   if (newDate !== currentWorkDate) {
-    currentWorkDate = newDate;
-    updateGlobalDateUI();
-    await fetchPerformanceDataForDate(newDate);
-    render();
+    setGlobalSelectedDate(newDate);
   }
 });
 
@@ -8299,100 +8709,117 @@ function downloadSelf(){
 </script>
 
 <script>
+window.ensureXlsxLoaded = function(cb) {
+  if (typeof XLSX !== 'undefined') return cb();
+  var script = document.createElement('script');
+  script.src = '/xlsx.full.min.js';
+  script.onload = function() { cb(); };
+  script.onerror = function() {
+    window.location.href = '/Executive_Report_v3.xlsx';
+  };
+  document.head.appendChild(script);
+};
+
 window.exportCurrentExcel = function() {
-  if (typeof XLSX === 'undefined') {
-    window.location.href = '/Executive_Report_v3.xlsx';
-    return;
-  }
-  try {
-    var wb = XLSX.utils.book_new();
-    var tot = D.log_totals, hs = D.hr || {}, ded = D.dedup || {}, emp = D.employees || [];
-    
-    // Executive Summary
-    var sRows = [
-      ['CUSTOMER SERVICE — EXECUTIVE REPORT (DEDUPLICATED)'],
-      ['Each status change counted once per order+employee+status. Removed ' + (ded.removed||0).toLocaleString() + ' duplicate rows (' + (ded.removed_pct||0) + '% of raw).'],
-      [],
-      ['KEY PERFORMANCE INDICATORS', 'VALUE'],
-      ['Total Real Actions', (tot.actions||0).toLocaleString()],
-      ['Raw Rows (before dedup)', (ded.raw_cs_status||0).toLocaleString()],
-      ['New Orders', (hs.tot_new||0).toLocaleString()],
-      ['Printed', (tot.printed||0).toLocaleString()],
-      ['Team Print Rate', (tot.actions ? (tot.printed/tot.actions*100).toFixed(1) : 0) + '%'],
-      ['Pending', (tot.pending||0).toLocaleString()],
-      ['Team Pending Rate', (D.team_pending_rate||0) + '%'],
-      ['Cancelled', (tot.cancelled||0).toLocaleString()],
-      ['Team Cancel Rate', (D.team_cancel_rate||0) + '%'],
-      ['Alt Phones Added', (tot.alt||0).toLocaleString()],
-      ['Top Performer', emp[0] ? emp[0].name : '-'],
-      [],
-      ['EXECUTIVE INSIGHTS']
-    ];
-    if (D.insights) {
-      D.insights.forEach(function(ins) { sRows.push(['• ' + ins]); });
+  window.ensureXlsxLoaded(function() {
+    try {
+      var wb = XLSX.utils.book_new();
+      var tot = D.log_totals, hs = D.hr || {}, ded = D.dedup || {}, emp = D.employees || [];
+      
+      // Executive Summary
+      var sRows = [
+        ['CUSTOMER SERVICE — EXECUTIVE REPORT (DEDUPLICATED)'],
+        ['Each status change counted once per order+employee+status. Removed ' + (ded.removed||0).toLocaleString() + ' duplicate rows (' + (ded.removed_pct||0) + '% of raw).'],
+        [],
+        ['KEY PERFORMANCE INDICATORS', 'VALUE'],
+        ['Total Real Actions', (tot.actions||0).toLocaleString()],
+        ['Raw Rows (before dedup)', (ded.raw_cs_status||0).toLocaleString()],
+        ['New Orders', (hs.tot_new||0).toLocaleString()],
+        ['Printed', (tot.printed||0).toLocaleString()],
+        ['Team Print Rate', (tot.actions ? (tot.printed/tot.actions*100).toFixed(1) : 0) + '%'],
+        ['Pending', (tot.pending||0).toLocaleString()],
+        ['Team Pending Rate', (D.team_pending_rate||0) + '%'],
+        ['Cancelled', (tot.cancelled||0).toLocaleString()],
+        ['Team Cancel Rate', (D.team_cancel_rate||0) + '%'],
+        ['Alt Phones Added', (tot.alt||0).toLocaleString()],
+        ['Top Performer', emp[0] ? emp[0].name : '-'],
+        [],
+        ['EXECUTIVE INSIGHTS']
+      ];
+      if (D.insights) {
+        D.insights.forEach(function(ins) { sRows.push(['• ' + ins]); });
+      }
+      var wsS = XLSX.utils.aoa_to_sheet(sRows);
+      wsS['!cols'] = [{ wch: 45 }, { wch: 25 }];
+      XLSX.utils.book_append_sheet(wb, wsS, 'Executive Summary');
+
+      // Daily Trend
+      var dRows = [['Date', 'Day', 'New Orders', 'Printed', 'Printed %', 'Cancelled', 'Cancel %']];
+      (D.daily || []).forEach(function(d) {
+        dRows.push([d.day, d.dow, d.new, d.printed, d.printed_pct + '%', d.cancel, d.cancel_pct + '%']);
+      });
+      var wsD = XLSX.utils.aoa_to_sheet(dRows);
+      wsD['!cols'] = [{ wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+      XLSX.utils.book_append_sheet(wb, wsD, 'Daily Trend');
+
+      // Scorecard
+      var scRows = [['Rank', 'Employee', 'Total Actions', 'Printed', 'Print %', 'Pending', 'Pend %', 'Processing', 'Cancelled', 'Cancel %', 'Alt Phone', 'Alt %', 'Added Orders', 'Contribution %', 'Grade', 'Segment', 'Cancel Risk']];
+      emp.forEach(function(e) {
+        scRows.push([e.rank, e.name, e.actions, e.printed, e.own_printed_rate + '%', e.pending, e.own_pending_rate + '%', e.processing, e.cancelled, e.own_cancel_rate + '%', e.alt, e.own_alt_rate + '%', e.added, e.contribution_pct + '%', e.grade, e.segment, e.cancel_risk]);
+      });
+      var wsSc = XLSX.utils.aoa_to_sheet(scRows);
+      wsSc['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 18 }, { wch: 14 }];
+      XLSX.utils.book_append_sheet(wb, wsSc, 'Agent Scorecard');
+
+      // Cancellation
+      var cRows = [['Rank', 'Employee', 'Total Actions', 'Cancelled', 'Own Cancel Rate %', '% of Team Cancels', 'Risk']];
+      var cdf = emp.slice().filter(function(e) { return e.cancelled > 0; }).sort(function(a, b) { return b.own_cancel_rate - a.own_cancel_rate; });
+      cdf.forEach(function(e, idx) {
+        cRows.push([idx + 1, e.name, e.actions, e.cancelled, e.own_cancel_rate + '%', e.canc_share_pct + '%', e.cancel_risk]);
+      });
+      var wsC = XLSX.utils.aoa_to_sheet(cRows);
+      wsC['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 14 }];
+      XLSX.utils.book_append_sheet(wb, wsC, 'Cancellation Analysis');
+
+      // Status Distribution
+      var st = D.status_totals || {};
+      var distRows = [
+        ['Status', 'Count', 'Share %'],
+        ['Printed', st.Printed || 0, (tot.actions ? ((st.Printed || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
+        ['Pending', st.Pending || 0, (tot.actions ? ((st.Pending || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
+        ['Processing', st.Processing || 0, (tot.actions ? ((st.Processing || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
+        ['Cancelled', st.Cancelled || 0, (tot.actions ? ((st.Cancelled || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
+      ];
+      var wsDist = XLSX.utils.aoa_to_sheet(distRows);
+      wsDist['!cols'] = [{ wch: 16 }, { wch: 12 }, { wch: 12 }];
+      XLSX.utils.book_append_sheet(wb, wsDist, 'Status Distribution');
+
+      XLSX.writeFile(wb, 'Executive_Report.xlsx');
+    } catch(err) {
+      console.error('Export failed, falling back to static download:', err);
+      window.location.href = '/Executive_Report_v3.xlsx';
     }
-    var wsS = XLSX.utils.aoa_to_sheet(sRows);
-    wsS['!cols'] = [{ wch: 45 }, { wch: 25 }];
-    XLSX.utils.book_append_sheet(wb, wsS, 'Executive Summary');
-
-    // Daily Trend
-    var dRows = [['Date', 'Day', 'New Orders', 'Printed', 'Printed %', 'Cancelled', 'Cancel %']];
-    (D.daily || []).forEach(function(d) {
-      dRows.push([d.day, d.dow, d.new, d.printed, d.printed_pct + '%', d.cancel, d.cancel_pct + '%']);
-    });
-    var wsD = XLSX.utils.aoa_to_sheet(dRows);
-    wsD['!cols'] = [{ wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, wsD, 'Daily Trend');
-
-    // Scorecard
-    var scRows = [['Rank', 'Employee', 'Total Actions', 'Printed', 'Print %', 'Pending', 'Pend %', 'Processing', 'Cancelled', 'Cancel %', 'Alt Phone', 'Alt %', 'Added Orders', 'Contribution %', 'Grade', 'Segment', 'Cancel Risk']];
-    emp.forEach(function(e) {
-      scRows.push([e.rank, e.name, e.actions, e.printed, e.own_printed_rate + '%', e.pending, e.own_pending_rate + '%', e.processing, e.cancelled, e.own_cancel_rate + '%', e.alt, e.own_alt_rate + '%', e.added, e.contribution_pct + '%', e.grade, e.segment, e.cancel_risk]);
-    });
-    var wsSc = XLSX.utils.aoa_to_sheet(scRows);
-    wsSc['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 18 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, wsSc, 'Agent Scorecard');
-
-    // Cancellation
-    var cRows = [['Rank', 'Employee', 'Total Actions', 'Cancelled', 'Own Cancel Rate %', '% of Team Cancels', 'Risk']];
-    var cdf = emp.slice().filter(function(e) { return e.cancelled > 0; }).sort(function(a, b) { return b.own_cancel_rate - a.own_cancel_rate; });
-    cdf.forEach(function(e, idx) {
-      cRows.push([idx + 1, e.name, e.actions, e.cancelled, e.own_cancel_rate + '%', e.canc_share_pct + '%', e.cancel_risk]);
-    });
-    var wsC = XLSX.utils.aoa_to_sheet(cRows);
-    wsC['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, wsC, 'Cancellation Analysis');
-
-    // Status Distribution
-    var st = D.status_totals || {};
-    var distRows = [
-      ['Status', 'Count', 'Share %'],
-      ['Printed', st.Printed || 0, (tot.actions ? ((st.Printed || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
-      ['Pending', st.Pending || 0, (tot.actions ? ((st.Pending || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
-      ['Processing', st.Processing || 0, (tot.actions ? ((st.Processing || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
-      ['Cancelled', st.Cancelled || 0, (tot.actions ? ((st.Cancelled || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
-    ];
-    var wsDist = XLSX.utils.aoa_to_sheet(distRows);
-    wsDist['!cols'] = [{ wch: 16 }, { wch: 12 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, wsDist, 'Status Distribution');
-
-    XLSX.writeFile(wb, 'Executive_Report.xlsx');
-  } catch(err) {
-    console.error('Export failed, falling back to static download:', err);
-    window.location.href = '/Executive_Report_v3.xlsx';
-  }
+  });
 };
 </script>
 
 
 <script>
-window.exportCurrentExcel = function() {
-  if (typeof XLSX === 'undefined') {
+window.ensureXlsxLoaded = function(cb) {
+  if (typeof XLSX !== 'undefined') return cb();
+  var script = document.createElement('script');
+  script.src = '/xlsx.full.min.js';
+  script.onload = function() { cb(); };
+  script.onerror = function() {
     window.location.href = '/Executive_Report_v3.xlsx';
-    return;
-  }
-  try {
-    var wb = XLSX.utils.book_new();
+  };
+  document.head.appendChild(script);
+};
+
+window.exportCurrentExcel = function() {
+  window.ensureXlsxLoaded(function() {
+    try {
+      var wb = XLSX.utils.book_new();
     var tot = D.log_totals, hs = D.hr || {}, ded = D.dedup || {}, emp = D.employees || [];
     
     // Executive Summary
@@ -8468,6 +8895,7 @@ window.exportCurrentExcel = function() {
     console.error('Export failed, falling back to static download:', err);
     window.location.href = '/Executive_Report_v3.xlsx';
   }
+  });
 };
 </script>
 

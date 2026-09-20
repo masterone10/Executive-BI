@@ -15,7 +15,7 @@
  */
 
 import { db } from '../../db/index.js';
-import { normalizeEmployeeName } from '../parser.js';
+import { normalizeEmployeeName, isCsEmployee } from '../parser.js';
 import { classifyVendoorAction, ACTION_CLASSIFICATIONS } from './actions.js';
 import { resolveEmployeeIdentity } from './identity.js';
 
@@ -122,6 +122,14 @@ export function getProductivityConfig() {
   };
 }
 
+// In-memory short-lived cache for productivity computation
+const productivityCache = new Map();
+const PRODUCTIVITY_CACHE_TTL_MS = 10000;
+
+export function invalidateProductivityCache() {
+  productivityCache.clear();
+}
+
 /**
  * Calculates historical productivity metrics for all matched employees from real log records.
  *
@@ -129,6 +137,13 @@ export function getProductivityConfig() {
  * @returns {Map<number, Object>} Map of employee_id -> ProductivityMetrics
  */
 export function computeHistoricalProductivity(asOfDate = null) {
+  const cacheKey = asOfDate || 'ALL';
+  const cached = productivityCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && (now - cached.timestamp < PRODUCTIVITY_CACHE_TTL_MS)) {
+    return cached.data;
+  }
+
   const cfg = getProductivityConfig();
 
   // 1. Fetch raw logs from database
@@ -152,7 +167,7 @@ export function computeHistoricalProductivity(asOfDate = null) {
   }
 
   // 2. Fetch master employees and existing identity mappings for resolution
-  const masterEmployees = db.prepare('SELECT id, name, department, active FROM employees').all();
+  const masterEmployees = db.prepare('SELECT id, name, department, active FROM employees').all().filter(e => isCsEmployee(e));
   const masterMapById = new Map();
   for (const emp of masterEmployees) {
     masterMapById.set(emp.id, emp);
@@ -161,6 +176,7 @@ export function computeHistoricalProductivity(asOfDate = null) {
   // 3. Resolve identities and classify actions
   // Group by matched employee_id
   const empEventsMap = new Map(); // employee_id -> array of valid classified events
+  const nameResolutionCache = new Map(); // employee_name string -> resolved identity
 
   for (const r of rows) {
     if (!r.employee_name || !r.order_code) continue;
@@ -172,7 +188,12 @@ export function computeHistoricalProductivity(asOfDate = null) {
       continue;
     }
 
-    const resolved = resolveEmployeeIdentity(r.employee_name, { persistIdentity: false });
+    let resolved = nameResolutionCache.get(r.employee_name);
+    if (resolved === undefined) {
+      resolved = resolveEmployeeIdentity(r.employee_name, { persistIdentity: false });
+      nameResolutionCache.set(r.employee_name, resolved);
+    }
+
     if (!resolved.employee_id) {
       // Unmatched or needs review -> do not attribute to master profile
       continue;
@@ -193,7 +214,7 @@ export function computeHistoricalProductivity(asOfDate = null) {
 
   for (const [empId, events] of empEventsMap.entries()) {
     const masterEmp = masterMapById.get(empId);
-    if (!masterEmp) continue;
+    if (!masterEmp || !isCsEmployee(masterEmp)) continue;
 
     // A. 120-Second Deduplication per (order_code + action)
     const dedupedEvents = [];
@@ -338,6 +359,7 @@ export function computeHistoricalProductivity(asOfDate = null) {
     });
   }
 
+  productivityCache.set(cacheKey, { timestamp: Date.now(), data: results });
   return results;
 }
 
@@ -350,7 +372,7 @@ export function computeHistoricalProductivity(asOfDate = null) {
 export function getFullEmployeeProductivityProfiles(workDate) {
   const cfg = getProductivityConfig();
   const productivityMap = computeHistoricalProductivity(workDate);
-  const masterEmployees = db.prepare('SELECT id, name, department, active, team_membership FROM employees WHERE active = 1 ORDER BY name ASC').all();
+  const masterEmployees = db.prepare('SELECT id, name, department, active, team_membership FROM employees WHERE active = 1 ORDER BY name ASC').all().filter(e => isCsEmployee(e));
 
   // Query Current Load from today's assigned allocations
   const currentLoadMap = new Map();

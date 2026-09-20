@@ -377,6 +377,15 @@ export function runMigrations(database = db) {
   // Safe index migration: Ensure UNIQUE index on (date, employee_name) for performance_snapshots
   try {
     database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_perf_snapshots_date_emp ON performance_snapshots(date, employee_name)");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_dwt_workdate ON daily_working_team(work_date)");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_dwt_date_emp ON daily_working_team(work_date, employee_id)");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_employees_active_dept ON employees(active, department)");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status)");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_daily_metrics_workdate ON daily_metrics_snapshots(work_date)");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_vendoor_orders_srcdate ON vendoor_orders(source_date, account)");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_cwo_date_acc ON current_work_orders(work_date, account)");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_ord_alloc_date_ver ON order_level_allocations(allocation_date, allocation_version, employee_id)");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_raw_logs_date_emp_dt ON raw_log_records(work_date, employee_name, event_datetime)");
   } catch (e) {
     // Ignored if index exists
   }

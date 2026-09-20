@@ -1,5 +1,5 @@
 import { db } from '../db/index.js';
-import { parseSpecificOrdersBuffer, parseAnyUploadedBuffer, detectWorkbookDateAndType, normalizeDateToISO } from './parser.js';
+import { parseSpecificOrdersBuffer, parseAnyUploadedBuffer, detectWorkbookDateAndType, normalizeDateToISO, isCsEmployee } from './parser.js';
 import { computePerformanceFromRecords, savePerformanceSnapshotToDB, getEmployeePerformanceProfiles, calculateSmartAllocationScore } from './performance.js';
 import { persistDailyLogRecords } from './tracking.js';
 import { syncAndRestoreObservedTeam } from './working_team_ops.js';
@@ -985,7 +985,7 @@ export function getAllocationForDate(workDate) {
     JOIN employees e ON ai.employee_id = e.id
     WHERE ai.allocation_header_id = ?
     ORDER BY e.name ASC, ai.account ASC
-  `).all(header.id);
+  `).all(header.id).filter(it => isCsEmployee({ name: it.employee_name, department: it.department, id: it.employee_id }));
 
   // Group by employee
   const byEmployee = new Map();
@@ -1448,7 +1448,7 @@ export function getWorkingTeam(workDate) {
     FROM employees
     WHERE active = 1 AND (status = 'ACTIVE' OR status IS NULL)
     ORDER BY name COLLATE NOCASE ASC
-  `).all();
+  `).all().filter(e => isCsEmployee(e));
 
   const workingRows = db.prepare(`
     SELECT employee_id, is_working, source, observed_at, last_activity_at
@@ -1495,7 +1495,7 @@ export function getWorkingTeam(workDate) {
  * Save date-specific working team (explicit MANUAL configuration)
  */
 export function saveWorkingTeam(workDate, teamList) {
-  const allEmployees = db.prepare("SELECT id FROM employees WHERE active = 1 AND (status = 'ACTIVE' OR status IS NULL)").all();
+  const allEmployees = db.prepare("SELECT id, name, department FROM employees WHERE active = 1 AND (status = 'ACTIVE' OR status IS NULL)").all().filter(e => isCsEmployee(e));
   const activeIdsSet = new Set(
     teamList
       .filter(item => item.is_working === true || item.is_working === 1)
@@ -1546,8 +1546,8 @@ export function getAccountReassignmentLogs(workDate) {
   `).all(workDate);
 }
 
-export function isCSDepartment(dept) {
-  return String(dept || '').trim().toUpperCase() === 'CS';
+export function isCSDepartment(dept, name = '') {
+  return isCsEmployee({ name: name || '', department: dept || '' });
 }
 
 export function reassignAccountOwner(workDate, account, newEmployeeId, reason = 'Supervisor Reassignment', reassignedBy = 'Supervisor', forceOverride = false) {
@@ -1555,7 +1555,7 @@ export function reassignAccountOwner(workDate, account, newEmployeeId, reason = 
   if (!emp) {
     throw new Error(`Employee ID ${newEmployeeId} not found`);
   }
-  if (!isCSDepartment(emp.department) && !forceOverride) {
+  if (!isCsEmployee(emp) && !forceOverride) {
     throw new Error(`Worker "${emp.name}" (ID #${newEmployeeId}) belongs to department "${emp.department}". Work Allocation requires CS employees only.`);
   }
   if (emp.status === 'DEPARTED' && !forceOverride) {
@@ -1704,7 +1704,7 @@ export function generateOrderLevelAllocation(workDate, options = {}) {
   }
 
   // 2. Fetch today's active working team — STRICTLY CS DEPARTMENT ONLY
-  const workingTeam = getWorkingTeam(workDate).filter(e => e.is_working && isCSDepartment(e.department));
+  const workingTeam = getWorkingTeam(workDate).filter(e => e.is_working && isCSDepartment(e.department, e.name));
   if (workingTeam.length === 0) {
     throw new Error(`SETUP REQUIRED / VALIDATION ERROR: No working employees selected. No active CS employees found in today's working team for date: ${workDate}. Please configure Today's Working Team with CS employees.`);
   }
@@ -1730,7 +1730,7 @@ export function generateOrderLevelAllocation(workDate, options = {}) {
 
     for (const own of existingOwners) {
       if (own.account && own.employee_id) {
-        const isStillWorking = workingTeam.some(w => w.employee_id === own.employee_id && isCSDepartment(w.department));
+        const isStillWorking = workingTeam.some(w => w.employee_id === own.employee_id && isCSDepartment(w.department, w.name));
         if (isStillWorking) {
           savedOwnersMap.set(own.account.toLowerCase(), {
             employee_id: own.employee_id,
@@ -1747,7 +1747,7 @@ export function generateOrderLevelAllocation(workDate, options = {}) {
     if (savedOwnersMap.size === 0 && existingSavedAllocation && Array.isArray(existingSavedAllocation.raw_allocations)) {
       for (const alloc of existingSavedAllocation.raw_allocations) {
         if (alloc.account && alloc.employee_id && !savedOwnersMap.has(alloc.account.toLowerCase())) {
-          const isStillWorking = workingTeam.some(w => w.employee_id === alloc.employee_id && isCSDepartment(w.department));
+          const isStillWorking = workingTeam.some(w => w.employee_id === alloc.employee_id && isCSDepartment(w.department, w.name));
           if (isStillWorking) {
             savedOwnersMap.set(alloc.account.toLowerCase(), {
               employee_id: alloc.employee_id,
@@ -1776,7 +1776,7 @@ export function generateOrderLevelAllocation(workDate, options = {}) {
       for (const own of priorOwners) {
         const accLower = (own.account || '').toLowerCase();
         if (accLower && !savedOwnersMap.has(accLower) && own.employee_id) {
-          const isStillWorking = workingTeam.some(w => w.employee_id === own.employee_id && isCSDepartment(w.department));
+          const isStillWorking = workingTeam.some(w => w.employee_id === own.employee_id && isCSDepartment(w.department, w.name));
           if (isStillWorking) {
             savedOwnersMap.set(accLower, {
               employee_id: own.employee_id,
@@ -2468,7 +2468,7 @@ export function manualOverrideOrderAllocation(workDate, versionNumber, orderCode
   if (!emp) {
     throw new Error(`Employee ID ${newEmployeeId} not found`);
   }
-  if (!isCSDepartment(emp.department) && !forceOverride) {
+  if (!isCsEmployee(emp) && !forceOverride) {
     throw new Error(`Worker "${emp.name}" (ID #${newEmployeeId}) belongs to department "${emp.department}". Work Allocation requires CS employees only.`);
   }
 

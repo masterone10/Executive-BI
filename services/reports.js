@@ -6,6 +6,7 @@
  */
 
 import { db, checkDatabaseIntegrity } from '../db/index.js';
+import { isCsEmployee } from './parser.js';
 import { getFullEmployeeProductivityProfiles } from './vendoor/productivity.js';
 import { getEmployeeWorkloadAndRefillStates } from './vendoor/workload.js';
 import { getDispatcherStatus, getDispatcherConfig, getEffectiveWorkDate } from './vendoor/dispatcher.js';
@@ -299,7 +300,7 @@ export function generateEmployeeReport(opts = {}) {
     params.push(parseInt(filters.employee_id, 10));
   }
   employeesQuery += ' ORDER BY name ASC';
-  const employees = db.prepare(employeesQuery).all(...params);
+  const employees = db.prepare(employeesQuery).all(...params).filter(e => isCsEmployee(e));
 
   const employeeRows = [];
 

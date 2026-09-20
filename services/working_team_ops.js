@@ -14,6 +14,7 @@
  */
 
 import { db } from '../db/index.js';
+import { isCsEmployee } from './parser.js';
 import { getCompletedOrdersForDate } from './vendoor/completion.js';
 import { getFullEmployeeProductivityProfiles } from './vendoor/productivity.js';
 import { getEmployeeWorkloadAndRefillStates } from './vendoor/workload.js';
@@ -130,17 +131,17 @@ export function syncAndRestoreObservedTeam(workDate) {
     if (empId) {
       // Validate against Employee Master
       const emp = db.prepare(`
-        SELECT id, name, status, active, departure_date
+        SELECT id, name, department, status, active, departure_date
         FROM employees
         WHERE id = ?
       `).get(empId);
 
-      // Invariant 9: Employee must be active and not departed
+      // Invariant 9: Employee must be active and not departed, and must be CS
       const isDeparted = emp && (
         emp.status === 'DEPARTED' || 
         (emp.departure_date && emp.departure_date <= workDate)
       );
-      const isMasterActive = emp && emp.active === 1 && !isDeparted;
+      const isMasterActive = emp && emp.active === 1 && !isDeparted && isCsEmployee(emp);
 
       if (isMasterActive) {
         if (!observedValidEmployees.has(empId)) {
@@ -170,7 +171,7 @@ export function syncAndRestoreObservedTeam(workDate) {
 
   // Invariant 8 & 13: Preserve employees already recorded as VENDOOR_OBSERVED earlier today
   const existingObservedRows = db.prepare(`
-    SELECT dwt.employee_id, dwt.observed_at, dwt.last_activity_at, e.name, e.status, e.active, e.departure_date
+    SELECT dwt.employee_id, dwt.observed_at, dwt.last_activity_at, e.name, e.department, e.status, e.active, e.departure_date
     FROM daily_working_team dwt
     JOIN employees e ON dwt.employee_id = e.id
     WHERE dwt.work_date = ? AND dwt.source = 'VENDOOR_OBSERVED' AND dwt.is_working = 1
@@ -178,7 +179,7 @@ export function syncAndRestoreObservedTeam(workDate) {
 
   for (const prev of existingObservedRows) {
     const isDeparted = prev.status === 'DEPARTED' || (prev.departure_date && prev.departure_date <= workDate);
-    const isMasterActive = prev.active === 1 && !isDeparted;
+    const isMasterActive = prev.active === 1 && !isDeparted && isCsEmployee(prev);
     if (isMasterActive && !observedValidEmployees.has(prev.employee_id)) {
       observedValidEmployees.set(prev.employee_id, {
         employee_id: prev.employee_id,
@@ -292,7 +293,7 @@ export function getComprehensiveWorkingTeamStatus(workDate) {
            departure_date, departure_reason, notes, updated_at
     FROM employees
     ORDER BY name COLLATE NOCASE ASC
-  `).all();
+  `).all().filter(e => isCsEmployee(e));
 
   const masterEmpMap = new Map();
   for (const emp of masterEmployees) {

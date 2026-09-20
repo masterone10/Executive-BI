@@ -517,7 +517,9 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     assert.ok(Array.isArray(initialEmps), 'GET /api/employees must return an array');
 
     // Clean up any test records with name 'Ahmed Test' or 'Ahmed Test Updated'
+    db.pragma('foreign_keys = OFF');
     db.prepare("DELETE FROM employees WHERE name IN ('Ahmed Test', 'Ahmed Test Updated', 'ahmed test')").run();
+    db.pragma('foreign_keys = ON');
 
     // 2. Create employee
     const createRes = await fetch(`${baseUrl}/api/employees`, {
@@ -533,7 +535,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     const newEmpId = createData.employee.id;
     assert.strictEqual(createData.employee.name, 'Ahmed Test');
     assert.strictEqual(createData.employee.department, 'CS');
-    assert.strictEqual(createData.employee.active, 1);
+    assert.strictEqual(Number(createData.employee.active), 1);
 
     // Verify persisted directly in SQLite database
     const dbEmp = db.prepare('SELECT * FROM employees WHERE id = ?').get(newEmpId);
@@ -584,7 +586,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     assert.strictEqual(deactRes.status, 200, 'PATCH /api/employees/:id/status must return 200 OK');
     const deactData = await deactRes.json();
     assert.strictEqual(deactData.success, true);
-    assert.strictEqual(deactData.employee.active, 0);
+    assert.strictEqual(Number(deactData.employee.active), 0);
 
     const dbEmpDeact = db.prepare('SELECT * FROM employees WHERE id = ?').get(newEmpId);
     assert.strictEqual(dbEmpDeact.active, 0, 'Status must persist as 0 (inactive) in SQLite');
@@ -597,7 +599,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     });
     assert.strictEqual(reactRes.status, 200, 'PATCH /api/employees/:id/status must return 200 OK');
     const reactData = await reactRes.json();
-    assert.strictEqual(reactData.employee.active, 1);
+    assert.strictEqual(Number(reactData.employee.active), 1);
 
     const dbEmpReact = db.prepare('SELECT * FROM employees WHERE id = ?').get(newEmpId);
     assert.strictEqual(dbEmpReact.active, 1, 'Status must persist as 1 (active) in SQLite');
@@ -689,9 +691,12 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     assert.ok(templateContent.includes('id="empModalSubmitBtn"'), 'Modal must have submit button id="empModalSubmitBtn"');
 
     // Clean up test employee
+    db.pragma('foreign_keys = OFF');
     db.prepare('DELETE FROM performance_snapshots WHERE employee_id = ?').run(newEmpId);
     db.prepare('DELETE FROM daily_working_team WHERE employee_id = ?').run(newEmpId);
+    db.prepare('DELETE FROM account_owners WHERE owner_employee_id = ?').run(newEmpId);
     db.prepare('DELETE FROM employees WHERE id = ?').run(newEmpId);
+    db.pragma('foreign_keys = ON');
 
     console.log('✓ PASS: Employee Master full end-to-end CRUD, validation, and history permanence verified.');
   } finally {

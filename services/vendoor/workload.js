@@ -19,6 +19,7 @@
  */
 
 import { db } from '../../db/index.js';
+import { isCsEmployee } from '../parser.js';
 import { getCompletedOrdersForDate } from './completion.js';
 import { getFullEmployeeProductivityProfiles } from './productivity.js';
 
@@ -110,7 +111,7 @@ export function getEmployeeWorkloadAndRefillStates(workDate, options = {}) {
     FROM employees
     WHERE active = 1 AND (status = 'ACTIVE' OR status IS NULL)
     ORDER BY name ASC
-  `).all();
+  `).all().filter(e => isCsEmployee(e));
 
   const results = [];
 
@@ -150,7 +151,7 @@ export function getEmployeeWorkloadAndRefillStates(workDate, options = {}) {
     let refillReason = '';
     let isEligible = false;
 
-    const isCS = String(emp.department || '').trim().toUpperCase() === 'CS';
+    const isCS = isCsEmployee(emp);
 
     if (!isWorking) {
       refillState = REFILL_STATES.NOT_WORKING;

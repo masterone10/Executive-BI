@@ -32,8 +32,8 @@ db.prepare('INSERT OR REPLACE INTO daily_metrics_snapshots (work_date, metrics_j
   JSON.stringify({
     summary: { totalOrders: 100 },
     employees: [
-      { name: 'Test Agent 1', actions: 50, printed: 30, pending: 10, cancelled: 5, own_cancel_rate: 10 },
-      { name: 'Test Agent 2', actions: 50, printed: 20, pending: 20, cancelled: 10, own_cancel_rate: 20 }
+      { name: 'Test Agent 1 CS', actions: 50, printed: 30, pending: 10, cancelled: 5, own_cancel_rate: 10 },
+      { name: 'Test Agent 2 CS', actions: 50, printed: 20, pending: 20, cancelled: 10, own_cancel_rate: 20 }
     ]
   })
 );
@@ -50,10 +50,10 @@ assert.strictEqual(partialData.log_totals.pending, 30, 'log_totals.pending must 
 assert.ok(partialData.rankings, 'rankings must exist for partial snapshot date');
 assert.ok(Array.isArray(partialData.rankings.cancelled), 'rankings.cancelled must be an array');
 assert.strictEqual(partialData.rankings.cancelled.length, 2, 'rankings.cancelled must contain ranked employees');
-assert.strictEqual(partialData.rankings.cancelled[0].name, 'Test Agent 2', 'Highest cancelled employee should rank first');
+assert.strictEqual(partialData.rankings.cancelled[0].name, 'Test Agent 2 CS', 'Highest cancelled employee should rank first');
 
 assert.ok(Array.isArray(partialData.cancel_rate_rank), 'cancel_rate_rank must be an array');
-assert.strictEqual(partialData.cancel_rate_rank[0].name, 'Test Agent 2');
+assert.strictEqual(partialData.cancel_rate_rank[0].name, 'Test Agent 2 CS');
 
 // Clean up
 db.prepare('DELETE FROM daily_metrics_snapshots WHERE work_date = ?').run(partialDate);

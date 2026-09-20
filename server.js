@@ -1,10 +1,11 @@
 import express from 'express';
+import compression from 'compression';
 import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
 import XLSX from 'xlsx';
 import { db } from './db/index.js';
-import { parseDailyLogBuffer, parseSpecificOrdersBuffer } from './services/parser.js';
+import { parseDailyLogBuffer, parseSpecificOrdersBuffer, isCsEmployee } from './services/parser.js';
 import { computePerformanceFromRecords, savePerformanceSnapshotToDB, getSystemWeights } from './services/performance.js';
 import {
   saveCurrentWorkOrders,
@@ -109,7 +110,8 @@ import {
   bootstrapHistoricalTwoMonths,
   getHistoricalBootstrapStatus,
   getLatestReconciliationAudit,
-  getReconciliationAuditHistory
+  getReconciliationAuditHistory,
+  invalidateProductivityCache
 } from './services/vendoor/index.js';
 import {
   generateExecutiveSummaryReport,
@@ -173,6 +175,12 @@ if (!fs.existsSync(path.join(PUBLIC_DIR, 'index.html')) && fs.existsSync(path.jo
   }
 }
 
+// HTTP Compression (gzip / deflate) for lightning-fast payload transfer
+app.use(compression({
+  threshold: 512,
+  level: 6
+}));
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -182,8 +190,56 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB
 });
 
-// Serve static frontend
-app.use(express.static(PUBLIC_DIR));
+// Serve static frontend with caching headers for static assets
+app.use(express.static(PUBLIC_DIR, {
+  maxAge: '1d',
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.png') || filePath.endsWith('.svg') || filePath.endsWith('.ico')) {
+      res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+    }
+  }
+}));
+
+// In-memory read cache with short TTL (6s) to eliminate duplicate calculations
+const apiResponseCache = new Map();
+const API_RESPONSE_CACHE_TTL = 6000;
+
+export function getCachedApiResponse(key) {
+  const item = apiResponseCache.get(key);
+  if (!item) return null;
+  if (Date.now() - item.timestamp > API_RESPONSE_CACHE_TTL) {
+    apiResponseCache.delete(key);
+    return null;
+  }
+  return item.data;
+}
+
+export function setCachedApiResponse(key, data) {
+  apiResponseCache.set(key, { timestamp: Date.now(), data });
+  if (apiResponseCache.size > 200) {
+    const firstKey = apiResponseCache.keys().next().value;
+    apiResponseCache.delete(firstKey);
+  }
+}
+
+export function invalidateServerApiCache() {
+  apiResponseCache.clear();
+  invalidateProductivityCache();
+}
+
+// Invalidate server cache on successful data mutations
+app.use((req, res, next) => {
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+    const originalSend = res.send;
+    res.send = function(...args) {
+      if (res.statusCode >= 200 && res.statusCode < 400) {
+        invalidateServerApiCache();
+      }
+      return originalSend.apply(this, args);
+    };
+  }
+  next();
+});
 
 // -------------------------------------------------------------
 // 1. HEALTH & SYSTEM CONFIG
@@ -237,7 +293,13 @@ app.get('/api/employees', (req, res) => {
       params.push(active === 'true' || active === '1' ? 1 : 0);
     }
     sql += ' ORDER BY department ASC, name COLLATE NOCASE ASC';
-    const rows = db.prepare(sql).all(...params);
+    let rows = db.prepare(sql).all(...params);
+    if (department && department.toUpperCase() === 'CS') {
+      rows = rows.filter(r => isCsEmployee(r));
+    }
+    if (req.query.cs_only === 'true' || req.query.csOnly === 'true' || req.query.operational === 'true') {
+      rows = rows.filter(r => isCsEmployee(r));
+    }
     res.json(rows);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -772,6 +834,11 @@ app.delete('/api/account-exceptions/:id', (req, res) => {
 app.get('/api/global-context', (req, res) => {
   try {
     const date = req.query.date || new Date().toISOString().split('T')[0];
+    const cacheKey = `gctx_${date}`;
+    const cached = getCachedApiResponse(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
     const overview = getCurrentWorkOverview(date);
     const vendoor = getSafeVendoorStatus();
     const poller = getAutonomousPollerStatus();
@@ -800,7 +867,7 @@ app.get('/api/global-context', (req, res) => {
       logsSyncState = 'STALE';
     }
 
-    res.json({
+    const payload = {
       work_date: date,
       vendoor: {
         connection_state: poller.connection_state || vendoor.connection_state || 'NOT_CONFIGURED',
@@ -850,7 +917,9 @@ app.get('/api/global-context', (req, res) => {
         status: dispatcher && dispatcher.is_running ? 'ACTIVE' : 'IDLE',
         polling_interval_ms: dispatcher ? dispatcher.polling_interval_ms : 60000
       }
-    });
+    };
+    setCachedApiResponse(cacheKey, payload);
+    res.json(payload);
   } catch (err) {
     console.error('Error in /api/global-context:', err);
     res.status(500).json({ error: err.message });
@@ -2075,9 +2144,15 @@ function reconstructPayloadFromSnapshots(date, rows) {
 // -------------------------------------------------------------
 app.get('/api/data', (req, res) => {
   const reqDate = req.query.date || getEffectiveWorkDate();
+  const cacheKey = `data_${reqDate}`;
+  const cached = getCachedApiResponse(cacheKey);
+  if (cached) {
+    return res.json(cached);
+  }
 
   try {
     const dashboardData = getOperationalDashboardData(reqDate);
+    setCachedApiResponse(cacheKey, dashboardData);
     return res.json(dashboardData);
   } catch (err) {
     console.error('Failed to get operational dashboard data for date', reqDate, err);
@@ -2088,6 +2163,11 @@ app.get('/api/data', (req, res) => {
 // Added Orders CS Breakdown API Endpoint (Part 33, 34, 60, 85)
 app.get(['/api/added-orders', '/api/reports/added-orders'], (req, res) => {
   const reqDate = req.query.date || getEffectiveWorkDate();
+  const cacheKey = `added_orders_${reqDate}`;
+  const cached = getCachedApiResponse(cacheKey);
+  if (cached) {
+    return res.json(cached);
+  }
 
   try {
     // 1. Check daily_metrics_snapshots
@@ -2095,7 +2175,7 @@ app.get(['/api/added-orders', '/api/reports/added-orders'], (req, res) => {
     if (snap && snap.metrics_json) {
       const parsed = JSON.parse(snap.metrics_json);
       const added = parsed.addedOrders || {};
-      return res.json({
+      const result = {
         exists: true,
         date: reqDate,
         totalAdded: added.totalAdded || ((parsed.added_cs || 0) + (parsed.added_noncs || 0)),
@@ -2104,7 +2184,9 @@ app.get(['/api/added-orders', '/api/reports/added-orders'], (req, res) => {
         topCSContributor: parsed.topCSContributor || added.topCSContributor || null,
         topCSContributors: parsed.topCSContributors || added.topCSContributors || [],
         allCSContributors: parsed.allCSContributors || added.allCSContributors || [],
-      });
+      };
+      setCachedApiResponse(cacheKey, result);
+      return res.json(result);
     }
 
     // 2. Check performance_snapshots
@@ -2115,7 +2197,7 @@ app.get(['/api/added-orders', '/api/reports/added-orders'], (req, res) => {
         .map(r => ({ name: r.employee_name, count: r.added_orders, total: r.added_orders }));
       const totalAdded = rows.reduce((s, r) => s + (r.added_orders || 0), 0);
       const csAdded = csRows.reduce((s, r) => s + r.count, 0);
-      return res.json({
+      const result = {
         exists: true,
         date: reqDate,
         totalAdded,
@@ -2124,11 +2206,13 @@ app.get(['/api/added-orders', '/api/reports/added-orders'], (req, res) => {
         topCSContributor: csRows[0] ? csRows[0].name : null,
         topCSContributors: csRows.slice(0, 5),
         allCSContributors: csRows,
-      });
+      };
+      setCachedApiResponse(cacheKey, result);
+      return res.json(result);
     }
 
     // 3. Empty state for date with no data
-    return res.json({
+    const emptyResult = {
       exists: false,
       date: reqDate,
       totalAdded: 0,
@@ -2137,7 +2221,9 @@ app.get(['/api/added-orders', '/api/reports/added-orders'], (req, res) => {
       topCSContributor: null,
       topCSContributors: [],
       allCSContributors: [],
-    });
+    };
+    setCachedApiResponse(cacheKey, emptyResult);
+    return res.json(emptyResult);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -2552,6 +2638,10 @@ app.get('/api/vendoor/dispatcher/alerts', (req, res) => {
 
 app.get('/api/reports/executive-summary', (req, res) => {
   try {
+    const cacheKey = `rep_exec_${JSON.stringify(req.query)}`;
+    const cached = getCachedApiResponse(cacheKey);
+    if (cached) return res.json(cached);
+
     const report = generateExecutiveSummaryReport({
       dateMode: req.query.date_mode || req.query.dateMode || 'day',
       targetDate: req.query.target_date || req.query.targetDate || req.query.date,
@@ -2559,15 +2649,20 @@ app.get('/api/reports/executive-summary', (req, res) => {
       endDate: req.query.end_date || req.query.endDate,
       filters: req.query
     });
-    saveReportRecord({
-      reportType: 'executive_summary',
-      dateMode: report.date_mode,
-      startDate: report.start_date,
-      endDate: report.end_date,
-      filters: req.query,
-      generatedBy: req.query.generated_by || 'System User',
-      rowCount: report.daily_breakdown?.length || 0,
-      reportData: report
+    setCachedApiResponse(cacheKey, report);
+    setImmediate(() => {
+      try {
+        saveReportRecord({
+          reportType: 'executive_summary',
+          dateMode: report.date_mode,
+          startDate: report.start_date,
+          endDate: report.end_date,
+          filters: req.query,
+          generatedBy: req.query.generated_by || 'System User',
+          rowCount: report.daily_breakdown?.length || 0,
+          reportData: report
+        });
+      } catch (e) {}
     });
     res.json(report);
   } catch (err) {
@@ -2577,6 +2672,10 @@ app.get('/api/reports/executive-summary', (req, res) => {
 
 app.get('/api/reports/employee', (req, res) => {
   try {
+    const cacheKey = `rep_emp_${JSON.stringify(req.query)}`;
+    const cached = getCachedApiResponse(cacheKey);
+    if (cached) return res.json(cached);
+
     const report = generateEmployeeReport({
       dateMode: req.query.date_mode || 'day',
       targetDate: req.query.target_date,
@@ -2584,15 +2683,20 @@ app.get('/api/reports/employee', (req, res) => {
       endDate: req.query.end_date,
       filters: req.query
     });
-    saveReportRecord({
-      reportType: 'employee',
-      dateMode: report.date_mode,
-      startDate: report.start_date,
-      endDate: report.end_date,
-      filters: req.query,
-      generatedBy: req.query.generated_by || 'System User',
-      rowCount: report.total_employees,
-      reportData: report
+    setCachedApiResponse(cacheKey, report);
+    setImmediate(() => {
+      try {
+        saveReportRecord({
+          reportType: 'employee',
+          dateMode: report.date_mode,
+          startDate: report.start_date,
+          endDate: report.end_date,
+          filters: req.query,
+          generatedBy: req.query.generated_by || 'System User',
+          rowCount: report.total_employees,
+          reportData: report
+        });
+      } catch (e) {}
     });
     res.json(report);
   } catch (err) {
@@ -2602,6 +2706,10 @@ app.get('/api/reports/employee', (req, res) => {
 
 app.get('/api/reports/account', (req, res) => {
   try {
+    const cacheKey = `rep_acc_${JSON.stringify(req.query)}`;
+    const cached = getCachedApiResponse(cacheKey);
+    if (cached) return res.json(cached);
+
     const report = generateAccountReport({
       dateMode: req.query.date_mode || 'day',
       targetDate: req.query.target_date,
@@ -2609,15 +2717,20 @@ app.get('/api/reports/account', (req, res) => {
       endDate: req.query.end_date,
       filters: req.query
     });
-    saveReportRecord({
-      reportType: 'account',
-      dateMode: report.date_mode,
-      startDate: report.start_date,
-      endDate: report.end_date,
-      filters: req.query,
-      generatedBy: req.query.generated_by || 'System User',
-      rowCount: report.total_accounts,
-      reportData: report
+    setCachedApiResponse(cacheKey, report);
+    setImmediate(() => {
+      try {
+        saveReportRecord({
+          reportType: 'account',
+          dateMode: report.date_mode,
+          startDate: report.start_date,
+          endDate: report.end_date,
+          filters: req.query,
+          generatedBy: req.query.generated_by || 'System User',
+          rowCount: report.total_accounts,
+          reportData: report
+        });
+      } catch (e) {}
     });
     res.json(report);
   } catch (err) {
@@ -2627,6 +2740,10 @@ app.get('/api/reports/account', (req, res) => {
 
 app.get('/api/reports/allocation', (req, res) => {
   try {
+    const cacheKey = `rep_alloc_${JSON.stringify(req.query)}`;
+    const cached = getCachedApiResponse(cacheKey);
+    if (cached) return res.json(cached);
+
     const report = generateAllocationReport({
       dateMode: req.query.date_mode || 'day',
       targetDate: req.query.target_date,
@@ -2634,15 +2751,20 @@ app.get('/api/reports/allocation', (req, res) => {
       endDate: req.query.end_date,
       filters: req.query
     });
-    saveReportRecord({
-      reportType: 'allocation',
-      dateMode: report.date_mode,
-      startDate: report.start_date,
-      endDate: report.end_date,
-      filters: req.query,
-      generatedBy: req.query.generated_by || 'System User',
-      rowCount: report.total_allocations,
-      reportData: report
+    setCachedApiResponse(cacheKey, report);
+    setImmediate(() => {
+      try {
+        saveReportRecord({
+          reportType: 'allocation',
+          dateMode: report.date_mode,
+          startDate: report.start_date,
+          endDate: report.end_date,
+          filters: req.query,
+          generatedBy: req.query.generated_by || 'System User',
+          rowCount: report.total_allocations,
+          reportData: report
+        });
+      } catch (e) {}
     });
     res.json(report);
   } catch (err) {
@@ -2652,6 +2774,10 @@ app.get('/api/reports/allocation', (req, res) => {
 
 app.get('/api/reports/activity-logs', (req, res) => {
   try {
+    const cacheKey = `rep_act_${JSON.stringify(req.query)}`;
+    const cached = getCachedApiResponse(cacheKey);
+    if (cached) return res.json(cached);
+
     const report = generateActivityLogsReport({
       dateMode: req.query.date_mode || 'day',
       targetDate: req.query.target_date,
@@ -2660,15 +2786,20 @@ app.get('/api/reports/activity-logs', (req, res) => {
       limit: req.query.limit,
       filters: req.query
     });
-    saveReportRecord({
-      reportType: 'activity',
-      dateMode: report.date_mode,
-      startDate: report.start_date,
-      endDate: report.end_date,
-      filters: req.query,
-      generatedBy: req.query.generated_by || 'System User',
-      rowCount: report.total_logs_returned,
-      reportData: report
+    setCachedApiResponse(cacheKey, report);
+    setImmediate(() => {
+      try {
+        saveReportRecord({
+          reportType: 'activity',
+          dateMode: report.date_mode,
+          startDate: report.start_date,
+          endDate: report.end_date,
+          filters: req.query,
+          generatedBy: req.query.generated_by || 'System User',
+          rowCount: report.total_logs_returned,
+          reportData: report
+        });
+      } catch (e) {}
     });
     res.json(report);
   } catch (err) {
@@ -2678,19 +2809,28 @@ app.get('/api/reports/activity-logs', (req, res) => {
 
 app.get('/api/reports/productivity', (req, res) => {
   try {
+    const cacheKey = `rep_prod_${JSON.stringify(req.query)}`;
+    const cached = getCachedApiResponse(cacheKey);
+    if (cached) return res.json(cached);
+
     const report = generateProductivityReport({
       targetDate: req.query.target_date,
       filters: req.query
     });
-    saveReportRecord({
-      reportType: 'productivity',
-      dateMode: 'day',
-      startDate: report.work_date,
-      endDate: report.work_date,
-      filters: req.query,
-      generatedBy: req.query.generated_by || 'System User',
-      rowCount: report.total_profiles,
-      reportData: report
+    setCachedApiResponse(cacheKey, report);
+    setImmediate(() => {
+      try {
+        saveReportRecord({
+          reportType: 'productivity',
+          dateMode: 'day',
+          startDate: report.work_date,
+          endDate: report.work_date,
+          filters: req.query,
+          generatedBy: req.query.generated_by || 'System User',
+          rowCount: report.total_profiles,
+          reportData: report
+        });
+      } catch (e) {}
     });
     res.json(report);
   } catch (err) {

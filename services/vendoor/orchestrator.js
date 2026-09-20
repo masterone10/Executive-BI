@@ -17,6 +17,7 @@ import { classifyVendoorAction, extractCanonicalStatus } from './actions.js';
 import { getOperationalBusinessDate } from './normalize.js';
 import { resolveEmployeeIdentity } from './identity.js';
 import { computePerformanceFromRecords, savePerformanceSnapshotToDB } from '../performance.js';
+import { isCsEmployee } from '../parser.js';
 import { attachEligibleArrivedOrders, getDispatcherConfig } from './dispatcher.js';
 import { syncAndRestoreObservedTeam } from '../working_team_ops.js';
 
@@ -688,14 +689,15 @@ export async function syncVendoorLogs(options = {}) {
 
         // 2. Insert into raw_log_records with canonical normalized status
         const canonicalStatus = extractCanonicalStatus(rawAction);
-        const rawKey = `${resolvedWorkDate}|${log.order_code}|${identity.employee_name || log.employee_name}|${rawTs}|${rawAction}`;
+        const empActorName = identity.employee_name || log.employee_name;
+        const rawKey = `${resolvedWorkDate}|${log.order_code}|${empActorName}|${rawTs}|${rawAction}`;
         if (!existingRawKeys.has(rawKey)) {
           existingRawKeys.add(rawKey);
-          const isCS = identity.department === 'CS' || identity.department === null || identity.department === undefined ? 1 : (identity.department === 'CS' ? 1 : 0);
+          const isCS = isCsEmployee({ name: empActorName, department: identity.department }) ? 1 : 0;
           insertRawLogStmt.run(
             resolvedWorkDate,
             log.order_code,
-            identity.employee_name || log.employee_name,
+            empActorName,
             canonicalStatus,
             rawAction,
             rawTs,

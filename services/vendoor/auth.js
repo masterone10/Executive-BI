@@ -76,7 +76,11 @@ export function getVendoorConfig() {
   const staticSessionCookie = process.env.VENDOOR_SESSION_COOKIE || '';
   const staticCsrfToken = process.env.VENDOOR_CSRF_TOKEN || process.env.VENDOOR_XSRF_TOKEN || '';
   const apiToken = process.env.VENDOOR_API_TOKEN || process.env.VENDOOR_BEARER_TOKEN || '';
-  const timeoutMs = parseInt(process.env.VENDOOR_TIMEOUT_MS, 10) || 60000;
+  let rawTimeout = parseInt(process.env.VENDOOR_TIMEOUT_MS, 10) || 60000;
+  if (rawTimeout > 0 && rawTimeout < 1000) {
+    rawTimeout = rawTimeout * 1000;
+  }
+  const timeoutMs = rawTimeout;
 
   const effectiveSessionCookie = inMemorySessionCookie || staticSessionCookie;
   const effectiveCsrfToken = inMemoryCsrfToken || staticCsrfToken;

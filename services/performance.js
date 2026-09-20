@@ -1,6 +1,8 @@
 import { db } from '../db/index.js';
-import { formatDateKey, isCSName, normalizeEmployeeName, matchEmployeeInMaster, parseDate, KNOWN_STATUSES, STATUS_RE, ALT_RE, ADDED_RE } from './parser.js';
+import { formatDateKey, isCSName, isCsEmployee, normalizeEmployeeName, matchEmployeeInMaster, parseDate, KNOWN_STATUSES, STATUS_RE, ALT_RE, ADDED_RE } from './parser.js';
 import { extractCanonicalStatus } from './vendoor/actions.js';
+
+export { isCsEmployee };
 
 export function getSystemWeights() {
   const rows = db.prepare('SELECT key, value FROM system_configs').all();
@@ -74,7 +76,7 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
       statusText = null;
     }
 
-    const isCS = r.isCS !== undefined ? Boolean(r.isCS) : (r.is_cs !== undefined ? Boolean(r.is_cs) : isCSName(rawName, dbEmployeesMap));
+    const isCS = isCsEmployee(rawName, dbEmployeesMap);
 
     return {
       order: orderCode,
@@ -239,11 +241,12 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
   const teamCancelRate = totalActions > 0 ? (totalCancelledActions / totalActions) * 100 : 0;
   const maxActions = Math.max(...Array.from(empActionsMap.values()), 1);
 
-  // Compute Per-Employee Metrics & Scores
+  // Compute Per-Employee Metrics & Scores (CS EMPLOYEES ONLY)
   const employees = [];
   const allEmpNames = new Set([...empActionsMap.keys(), ...empAltMap.keys(), ...addedByEmpCS.keys()]);
 
   for (const name of allEmpNames) {
+    if (!isCsEmployee(name, dbEmployeesMap)) continue;
     const counts = empStatusMap.get(name) || { printed: 0, pending: 0, processing: 0, cancelled: 0 };
     const actions = (counts.printed + counts.pending + counts.processing + counts.cancelled);
     const alt = empAltMap.get(name) || 0;
@@ -344,6 +347,7 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
 
   // Added Orders - CS ONLY for Top Contributors (Part 33, 34, 60, 85)
   const allCSContributors = Array.from(addedByEmpCS.entries())
+    .filter(([name]) => isCsEmployee(name, dbEmployeesMap))
     .map(([name, value]) => ({
       name,
       employee: name,
@@ -539,10 +543,16 @@ export function savePerformanceSnapshotToDB(date, metrics, sourceFileId = null) 
 
   // STRICT REQUIREMENT: NEVER auto-create employees from Excel files.
   // Employee Master is entered manually by the user.
+  // CS operational metrics are strictly for CS employees only.
   const findEmp = db.prepare('SELECT id FROM employees WHERE name = ? COLLATE NOCASE');
 
   const tx = db.transaction(() => {
-    for (const emp of metrics.employees) {
+    // Delete existing snapshot records for this date so no stale non-CS records persist
+    db.prepare('DELETE FROM performance_snapshots WHERE date = ?').run(date);
+
+    for (const emp of (metrics.employees || [])) {
+      if (!isCsEmployee(emp.name)) continue;
+
       const empRow = findEmp.get(emp.name);
       const empId = empRow ? empRow.id : null;
 
@@ -579,8 +589,34 @@ export function savePerformanceSnapshotToDB(date, metrics, sourceFileId = null) 
       );
     }
 
-    // Also persist complete daily metrics snapshot for global date navigation
+    // Also persist complete daily metrics snapshot for global date navigation (strictly CS for operational metrics)
     try {
+      const cleanEmployees = (metrics.employees || []).filter(e => isCsEmployee(e.name));
+      const cleanTopContributors = (metrics.topCSContributors || []).filter(c => isCsEmployee(c.name || c.employee || c));
+      const cleanAllContributors = (metrics.allCSContributors || []).filter(c => isCsEmployee(c.name || c.employee || c));
+      const cleanRankings = {
+        printed: (metrics.rankings?.printed || []).filter(e => isCsEmployee(e.name || e.employee)),
+        pending: (metrics.rankings?.pending || []).filter(e => isCsEmployee(e.name || e.employee)),
+        cancelled: (metrics.rankings?.cancelled || []).filter(e => isCsEmployee(e.name || e.employee)),
+      };
+      const sanitizedMetrics = {
+        ...metrics,
+        employees: cleanEmployees,
+        top10Performers: cleanEmployees.slice(0, 10),
+        mostActive: [...cleanEmployees].sort((a, b) => (b.actions || 0) - (a.actions || 0)).slice(0, 10),
+        topCSContributors: cleanTopContributors,
+        topCSContributor: cleanTopContributors[0] || null,
+        allCSContributors: cleanAllContributors,
+        rankings: cleanRankings,
+        cancel_rate_rank: (metrics.cancel_rate_rank || []).filter(e => isCsEmployee(e.name || e.employee)),
+        addedOrders: {
+          ...(metrics.addedOrders || {}),
+          topCSContributor: cleanTopContributors[0] || null,
+          topCSContributors: cleanTopContributors,
+          allCSContributors: cleanAllContributors,
+        }
+      };
+
       db.prepare(`
         INSERT INTO daily_metrics_snapshots (work_date, source_file_id, metrics_json, created_at)
         VALUES (?, ?, ?, datetime('now'))
@@ -588,7 +624,7 @@ export function savePerformanceSnapshotToDB(date, metrics, sourceFileId = null) 
           source_file_id = excluded.source_file_id,
           metrics_json = excluded.metrics_json,
           created_at = datetime('now')
-      `).run(date, sourceFileId, JSON.stringify(metrics));
+      `).run(date, sourceFileId, JSON.stringify(sanitizedMetrics));
     } catch (snapErr) {
       console.warn('Could not update daily_metrics_snapshots:', snapErr.message);
     }
@@ -632,6 +668,7 @@ export function computeForensicProductivityFromLogs(asOfDate = null) {
 
   const byEmp = new Map();
   for (const r of rows) {
+    if (!isCsEmployee(r.employee_name)) continue;
     const norm = normalizeEmployeeName(r.employee_name);
     if (!byEmp.has(norm)) byEmp.set(norm, []);
     byEmp.get(norm).push(r);
@@ -739,7 +776,7 @@ export function computeForensicProductivityFromLogs(asOfDate = null) {
  * - Consistency and confidence metrics
  */
 export function getEmployeePerformanceProfiles(asOfDate = null) {
-  const employees = db.prepare('SELECT id, name, department, team_membership, notes FROM employees WHERE active = 1').all();
+  const employees = db.prepare('SELECT id, name, department, team_membership, notes FROM employees WHERE active = 1').all().filter(e => isCsEmployee(e));
 
   let snapQuery = `
     SELECT employee_name,
@@ -760,7 +797,7 @@ export function getEmployeePerformanceProfiles(asOfDate = null) {
 
   let snapshotRows = [];
   try {
-    snapshotRows = db.prepare(snapQuery).all(...params);
+    snapshotRows = db.prepare(snapQuery).all(...params).filter(s => isCsEmployee(s.employee_name));
   } catch (e) {
     // fallback if table empty
   }
@@ -788,7 +825,7 @@ export function getEmployeePerformanceProfiles(asOfDate = null) {
 
   let rawRows = [];
   try {
-    rawRows = db.prepare(rawQuery).all(...rawParams);
+    rawRows = db.prepare(rawQuery).all(...rawParams).filter(r => isCsEmployee(r.employee_name));
   } catch (e) {
     // fallback
   }

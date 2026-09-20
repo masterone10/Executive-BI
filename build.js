@@ -43,10 +43,10 @@ console.log('Generated public/Executive_Report_v3.xlsx');
 const templatePath = path.join(ROOT_DIR, 'template.html');
 let html = fs.readFileSync(templatePath, 'utf-8');
 
-// Replace XLSX lib placeholder
+// Replace XLSX lib placeholder with empty string (lazy loaded on demand)
 html = html.replace(
   '<!--XLSX_LIB_PLACEHOLDER-->',
-  '<script src="/xlsx.full.min.js"></script>'
+  ''
 );
 
 // Enhance buttons for Excel & PDF in top bar
@@ -73,16 +73,24 @@ const printStyles = `
 `;
 html = html.replace('</head>', `${printStyles}\n</head>`);
 
-// Add exportCurrentExcel function
+// Add exportCurrentExcel function with lazy script loader
 const exportScript = `
 <script>
-window.exportCurrentExcel = function() {
-  if (typeof XLSX === 'undefined') {
+window.ensureXlsxLoaded = function(cb) {
+  if (typeof XLSX !== 'undefined') return cb();
+  var script = document.createElement('script');
+  script.src = '/xlsx.full.min.js';
+  script.onload = function() { cb(); };
+  script.onerror = function() {
     window.location.href = '/Executive_Report_v3.xlsx';
-    return;
-  }
-  try {
-    var wb = XLSX.utils.book_new();
+  };
+  document.head.appendChild(script);
+};
+
+window.exportCurrentExcel = function() {
+  window.ensureXlsxLoaded(function() {
+    try {
+      var wb = XLSX.utils.book_new();
     var tot = D.log_totals, hs = D.hr || {}, ded = D.dedup || {}, emp = D.employees || [];
     
     // Executive Summary
@@ -158,6 +166,7 @@ window.exportCurrentExcel = function() {
     console.error('Export failed, falling back to static download:', err);
     window.location.href = '/Executive_Report_v3.xlsx';
   }
+  });
 };
 </script>
 `;

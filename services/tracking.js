@@ -1,6 +1,6 @@
 import XLSX from 'xlsx';
 import { db } from '../db/index.js';
-import { parseDailyLogBuffer, parseDate, matchEmployeeInMaster, normalizeEmployeeName, isCSName } from './parser.js';
+import { parseDailyLogBuffer, parseDate, matchEmployeeInMaster, normalizeEmployeeName, isCSName, isCsEmployee } from './parser.js';
 import { computePerformanceFromRecords } from './performance.js';
 import { extractCanonicalStatus } from './vendoor/actions.js';
 
@@ -1157,6 +1157,7 @@ export function getTrackingOverview(workDate) {
   const allEmployeesSet = new Set([...empAssignedAccounts.keys(), ...empWorkedOrders.keys()]);
 
   for (const empName of allEmployeesSet) {
+    if (!isCsEmployee(empName)) continue;
     const assigned = Array.from(empAssignedAccounts.get(empName) || []);
     const assignedSet = new Set(assigned);
     const worked = Array.from(empWorkedAccounts.get(empName) || []);
@@ -1643,7 +1644,7 @@ export function getAccountDetailedData(workDate, accountName) {
     LEFT JOIN daily_working_team dwt ON e.id = dwt.employee_id AND dwt.work_date = ?
     WHERE e.active = 1
     ORDER BY e.name COLLATE NOCASE ASC
-  `).all(workDate);
+  `).all(workDate).filter(e => isCsEmployee(e));
 
   const workingCS = allActiveCS.filter(e => e.is_working === 1);
   const blockedIdsSet = new Set(parsedRule ? parsedRule.blocked.map(b => (typeof b === 'number' ? b : null)).filter(Boolean) : []);
@@ -1740,7 +1741,7 @@ export function getOperationalDashboardData(workDate) {
   if (snap && snap.metrics_json) {
     try {
       const parsed = JSON.parse(snap.metrics_json);
-      const emps = Array.isArray(parsed.employees) ? parsed.employees : [];
+      const emps = (Array.isArray(parsed.employees) ? parsed.employees : []).filter(e => isCsEmployee(e));
 
       let totalActions = parsed.log_totals?.actions;
       let totalPrinted = parsed.log_totals?.printed;
@@ -1791,20 +1792,20 @@ export function getOperationalDashboardData(workDate) {
       const team_pending_rate = parsed.team_pending_rate ?? (log_totals.actions > 0 ? Number(((log_totals.pending / log_totals.actions) * 100).toFixed(1)) : 0.0);
 
       const rankings = {
-        printed: (parsed.rankings?.printed && Array.isArray(parsed.rankings.printed))
-          ? parsed.rankings.printed
-          : [...emps].sort((a, b) => (b.printed || 0) - (a.printed || 0)).slice(0, 10).map(e => ({ name: e.name || e.employee_name, value: e.printed || 0 })),
-        pending: (parsed.rankings?.pending && Array.isArray(parsed.rankings.pending))
-          ? parsed.rankings.pending
-          : [...emps].sort((a, b) => (b.pending || 0) - (a.pending || 0)).slice(0, 10).map(e => ({ name: e.name || e.employee_name, value: e.pending || 0 })),
-        cancelled: (parsed.rankings?.cancelled && Array.isArray(parsed.rankings.cancelled))
-          ? parsed.rankings.cancelled
-          : [...emps].sort((a, b) => (b.cancelled || 0) - (a.cancelled || 0)).slice(0, 10).map(e => ({ name: e.name || e.employee_name, value: e.cancelled || 0 }))
+        printed: ((parsed.rankings?.printed && Array.isArray(parsed.rankings.printed))
+          ? parsed.rankings.printed.filter(e => isCsEmployee(e.name || e.employee_name || e))
+          : [...emps].sort((a, b) => (b.printed || 0) - (a.printed || 0)).map(e => ({ name: e.name || e.employee_name, value: e.printed || 0 }))).slice(0, 10),
+        pending: ((parsed.rankings?.pending && Array.isArray(parsed.rankings.pending))
+          ? parsed.rankings.pending.filter(e => isCsEmployee(e.name || e.employee_name || e))
+          : [...emps].sort((a, b) => (b.pending || 0) - (a.pending || 0)).map(e => ({ name: e.name || e.employee_name, value: e.pending || 0 }))).slice(0, 10),
+        cancelled: ((parsed.rankings?.cancelled && Array.isArray(parsed.rankings.cancelled))
+          ? parsed.rankings.cancelled.filter(e => isCsEmployee(e.name || e.employee_name || e))
+          : [...emps].sort((a, b) => (b.cancelled || 0) - (a.cancelled || 0)).map(e => ({ name: e.name || e.employee_name, value: e.cancelled || 0 }))).slice(0, 10)
       };
 
-      const cancel_rate_rank = (parsed.cancel_rate_rank && Array.isArray(parsed.cancel_rate_rank))
-        ? parsed.cancel_rate_rank
-        : [...emps].sort((a, b) => (b.own_cancel_rate || 0) - (a.own_cancel_rate || 0)).map(e => ({ name: e.name || e.employee_name, value: e.own_cancel_rate || 0 }));
+      const cancel_rate_rank = ((parsed.cancel_rate_rank && Array.isArray(parsed.cancel_rate_rank))
+        ? parsed.cancel_rate_rank.filter(e => isCsEmployee(e.name || e.employee_name || e))
+        : [...emps].sort((a, b) => (b.own_cancel_rate || 0) - (a.own_cancel_rate || 0)).map(e => ({ name: e.name || e.employee_name, value: e.own_cancel_rate || 0 })));
 
       const hr = parsed.hr || {
         days: 1,
@@ -1825,15 +1826,23 @@ export function getOperationalDashboardData(workDate) {
         alt: log_totals.alt
       }];
 
-      const addedOrders = parsed.addedOrders || {
-        totalAdded: parsed.added_cs || 0,
-        totalAddedCS: parsed.added_cs || 0,
-        totalAddedNonCS: parsed.added_noncs || 0,
+      const rawTopCS = (parsed.topCSContributors || parsed.addedOrders?.topCSContributors || []).filter(c => isCsEmployee(c.name || c.employee || c));
+      const rawAllCS = (parsed.allCSContributors || parsed.addedOrders?.allCSContributors || []).filter(c => isCsEmployee(c.name || c.employee || c));
+
+      const addedOrders = {
+        totalAdded: parsed.addedOrders?.totalAdded || parsed.added_cs || 0,
+        totalAddedCS: parsed.addedOrders?.totalAddedCS || parsed.added_cs || 0,
+        totalAddedNonCS: parsed.addedOrders?.totalAddedNonCS || parsed.added_noncs || 0,
         fromCS: parsed.fromCS ?? parsed.added_cs ?? 0,
         fromOtherDepartments: parsed.fromOtherDepartments ?? parsed.added_noncs ?? 0,
-        topCSContributors: parsed.topCSContributors || [],
-        allCSContributors: parsed.allCSContributors || []
+        topCSContributor: rawTopCS[0] || null,
+        topCSContributors: rawTopCS,
+        allCSContributors: rawAllCS,
+        ...(parsed.addedOrders || {})
       };
+      addedOrders.topCSContributor = rawTopCS[0] || null;
+      addedOrders.topCSContributors = rawTopCS;
+      addedOrders.allCSContributors = rawAllCS;
 
       const dedup = parsed.dedup || { removed: 0, removed_pct: 0 };
 
@@ -1842,6 +1851,15 @@ export function getOperationalDashboardData(workDate) {
         date: targetDate,
         work_date: targetDate,
         ...parsed,
+        employees: emps,
+        top10Performers: [...emps].sort((a, b) => (b.performance_score || 0) - (a.performance_score || 0)).slice(0, 10),
+        mostActive: [...emps].sort((a, b) => (b.actions || 0) - (a.actions || 0)).slice(0, 10),
+        topCSContributor: rawTopCS[0] || null,
+        topCSContributors: rawTopCS,
+        allCSContributors: rawAllCS,
+        rankings,
+        cancel_rate_rank,
+        addedOrders,
         log_totals,
         status_totals,
         rankings,

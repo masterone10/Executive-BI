@@ -333,24 +333,93 @@ export function matchEmployeeInMaster(name, dbEmployeesMap = null) {
 }
 
 /**
- * Checks whether an employee belongs to Customer Service (CS).
- * If found in Employee Master (dbEmployeesMap), the stored department is authoritative:
- *   Department === 'CS' -> true
- *   Department !== 'CS' (e.g., 'Data Entry', 'Other') -> false
- * If not in Employee Master (historical log employee):
- *   Falls back to name ending with "cs" (case-insensitive).
+ * Canonical CS Employee validator.
+ * Rules:
+ * - Employee Master is the authoritative source.
+ * - Any employee name or identifying text containing the standalone token "CS" (case-insensitive) is a CS employee.
+ * - Substring matching (e.g. "ACCESS", "ACCOUNTS") is strictly forbidden.
+ * - department === "CS" alone without standalone CS token is NOT sufficient.
+ * - Non-CS employees (e.g. "Noureldin ahmed", "Jehan data entry", "Mostafa sayed Shipping") MUST NOT enter CS workflows.
+ * - Merchants/Accounts (e.g. "ARC SHOES", "Nawal Omran group") MUST NOT enter CS workflows.
+ *
+ * @param {Object|string} employee - Employee object, name string, or record
+ * @param {Map|Object} [dbEmployeesMap] - Optional Employee Master map
+ * @returns {boolean}
  */
-export function isCSName(name, dbEmployeesMap = null) {
-  const raw = String(name || '').trim();
-  if (!raw) return false;
+export function isCsEmployee(employee, dbEmployeesMap = null) {
+  if (!employee) return false;
 
-  const matched = matchEmployeeInMaster(raw, dbEmployeesMap);
-  if (matched) {
-    return String(matched.department || '').trim().toUpperCase() === 'CS';
+  let rawName = '';
+  let dept = '';
+  let empId = null;
+
+  if (typeof employee === 'string') {
+    rawName = employee.trim();
+  } else if (typeof employee === 'object') {
+    empId = employee.id || null;
+    rawName = String(employee.name || employee.employee_name || employee.display_name || employee.employee || '').trim();
+    dept = String(employee.department || '').trim();
+
+    if (!rawName && empId && dbEmployeesMap) {
+      const found = dbEmployeesMap.get ? dbEmployeesMap.get(empId) : dbEmployeesMap[empId];
+      if (found) {
+        rawName = typeof found === 'string' ? found : String(found.name || '').trim();
+        dept = dept || (typeof found === 'object' ? String(found.department || '') : '');
+      }
+    }
   }
 
-  const norm = normalizeEmployeeName(raw);
-  return norm.endsWith('cs') || norm.endsWith(' cs');
+  if (!rawName && !dept && !empId) return false;
+
+  // 1. If explicit department is provided on the object
+  if (dept) {
+    const dUpper = dept.toUpperCase();
+    if (dUpper !== 'CS' && !dUpper.includes('CUSTOMER SERVICE')) {
+      return false;
+    }
+    if (dUpper === 'CS' || dUpper.includes('CUSTOMER SERVICE')) {
+      return true;
+    }
+  }
+
+  // 2. Check in provided dbEmployeesMap (Master map)
+  if (dbEmployeesMap) {
+    const matched = matchEmployeeInMaster(rawName, dbEmployeesMap);
+    if (matched) {
+      const mDept = String(matched.department || '').trim().toUpperCase();
+      if (mDept) {
+        return mDept === 'CS' || mDept.includes('CUSTOMER SERVICE');
+      }
+    }
+  }
+
+  // 3. Look up in Employee Master database table
+  try {
+    let row = null;
+    if (empId) {
+      row = db.prepare('SELECT name, department FROM employees WHERE id = ?').get(empId);
+    }
+    if (!row && rawName) {
+      row = db.prepare('SELECT name, department FROM employees WHERE name = ? COLLATE NOCASE').get(rawName);
+    }
+    if (row && row.department) {
+      const rDept = String(row.department).trim().toUpperCase();
+      return rDept === 'CS' || rDept.includes('CUSTOMER SERVICE');
+    }
+  } catch (_) {
+    // In-memory or detached DB fallback
+  }
+
+  // 4. Standalone token "CS" check (case-insensitive) bounded by word boundaries or non-alphanumeric characters
+  const csRegex = /(?:^|[^a-zA-Z0-9_])CS(?:[^a-zA-Z0-9_]|$)/i;
+  return csRegex.test(rawName);
+}
+
+/**
+ * Backwards-compatible alias for isCsEmployee
+ */
+export function isCSName(name, dbEmployeesMap = null) {
+  return isCsEmployee(name, dbEmployeesMap);
 }
 
 /**
