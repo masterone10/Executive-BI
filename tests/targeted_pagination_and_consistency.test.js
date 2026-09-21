@@ -135,12 +135,12 @@ test('PROBLEM 2: Dashboard KPI Data-Scope Consistency from SQLite', async () => 
     VALUES (?, ?, ?, ?, ?)
   `);
   for (let i = 1; i <= 6; i++) {
-    insertLog.run(consistencyDate, 'Ahmed Test', 'طباعة بوليصة الشحن', 'Printed', `TEST-NEW-${i}`);
+    insertLog.run(consistencyDate, 'Ahmed Test CS', 'طباعة بوليصة الشحن', 'Printed', `TEST-NEW-${i}`);
   }
   for (let i = 1; i <= 3; i++) {
-    insertLog.run(consistencyDate, 'Sara Test', 'إلغاء أوردر', 'Cancelled', `TEST-PEN-${i}`);
+    insertLog.run(consistencyDate, 'Sara Test CS', 'إلغاء أوردر', 'Cancelled', `TEST-PEN-${i}`);
   }
-  insertLog.run(consistencyDate, 'Ahmed Test', 'تجهيز أوردر', 'Processing', 'TEST-NEW-7');
+  insertLog.run(consistencyDate, 'Ahmed Test CS', 'تجهيز أوردر', 'Processing', 'TEST-NEW-7');
 
   // 3. Query operational dashboard data
   const populatedDashboard = getOperationalDashboardData(consistencyDate);
@@ -158,12 +158,12 @@ test('PROBLEM 2: Dashboard KPI Data-Scope Consistency from SQLite', async () => 
 
   // Performer verification
   assert.ok(populatedDashboard.employees.length >= 2, 'Employees listed');
-  const ahmed = populatedDashboard.employees.find(e => e.name === 'Ahmed Test');
+  const ahmed = populatedDashboard.employees.find(e => e.name === 'Ahmed Test CS');
   assert.ok(ahmed, 'Ahmed is in employee roster');
   assert.strictEqual(ahmed.actions, 7, 'Ahmed has 7 actions (6 printed + 1 processing)');
   assert.strictEqual(ahmed.printed, 6, 'Ahmed has 6 printed');
 
-  const sara = populatedDashboard.employees.find(e => e.name === 'Sara Test');
+  const sara = populatedDashboard.employees.find(e => e.name === 'Sara Test CS');
   assert.ok(sara, 'Sara is in employee roster');
   assert.strictEqual(sara.actions, 3, 'Sara has 3 actions (3 cancelled)');
   assert.strictEqual(sara.cancelled, 3, 'Sara has 3 cancelled');

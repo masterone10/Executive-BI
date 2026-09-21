@@ -1878,11 +1878,12 @@ export function getOperationalDashboardData(workDate) {
   const overview = getTrackingOverview(targetDate);
 
   const totalNew = overview.opening_inventory.new_orders || 0;
-  const totalPending = overview.opening_inventory.pending_orders || 0;
+  const inventoryPending = overview.opening_inventory.pending_orders || 0;
   const openingTotal = overview.opening_inventory.opening_total || 0;
 
   let totalActions = 0;
   let totalPrinted = 0;
+  let totalPending = 0;
   let totalCancelled = 0;
   let totalProcessing = 0;
   let totalAlt = 0;
@@ -2000,7 +2001,7 @@ export function getOperationalDashboardData(workDate) {
     },
     status_totals: {
       Printed: totalPrinted,
-      Pending: totalPending,
+      Pending: inventoryPending > 0 ? inventoryPending : totalPending,
       Processing: totalProcessing,
       Cancelled: totalCancelled
     },

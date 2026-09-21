@@ -421,6 +421,7 @@ export function runMigrations(database = db) {
       database.exec("CREATE INDEX IF NOT EXISTS idx_raw_log_work_date ON raw_log_records(work_date)");
       database.exec("CREATE INDEX IF NOT EXISTS idx_raw_log_date_order ON raw_log_records(work_date, order_code)");
       database.exec("CREATE INDEX IF NOT EXISTS idx_raw_log_date_emp ON raw_log_records(work_date, employee_name)");
+      database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_logs_dedup ON raw_log_records(work_date, order_code, employee_name, event_datetime, action)");
     }
   } catch (e) {
     console.warn('Migration for raw_log_records:', e.message);

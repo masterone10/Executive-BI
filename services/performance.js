@@ -491,8 +491,9 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
 /**
  * Save daily performance snapshot to SQLite database
  */
-export function savePerformanceSnapshotToDB(date, metrics, sourceFileId = null) {
-  const insertSnapshot = db.prepare(`
+export function savePerformanceSnapshotToDB(date, metrics, sourceFileId = null, database = db) {
+  const targetDb = database || db;
+  const insertSnapshot = targetDb.prepare(`
     INSERT INTO performance_snapshots (
       date, employee_id, employee_name, real_actions,
       new_orders, printed_orders, pending_backlog, cancelled_orders,
@@ -544,11 +545,11 @@ export function savePerformanceSnapshotToDB(date, metrics, sourceFileId = null) 
   // STRICT REQUIREMENT: NEVER auto-create employees from Excel files.
   // Employee Master is entered manually by the user.
   // CS operational metrics are strictly for CS employees only.
-  const findEmp = db.prepare('SELECT id FROM employees WHERE name = ? COLLATE NOCASE');
+  const findEmp = targetDb.prepare('SELECT id FROM employees WHERE name = ? COLLATE NOCASE');
 
-  const tx = db.transaction(() => {
+  const tx = targetDb.transaction(() => {
     // Delete existing snapshot records for this date so no stale non-CS records persist
-    db.prepare('DELETE FROM performance_snapshots WHERE date = ?').run(date);
+    targetDb.prepare('DELETE FROM performance_snapshots WHERE date = ?').run(date);
 
     for (const emp of (metrics.employees || [])) {
       if (!isCsEmployee(emp.name)) continue;
