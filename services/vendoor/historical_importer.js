@@ -609,7 +609,7 @@ export async function importHistoricalVendoorLogs(options = {}) {
           // 2. Insert into raw_log_records with canonical normalized status and strict is_cs
           const res = insertRawLogStmt.run(
             item.resolved_work_date,
-            item.order_code,
+            item.order_code || '',
             item.emp_actor_name,
             item.canonical_status,
             item.raw_action,
@@ -629,7 +629,8 @@ export async function importHistoricalVendoorLogs(options = {}) {
 
       tx(dateRows);
     } else {
-      // Dry run counters
+      // Dry run counters: track duplicates accurately per date
+      const dateSeenSet = new Set();
       for (const item of dateRows) {
         if (item.is_cs === 1) {
           dateCs++;
@@ -638,8 +639,15 @@ export async function importHistoricalVendoorLogs(options = {}) {
           dateNonCs++;
           totalNonCsRows++;
         }
-        dateImported++;
-        totalRowsImported++;
+        const dedupKey = `${item.resolved_work_date}|${item.order_code || ''}|${item.emp_actor_name}|${item.raw_action}|${item.timestamp_str}`;
+        if (dateSeenSet.has(dedupKey)) {
+          dateDuplicates++;
+          totalDuplicatesSkipped++;
+        } else {
+          dateSeenSet.add(dedupKey);
+          dateImported++;
+          totalRowsImported++;
+        }
       }
     }
 
