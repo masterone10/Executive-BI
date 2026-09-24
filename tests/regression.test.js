@@ -798,11 +798,11 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     assert.strictEqual(emptyData.employees.length, 0, '2026-09-06 should have 0 employees');
     assert.strictEqual(emptyData.log_totals.actions, 0, '2026-09-06 should have 0 actions');
 
-    // 3. Query future date: 2026-09-20
-    const futureRes = await fetch(`${baseUrl}/api/data?date=2026-09-20`);
+    // 3. Query future date: 2026-09-30
+    const futureRes = await fetch(`${baseUrl}/api/data?date=2026-09-30`);
     assert.strictEqual(futureRes.status, 200);
     const futureData = await futureRes.json();
-    assert.strictEqual(futureData.exists, false, '2026-09-20 future date must return exists: false');
+    assert.strictEqual(futureData.exists, false, '2026-09-30 future date must return exists: false');
 
     // 4. Performance endpoint date queries
     const perfBase = await fetch(`${baseUrl}/api/performance/2026-09-08`).then(r => r.json());

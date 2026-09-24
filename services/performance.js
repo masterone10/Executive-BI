@@ -76,7 +76,9 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
       statusText = null;
     }
 
-    const isCS = isCsEmployee(rawName, dbEmployeesMap);
+    const isCS = r.is_cs !== undefined 
+      ? Boolean(r.is_cs) 
+      : (r.isCS !== undefined ? Boolean(r.isCS) : isCsEmployee(r, dbEmployeesMap));
 
     return {
       order: orderCode,
@@ -134,7 +136,7 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
     }
 
     if (r.alt) {
-      const key = `${r.order}|${canonicalName}`;
+      const key = `${r.order}|${canonicalName}|${isCS ? '1' : '0'}`;
       if (!altGroups.has(key)) altGroups.set(key, []);
       altGroups.get(key).push(r.dt || 0);
     }
@@ -180,14 +182,20 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
 
   // Deduplicate Alt Phones (2-minute window)
   const empAltMap = new Map();
+  const empAltMapCS = new Map();
   let totalAltPhones = 0;
   for (const [key, timestamps] of altGroups.entries()) {
     timestamps.sort((a, b) => a - b);
     let lastTs = -Infinity;
-    const empName = key.split('|')[1];
+    const parts = key.split('|');
+    const empName = parts[1];
+    const isCsAlt = parts[2] === '1';
     for (const ts of timestamps) {
       if (ts - lastTs > 120000) {
         empAltMap.set(empName, (empAltMap.get(empName) || 0) + 1);
+        if (isCsAlt) {
+          empAltMapCS.set(empName, (empAltMapCS.get(empName) || 0) + 1);
+        }
         totalAltPhones++;
         lastTs = ts;
       }
@@ -243,13 +251,12 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
 
   // Compute Per-Employee Metrics & Scores (CS EMPLOYEES ONLY)
   const employees = [];
-  const allEmpNames = new Set([...empActionsMap.keys(), ...empAltMap.keys(), ...addedByEmpCS.keys()]);
+  const allEmpNames = new Set([...empActionsMap.keys(), ...empAltMapCS.keys(), ...addedByEmpCS.keys()]);
 
   for (const name of allEmpNames) {
-    if (!isCsEmployee(name, dbEmployeesMap)) continue;
     const counts = empStatusMap.get(name) || { printed: 0, pending: 0, processing: 0, cancelled: 0 };
     const actions = (counts.printed + counts.pending + counts.processing + counts.cancelled);
-    const alt = empAltMap.get(name) || 0;
+    const alt = empAltMapCS.get(name) || empAltMap.get(name) || 0;
     const added = addedByEmpCS.get(name) || 0;
 
     const own_printed_rate = actions > 0 ? Math.round((counts.printed / actions) * 1000) / 10 : 0;
@@ -552,7 +559,7 @@ export function savePerformanceSnapshotToDB(date, metrics, sourceFileId = null, 
     targetDb.prepare('DELETE FROM performance_snapshots WHERE date = ?').run(date);
 
     for (const emp of (metrics.employees || [])) {
-      if (!isCsEmployee(emp.name)) continue;
+      if (emp.isCS !== undefined && !emp.isCS) continue;
 
       const empRow = findEmp.get(emp.name);
       const empId = empRow ? empRow.id : null;

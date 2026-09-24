@@ -3,7 +3,16 @@ import fs from 'fs';
 import path from 'path';
 
 const ROOT_DIR = process.cwd();
-const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST || process.env.JEST_WORKER_ID || process.env.TEST_MODE === 'true';
+const isExplicitProd = process.env.TARGET_DB === 'production' || process.env.APP_ENV === 'production' || process.env.NODE_ENV === 'production';
+const isTestDetected = Boolean(
+  process.env.NODE_ENV === 'test' ||
+  process.env.VITEST ||
+  process.env.JEST_WORKER_ID ||
+  process.env.TEST_MODE === 'true' ||
+  process.env.NODE_TEST_CONTEXT ||
+  (process.argv && process.argv.some(arg => typeof arg === 'string' && (arg.includes('.test.') || arg.includes('/tests/'))))
+);
+const isTest = isTestDetected && !isExplicitProd;
 export const DB_PATH = process.env.TEST_DB 
   ? path.resolve(ROOT_DIR, process.env.TEST_DB) 
   : (isTest ? path.join(ROOT_DIR, 'data.test.db') : (process.env.DATABASE_PATH ? path.resolve(ROOT_DIR, process.env.DATABASE_PATH) : path.join(ROOT_DIR, 'data.db')));
@@ -22,6 +31,7 @@ export function cleanupMockContamination(database = db) {
     database.prepare(`DELETE FROM current_work_orders WHERE merchant_code LIKE 've%' AND account IN ('Vendoor Express', 'Alpha Merchant', 'Beta Logistics', 'Delta Direct', 'Gamma Trade')`).run();
     database.prepare(`DELETE FROM vendoor_sync_runs WHERE sync_run_id LIKE '%40n8%' OR sync_run_id LIKE '%z1gf%' OR sync_run_id LIKE '%mock%'`).run();
     database.prepare(`DELETE FROM vendoor_bootstrap_state WHERE job_id LIKE '%mock%'`).run();
+    database.prepare(`DELETE FROM performance_snapshots WHERE date IN ('2026-10-10', '2026-10-11') OR employee_name LIKE 'Smart % CS'`).run();
   } catch (e) {
     console.warn('Cleanup mock contamination warning:', e.message);
   }
@@ -322,9 +332,120 @@ export function runMigrations(database = db) {
       if (!cols.some(c => c.name === 'batch_id')) {
         database.exec("ALTER TABLE current_work_orders ADD COLUMN batch_id TEXT");
       }
+      if (!cols.some(c => c.name === 'tracking_id')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN tracking_id TEXT");
+      }
+      if (!cols.some(c => c.name === 'priority')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN priority TEXT DEFAULT 'REGULAR'");
+      }
+      if (!cols.some(c => c.name === 'work_state')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN work_state TEXT DEFAULT 'UNASSIGNED'");
+      }
+      if (!cols.some(c => c.name === 'round_number')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN round_number INTEGER DEFAULT 1");
+      }
+      if (!cols.some(c => c.name === 'assigned_employee_id')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN assigned_employee_id INTEGER");
+      }
+      if (!cols.some(c => c.name === 'assigned_employee_name')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN assigned_employee_name TEXT");
+      }
+      if (!cols.some(c => c.name === 'claimed_at')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN claimed_at TEXT");
+      }
+      if (!cols.some(c => c.name === 'completed_at')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN completed_at TEXT");
+      }
     }
   } catch (e) {
     // Ignored if table not created yet or column exists
+  }
+
+  // Safe table migration: Ensure tracking columns exist in order_level_allocations
+  try {
+    const cols = database.prepare("PRAGMA table_info(order_level_allocations)").all();
+    if (cols.length > 0) {
+      if (!cols.some(c => c.name === 'tracking_id')) {
+        database.exec("ALTER TABLE order_level_allocations ADD COLUMN tracking_id TEXT");
+      }
+      if (!cols.some(c => c.name === 'work_state')) {
+        database.exec("ALTER TABLE order_level_allocations ADD COLUMN work_state TEXT DEFAULT 'ASSIGNED'");
+      }
+      if (!cols.some(c => c.name === 'priority')) {
+        database.exec("ALTER TABLE order_level_allocations ADD COLUMN priority TEXT DEFAULT 'REGULAR'");
+      }
+      if (!cols.some(c => c.name === 'round_number')) {
+        database.exec("ALTER TABLE order_level_allocations ADD COLUMN round_number INTEGER DEFAULT 1");
+      }
+    }
+  } catch (e) {
+    // Ignored
+  }
+
+  // Safe table migration: Ensure tracking columns exist in order_tracking
+  try {
+    const cols = database.prepare("PRAGMA table_info(order_tracking)").all();
+    if (cols.length > 0) {
+      if (!cols.some(c => c.name === 'tracking_id')) {
+        database.exec("ALTER TABLE order_tracking ADD COLUMN tracking_id TEXT");
+      }
+      if (!cols.some(c => c.name === 'work_state')) {
+        database.exec("ALTER TABLE order_tracking ADD COLUMN work_state TEXT DEFAULT 'UNASSIGNED'");
+      }
+      if (!cols.some(c => c.name === 'priority')) {
+        database.exec("ALTER TABLE order_tracking ADD COLUMN priority TEXT DEFAULT 'REGULAR'");
+      }
+    }
+  } catch (e) {
+    // Ignored
+  }
+
+  // Safe table migration: Ensure order_tracking_events and employee_activity_log exist
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS order_tracking_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tracking_id TEXT NOT NULL,
+        order_code TEXT NOT NULL,
+        work_date TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        work_state TEXT DEFAULT 'UNASSIGNED',
+        employee_id INTEGER,
+        employee_name TEXT,
+        previous_employee_id INTEGER,
+        previous_employee_name TEXT,
+        action TEXT,
+        timestamp TEXT NOT NULL,
+        reason TEXT,
+        source TEXT DEFAULT 'SYSTEM',
+        details TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_ote_tracking ON order_tracking_events(tracking_id);
+      CREATE INDEX IF NOT EXISTS idx_ote_order ON order_tracking_events(order_code);
+      CREATE INDEX IF NOT EXISTS idx_ote_date ON order_tracking_events(work_date);
+
+      CREATE TABLE IF NOT EXISTS employee_activity_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        work_date TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        employee_id INTEGER NOT NULL REFERENCES employees(id),
+        employee_name_snapshot TEXT NOT NULL,
+        action TEXT NOT NULL,
+        tracking_code TEXT,
+        order_code TEXT,
+        account TEXT,
+        source TEXT DEFAULT 'UI',
+        details TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_emp_act_date ON employee_activity_log(work_date);
+      CREATE INDEX IF NOT EXISTS idx_emp_act_emp ON employee_activity_log(employee_id, work_date);
+      CREATE INDEX IF NOT EXISTS idx_emp_act_order ON employee_activity_log(order_code);
+      CREATE INDEX IF NOT EXISTS idx_emp_act_action ON employee_activity_log(action);
+    `);
+  } catch (e) {
+    console.warn('Migration for order_tracking_events & employee_activity_log:', e.message);
   }
 
   // Safe table migration: Ensure files_count and files_json exist in current_work_pool_summary

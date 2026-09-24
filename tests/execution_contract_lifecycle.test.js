@@ -66,6 +66,10 @@ describe('EXECUTIVE-BI MANDATORY EXECUTION CONTRACT AUDIT', () => {
   });
 
   test('4. Auto Fair Allocation: Single Action Execution & Working Team Gate Invariant', async () => {
+    // Clean any prior allocations for TEST_DATE
+    db.prepare('DELETE FROM order_level_allocations WHERE allocation_date = ?').run(TEST_DATE);
+    db.prepare('DELETE FROM allocation_versions WHERE allocation_date = ?').run(TEST_DATE);
+
     // Run Auto Fair Allocation for TEST_DATE
     const result = await generateOrderLevelAllocation(TEST_DATE, { auto_save: true, mode: 'fair' });
     assert.ok(result.success, `Auto Fair Allocation must succeed: ${result.error || ''}`);

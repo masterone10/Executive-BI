@@ -191,6 +191,14 @@ CREATE TABLE IF NOT EXISTS current_work_orders (
   merchant_code TEXT,
   file_name TEXT,
   batch_id TEXT,
+  tracking_id TEXT,      -- Internal unique lifecycle/audit identity
+  priority TEXT DEFAULT 'REGULAR', -- 'REGULAR', 'FAST_TRACK'
+  work_state TEXT DEFAULT 'UNASSIGNED', -- 'UNASSIGNED', 'ASSIGNED', 'CLAIMED', 'IN_PROGRESS', 'COMPLETED'
+  round_number INTEGER DEFAULT 1,
+  assigned_employee_id INTEGER,
+  assigned_employee_name TEXT,
+  claimed_at TEXT,
+  completed_at TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')),
   UNIQUE(work_date, order_code)
@@ -280,6 +288,10 @@ CREATE TABLE IF NOT EXISTS order_level_allocations (
   method TEXT DEFAULT 'Fair Random', -- 'Random', 'Fair Random', 'Manual Override'
   rule_note TEXT,
   is_override INTEGER NOT NULL DEFAULT 0,
+  tracking_id TEXT,
+  work_state TEXT DEFAULT 'ASSIGNED', -- 'ASSIGNED', 'CLAIMED', 'IN_PROGRESS', 'COMPLETED'
+  priority TEXT DEFAULT 'REGULAR',     -- 'REGULAR', 'FAST_TRACK'
+  round_number INTEGER DEFAULT 1,
   created_at TEXT DEFAULT (datetime('now')),
   UNIQUE(allocation_date, allocation_version, order_code)
 );
@@ -309,9 +321,55 @@ CREATE TABLE IF NOT EXISTS order_tracking (
   assigned_to TEXT,
   actions_count INTEGER DEFAULT 0,
   timeline_json TEXT,
+  tracking_id TEXT,
+  work_state TEXT DEFAULT 'UNASSIGNED', -- 'UNASSIGNED', 'ASSIGNED', 'CLAIMED', 'IN_PROGRESS', 'COMPLETED'
+  priority TEXT DEFAULT 'REGULAR',
   updated_at TEXT DEFAULT (datetime('now')),
   UNIQUE(order_code, work_date)
 );
+
+-- Individual Tracking Events (Audit & Chronological Lifecycle History)
+CREATE TABLE IF NOT EXISTS order_tracking_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tracking_id TEXT NOT NULL,
+  order_code TEXT NOT NULL,
+  work_date TEXT NOT NULL,
+  stage TEXT NOT NULL, -- 'New', 'Printed', 'Sealed', 'Dispatched', 'Delivered', 'Completed', 'Cancelled', 'Refunded', 'Returned'
+  work_state TEXT DEFAULT 'UNASSIGNED', -- 'UNASSIGNED', 'ASSIGNED', 'CLAIMED', 'IN_PROGRESS', 'COMPLETED'
+  employee_id INTEGER,
+  employee_name TEXT,
+  previous_employee_id INTEGER,
+  previous_employee_name TEXT,
+  action TEXT,
+  timestamp TEXT NOT NULL,
+  reason TEXT,
+  source TEXT DEFAULT 'SYSTEM',
+  details TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ote_tracking ON order_tracking_events(tracking_id);
+CREATE INDEX IF NOT EXISTS idx_ote_order ON order_tracking_events(order_code);
+CREATE INDEX IF NOT EXISTS idx_ote_date ON order_tracking_events(work_date);
+
+-- Live Employee Activity Monitoring
+CREATE TABLE IF NOT EXISTS employee_activity_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_date TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  employee_name_snapshot TEXT NOT NULL,
+  action TEXT NOT NULL, -- 'ASSIGNED', 'CLAIMED', 'VIEWED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'HANDOFF'
+  tracking_code TEXT,
+  order_code TEXT,
+  account TEXT,
+  source TEXT DEFAULT 'UI',
+  details TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_emp_act_date ON employee_activity_log(work_date);
+CREATE INDEX IF NOT EXISTS idx_emp_act_emp ON employee_activity_log(employee_id, work_date);
+CREATE INDEX IF NOT EXISTS idx_emp_act_order ON employee_activity_log(order_code);
+CREATE INDEX IF NOT EXISTS idx_emp_act_action ON employee_activity_log(action);
 
 CREATE TABLE IF NOT EXISTS vendoor_connection_tests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

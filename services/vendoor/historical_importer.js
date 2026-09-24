@@ -302,7 +302,7 @@ export function rebuildHistoricalPerformanceSnapshots({ dates = null, database =
 export async function importHistoricalVendoorLogs(options = {}) {
   const {
     inputPaths = './historical_logs',
-    batchSize = 2000,
+    batchSize = 5000,
     dryRun = false,
     onProgress = null,
     database = db
@@ -316,6 +316,10 @@ export async function importHistoricalVendoorLogs(options = {}) {
   }
 
   const syncRunId = `hist_import_${Date.now()}`;
+
+  // Optimize SQLite for bulk streaming import
+  const prevSync = database.pragma('synchronous', { simple: true });
+  database.pragma('synchronous = OFF');
 
   // Prepared statements for idempotent batch writes
   const insertVendoorLogStmt = database.prepare(`
@@ -390,40 +394,13 @@ export async function importHistoricalVendoorLogs(options = {}) {
     return cs;
   }
 
-  // Ensure staging temp table exists for chronological date-by-date processing
-  database.exec(`
-    CREATE TEMP TABLE IF NOT EXISTS staging_raw_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      resolved_work_date TEXT NOT NULL,
-      order_code TEXT,
-      raw_employee_name TEXT NOT NULL,
-      emp_actor_name TEXT NOT NULL,
-      raw_action TEXT NOT NULL,
-      canonical_status TEXT NOT NULL,
-      classification TEXT NOT NULL,
-      is_productive INTEGER NOT NULL,
-      timestamp_str TEXT NOT NULL,
-      matched_employee_id INTEGER,
-      is_cs INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_staging_date ON staging_raw_logs(resolved_work_date);
-  `);
-
-  const stageInsertStmt = database.prepare(`
-    INSERT INTO staging_raw_logs (
-      resolved_work_date, order_code, raw_employee_name, emp_actor_name,
-      raw_action, canonical_status, classification, is_productive,
-      timestamp_str, matched_employee_id, is_cs
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  // Phase 1: Stream and stage records from all files
+  // Direct stream processing from all files
   for (let fIdx = 0; fIdx < files.length; fIdx++) {
     const filePath = files[fIdx];
     const fileName = path.basename(filePath);
     const fileStartTime = Date.now();
     let fileRowsRead = 0;
-    let fileStageCount = 0;
+    let fileImportCount = 0;
 
     const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {
       sharedStrings: 'cache',
@@ -434,23 +411,53 @@ export async function importHistoricalVendoorLogs(options = {}) {
 
     for await (const worksheetReader of workbookReader) {
       let headerMap = null;
-      let stagingBatch = [];
+      let importBatch = [];
 
-      const flushStagingBatch = database.transaction((items) => {
+      const flushImportBatch = database.transaction((items) => {
         for (const item of items) {
-          stageInsertStmt.run(
-            item.resolvedWorkDate,
-            item.orderCode,
-            item.rawEmployeeName,
-            item.empActorName,
-            item.rawAction,
-            item.canonicalStatus,
-            item.classification,
-            item.isProductive,
-            item.timestampStr,
-            item.matchedEmployeeId,
-            item.isCS
-          );
+          touchedDates.add(item.resolvedWorkDate);
+          if (!oldestDate || item.resolvedWorkDate < oldestDate) oldestDate = item.resolvedWorkDate;
+          if (!newestDate || item.resolvedWorkDate > newestDate) newestDate = item.resolvedWorkDate;
+
+          if (item.isCS === 1) {
+            totalCsRows++;
+          } else {
+            totalNonCsRows++;
+          }
+
+          if (!dryRun) {
+            // 1. Insert into vendoor_logs (authoritative events archive)
+            insertVendoorLogStmt.run(
+              item.rawEmployeeName,
+              item.orderCode || '',
+              item.rawAction,
+              item.classification,
+              item.isProductive,
+              item.timestampStr,
+              item.resolvedWorkDate,
+              item.matchedEmployeeId,
+              syncRunId
+            );
+
+            // 2. Insert into raw_log_records with canonical normalized status and strict is_cs
+            const res = insertRawLogStmt.run(
+              item.resolvedWorkDate,
+              item.orderCode || '',
+              item.empActorName,
+              item.canonicalStatus,
+              item.rawAction,
+              item.timestampStr,
+              item.isCS
+            );
+
+            if (res.changes > 0) {
+              totalRowsImported++;
+            } else {
+              totalDuplicatesSkipped++;
+            }
+          } else {
+            totalRowsImported++;
+          }
         }
       });
 
@@ -491,7 +498,6 @@ export async function importHistoricalVendoorLogs(options = {}) {
           continue;
         }
 
-        // Valid Historical Log: orderCode can be NULL for price modifications, product edits, or audit actions
         const orderCode = (rawCode && String(rawCode).trim() !== 'null' && String(rawCode).trim() !== 'undefined') ? String(rawCode).trim() : null;
 
         uniqueEmployees.add(rawEmployeeName);
@@ -507,7 +513,7 @@ export async function importHistoricalVendoorLogs(options = {}) {
         const empActorName = identity.employee_name || rawEmployeeName;
         const isCS = checkIsCS(empActorName, identity.department);
 
-        stagingBatch.push({
+        importBatch.push({
           resolvedWorkDate,
           orderCode,
           rawEmployeeName,
@@ -521,16 +527,16 @@ export async function importHistoricalVendoorLogs(options = {}) {
           isCS: isCS ? 1 : 0
         });
 
-        if (stagingBatch.length >= batchSize) {
-          flushStagingBatch(stagingBatch);
-          fileStageCount += stagingBatch.length;
-          stagingBatch = [];
+        if (importBatch.length >= batchSize) {
+          flushImportBatch(importBatch);
+          fileImportCount += importBatch.length;
+          importBatch = [];
 
           if (onProgress) {
             const elapsed = (Date.now() - startTime) / 1000;
             const rate = elapsed > 0 ? Math.round(totalRowsRead / elapsed) : 0;
             onProgress({
-              stage: 'STREAMING_STAGE',
+              stage: 'STREAMING_IMPORT',
               file: fileName,
               filesProcessed: fIdx,
               totalFiles: files.length,
@@ -547,10 +553,10 @@ export async function importHistoricalVendoorLogs(options = {}) {
         }
       }
 
-      if (stagingBatch.length > 0) {
-        flushStagingBatch(stagingBatch);
-        fileStageCount += stagingBatch.length;
-        stagingBatch = [];
+      if (importBatch.length > 0) {
+        flushImportBatch(importBatch);
+        fileImportCount += importBatch.length;
+        importBatch = [];
       }
     }
 
@@ -558,132 +564,10 @@ export async function importHistoricalVendoorLogs(options = {}) {
       file: fileName,
       path: filePath,
       rowsRead: fileRowsRead,
-      stagedRows: fileStageCount,
+      stagedRows: fileImportCount,
       durationSec: Math.round((Date.now() - fileStartTime) / 1000)
     });
   }
-
-  // Phase 2: Process and commit chronologically by WORK_DATE (Oldest → Newest)
-  const chronologicalDates = database.prepare(`
-    SELECT DISTINCT resolved_work_date
-    FROM staging_raw_logs
-    ORDER BY resolved_work_date ASC
-  `).all().map(r => r.resolved_work_date);
-
-  for (const workDate of chronologicalDates) {
-    const dateStartTime = Date.now();
-    touchedDates.add(workDate);
-    if (!oldestDate || workDate < oldestDate) oldestDate = workDate;
-    if (!newestDate || workDate > newestDate) newestDate = workDate;
-
-    const dateRows = database.prepare('SELECT * FROM staging_raw_logs WHERE resolved_work_date = ?').all(workDate);
-    let dateImported = 0;
-    let dateDuplicates = 0;
-    let dateCs = 0;
-    let dateNonCs = 0;
-
-    if (!dryRun) {
-      const tx = database.transaction((items) => {
-        for (const item of items) {
-          if (item.is_cs === 1) {
-            dateCs++;
-            totalCsRows++;
-          } else {
-            dateNonCs++;
-            totalNonCsRows++;
-          }
-
-          // 1. Insert into vendoor_logs (authoritative events archive)
-          insertVendoorLogStmt.run(
-            item.raw_employee_name,
-            item.order_code || '', // Safe NOT NULL default
-            item.raw_action,
-            item.classification,
-            item.is_productive,
-            item.timestamp_str,
-            item.resolved_work_date,
-            item.matched_employee_id,
-            syncRunId
-          );
-
-          // 2. Insert into raw_log_records with canonical normalized status and strict is_cs
-          const res = insertRawLogStmt.run(
-            item.resolved_work_date,
-            item.order_code || '',
-            item.emp_actor_name,
-            item.canonical_status,
-            item.raw_action,
-            item.timestamp_str,
-            item.is_cs
-          );
-
-          if (res.changes > 0) {
-            dateImported++;
-            totalRowsImported++;
-          } else {
-            dateDuplicates++;
-            totalDuplicatesSkipped++;
-          }
-        }
-      });
-
-      tx(dateRows);
-    } else {
-      // Dry run counters: track duplicates accurately per date
-      const dateSeenSet = new Set();
-      for (const item of dateRows) {
-        if (item.is_cs === 1) {
-          dateCs++;
-          totalCsRows++;
-        } else {
-          dateNonCs++;
-          totalNonCsRows++;
-        }
-        const dedupKey = `${item.resolved_work_date}|${item.order_code || ''}|${item.emp_actor_name}|${item.raw_action}|${item.timestamp_str}`;
-        if (dateSeenSet.has(dedupKey)) {
-          dateDuplicates++;
-          totalDuplicatesSkipped++;
-        } else {
-          dateSeenSet.add(dedupKey);
-          dateImported++;
-          totalRowsImported++;
-        }
-      }
-    }
-
-    const dateDurationSec = ((Date.now() - dateStartTime) / 1000).toFixed(2);
-    const dateRate = dateDurationSec > 0 ? Math.round(dateRows.length / parseFloat(dateDurationSec)) : dateRows.length;
-
-    dateBreakdown.push({
-      date: workDate,
-      sourceRows: dateRows.length,
-      cs: dateCs,
-      nonCs: dateNonCs,
-      imported: dateImported,
-      duplicates: dateDuplicates,
-      rejected: 0,
-      status: 'COMPLETE',
-      durationSec: parseFloat(dateDurationSec),
-      rate: dateRate
-    });
-
-    if (onProgress) {
-      onProgress({
-        stage: 'DATE_COMMIT',
-        date: workDate,
-        dateSourceRows: dateRows.length,
-        dateImported,
-        dateDuplicates,
-        dateCs,
-        dateNonCs,
-        durationSec: dateDurationSec,
-        rate: dateRate
-      });
-    }
-  }
-
-  // Cleanup staging table
-  database.exec('DROP TABLE IF EXISTS staging_raw_logs;');
 
   // Historical Performance Reconstruction (only if records were imported and not dry-run)
   let performanceRebuildResult = null;
@@ -703,7 +587,8 @@ export async function importHistoricalVendoorLogs(options = {}) {
   if (!dryRun && newestDate) {
     try {
       const profiles = getEmployeePerformanceProfiles(newestDate);
-      latestProfilesSample = Object.values(profiles).slice(0, 5).map(p => ({
+      const profList = profiles instanceof Map ? Array.from(profiles.values()) : Object.values(profiles);
+      latestProfilesSample = profList.slice(0, 5).map(p => ({
         name: p.employee_name,
         score: p.historical_score,
         rate: p.historical_rate,
@@ -714,6 +599,9 @@ export async function importHistoricalVendoorLogs(options = {}) {
       // profiles sample optional
     }
   }
+
+  // Restore SQLite pragma
+  database.pragma(`synchronous = ${prevSync || 'NORMAL'}`);
 
   return {
     success: true,

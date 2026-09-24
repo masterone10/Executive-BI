@@ -48,7 +48,6 @@ test('AUDIT TEST SUITE: Complete 33-Requirement Verification & Proof', async (t)
 
   // Setup test employees
   await t.test('Req 1: Employee Master Setup (Manual only, Team Memberships)', () => {
-    db.prepare('DELETE FROM employees WHERE name LIKE ?').run('AUDIT_%');
     db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(AUDIT_DATE);
     db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(AUDIT_DATE);
     db.prepare('DELETE FROM specific_orders_uploads WHERE work_date = ?').run(AUDIT_DATE);
@@ -56,6 +55,12 @@ test('AUDIT TEST SUITE: Complete 33-Requirement Verification & Proof', async (t)
     db.prepare('DELETE FROM account_owners WHERE work_date = ?').run(AUDIT_DATE);
     db.prepare('DELETE FROM order_level_allocations WHERE allocation_date = ?').run(AUDIT_DATE);
     db.prepare('DELETE FROM allocation_versions WHERE allocation_date = ?').run(AUDIT_DATE);
+    db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(AUDIT_DATE);
+    db.prepare('DELETE FROM employee_activity_log WHERE employee_id IN (SELECT id FROM employees WHERE name LIKE ?)').run('AUDIT_%');
+    db.prepare('DELETE FROM allocation_items WHERE employee_id IN (SELECT id FROM employees WHERE name LIKE ?)').run('AUDIT_%');
+    db.prepare('DELETE FROM account_exceptions WHERE employee_id IN (SELECT id FROM employees WHERE name LIKE ?)').run('AUDIT_%');
+    db.prepare('DELETE FROM daily_working_team WHERE employee_id IN (SELECT id FROM employees WHERE name LIKE ?)').run('AUDIT_%');
+    db.prepare('DELETE FROM employees WHERE name LIKE ?').run('AUDIT_%');
     db.prepare('DELETE FROM account_rules WHERE account_name LIKE ?').run('AUDIT_%');
 
     const insertEmp = db.prepare(`
@@ -248,7 +253,6 @@ test('AUDIT TEST SUITE: Complete 33-Requirement Verification & Proof', async (t)
   });
 
   // Cleanup audit data
-  db.prepare('DELETE FROM employees WHERE name LIKE ?').run('AUDIT_%');
   db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(AUDIT_DATE);
   db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(AUDIT_DATE);
   db.prepare('DELETE FROM specific_orders_uploads WHERE work_date = ?').run(AUDIT_DATE);
@@ -257,4 +261,9 @@ test('AUDIT TEST SUITE: Complete 33-Requirement Verification & Proof', async (t)
   db.prepare('DELETE FROM order_level_allocations WHERE allocation_date = ?').run(AUDIT_DATE);
   db.prepare('DELETE FROM allocation_versions WHERE allocation_date = ?').run(AUDIT_DATE);
   db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(AUDIT_DATE);
+  db.prepare('DELETE FROM employee_activity_log WHERE employee_id IN (SELECT id FROM employees WHERE name LIKE ?)').run('AUDIT_%');
+  db.prepare('DELETE FROM allocation_items WHERE employee_id IN (SELECT id FROM employees WHERE name LIKE ?)').run('AUDIT_%');
+  db.prepare('DELETE FROM account_exceptions WHERE employee_id IN (SELECT id FROM employees WHERE name LIKE ?)').run('AUDIT_%');
+  db.prepare('DELETE FROM daily_working_team WHERE employee_id IN (SELECT id FROM employees WHERE name LIKE ?)').run('AUDIT_%');
+  db.prepare('DELETE FROM employees WHERE name LIKE ?').run('AUDIT_%');
 });

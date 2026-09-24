@@ -1,8 +1,16 @@
 import XLSX from 'xlsx';
 import { db } from '../db/index.js';
-import { parseDailyLogBuffer, parseDate, matchEmployeeInMaster, normalizeEmployeeName, isCSName, isCsEmployee } from './parser.js';
+import { parseDailyLogBuffer, parseDate, matchEmployeeInMaster, normalizeEmployeeName, isCSName, isCsEmployee, isOperationallyActiveCsEmployee } from './parser.js';
 import { computePerformanceFromRecords } from './performance.js';
 import { extractCanonicalStatus } from './vendoor/actions.js';
+import {
+  getCairoBusinessDate,
+  isTodayBusinessDate,
+  isHistoricalBusinessDate,
+  parseCairoTimestamp,
+  formatCairoTime,
+  formatIdleDuration
+} from './time_utils.js';
 
 /**
  * ============================================================
@@ -233,10 +241,11 @@ export function persistDailyLogRecords(workDate, sourceFileId, records) {
 
     for (const r of records) {
       if (!r.order || !r.name) continue;
-      const formattedDt = r.dt && !isNaN(r.dt) ? new Date(r.dt).toISOString().replace('T', ' ').substring(0, 19) : null;
+      const recordWorkDate = r.business_date || workDate;
+      const formattedDt = r.cairo_datetime || (r.dt && !isNaN(r.dt) ? new Date(r.dt).toISOString().replace('T', ' ').substring(0, 19) : null);
       insert.run(
         validFileId,
-        workDate,
+        recordWorkDate,
         String(r.order).trim(),
         String(r.name).trim(),
         r.act || '',
@@ -257,25 +266,60 @@ export function persistDailyLogRecords(workDate, sourceFileId, records) {
  * ============================================================
  */
 export function getOrderTracking(workDate, orderCode) {
-  const cleanCode = String(orderCode || '').trim();
+  let cleanCode = String(orderCode || '').trim();
 
-  // 1. Check opening inventory
-  const orderRecord = db.prepare(`
+  // 1. Check opening inventory (by order_code or tracking_id)
+  let orderRecord = db.prepare(`
     SELECT * FROM current_work_orders 
-    WHERE work_date = ? AND order_code = ?
-  `).get(workDate, cleanCode);
+    WHERE work_date = ? AND (order_code = ? OR tracking_id = ?)
+  `).get(workDate, cleanCode, cleanCode);
+
+  if (!orderRecord) {
+    const trkRow = db.prepare(`
+      SELECT * FROM order_tracking WHERE work_date = ? AND (order_code = ? OR tracking_id = ?)
+    `).get(workDate, cleanCode, cleanCode);
+    if (trkRow) {
+      cleanCode = trkRow.order_code;
+    }
+  } else {
+    cleanCode = orderRecord.order_code;
+  }
+
+  let trackingId = orderRecord ? orderRecord.tracking_id : null;
+  if (!trackingId) {
+    const ev = db.prepare(`
+      SELECT tracking_id FROM order_tracking_events 
+      WHERE work_date = ? AND (order_code = ? OR tracking_id = ?) 
+      LIMIT 1
+    `).get(workDate, cleanCode, cleanCode);
+    if (ev) trackingId = ev.tracking_id;
+  }
+  if (!trackingId) {
+    const actRow = db.prepare(`
+      SELECT tracking_code FROM employee_activity_log
+      WHERE work_date = ? AND (order_code = ? OR tracking_code = ?)
+      LIMIT 1
+    `).get(workDate, cleanCode, cleanCode);
+    if (actRow && actRow.tracking_code) trackingId = actRow.tracking_code;
+  }
+  if (!trackingId) {
+    const ot = db.prepare('SELECT tracking_id FROM order_tracking WHERE work_date = ? AND order_code = ?').get(workDate, cleanCode);
+    if (ot && ot.tracking_id) trackingId = ot.tracking_id;
+  }
 
   let account = orderRecord ? orderRecord.account : 'Unmatched / Unknown Account';
   let openingStatus = orderRecord ? orderRecord.status : 'Not Found in Opening Inventory';
   let isConflict = orderRecord ? (orderRecord.status === 'Opening Status Conflict' ? 1 : 0) : 0;
   let sourceSlot = orderRecord ? orderRecord.source_file_slot : null;
+  let workState = orderRecord ? (orderRecord.work_state || 'UNASSIGNED') : 'UNASSIGNED';
+  let priority = orderRecord ? (orderRecord.priority || 'REGULAR') : 'REGULAR';
 
   // 2. Fetch assigned employees for this order & account
   const assignedEmployees = [];
   let assignedTo = null;
 
   const orderAllocRow = db.prepare(`
-    SELECT employee_name FROM order_level_allocations
+    SELECT employee_name, work_state, priority, tracking_id FROM order_level_allocations
     WHERE allocation_date = ? AND order_code = ?
     ORDER BY allocation_version DESC LIMIT 1
   `).get(workDate, cleanCode);
@@ -283,6 +327,9 @@ export function getOrderTracking(workDate, orderCode) {
   if (orderAllocRow && orderAllocRow.employee_name && orderAllocRow.employee_name !== 'UNASSIGNED') {
     assignedEmployees.push(orderAllocRow.employee_name);
     assignedTo = orderAllocRow.employee_name;
+    if (orderAllocRow.work_state) workState = orderAllocRow.work_state;
+    if (orderAllocRow.priority) priority = orderAllocRow.priority;
+    if (!trackingId && orderAllocRow.tracking_id) trackingId = orderAllocRow.tracking_id;
   }
 
   const ownerRow = db.prepare(`
@@ -339,7 +386,15 @@ export function getOrderTracking(workDate, orderCode) {
     }
   }
 
-  // 5. Build Chronological Timeline (Phase 9 & 18)
+  // 5. Fetch lifecycle events and handoffs from order_tracking_events
+  const trackingEvents = db.prepare(`
+    SELECT stage, work_state, employee_name, previous_employee_name, action, timestamp, reason, source, details
+    FROM order_tracking_events
+    WHERE work_date = ? AND (order_code = ? OR (tracking_id IS NOT NULL AND tracking_id = ?))
+    ORDER BY timestamp ASC, id ASC
+  `).all(workDate, cleanCode, trackingId || '');
+
+  // 6. Build Chronological Timeline (Phase 9 & 18 & Part 2)
   const timeline = [];
 
   // Opening event
@@ -355,20 +410,24 @@ export function getOrderTracking(workDate, orderCode) {
     source: sourceSlot === 1 ? 'New Orders File' : sourceSlot === 2 ? 'Pending Orders File' : 'Inventory',
   });
 
-  // Action events
+  // Action events from daily log
   const actualEmployeesSet = new Set();
   let lastLoggedStatus = null;
   let firstAction = null;
   let lastAction = null;
 
   deduplicatedActions.forEach((act, idx) => {
-    actualEmployeesSet.add(act.employee_name);
+    if (act.is_cs === 1 || (act.is_cs === undefined && isCsEmployee(act.employee_name, null, { strictMaster: true }))) {
+      if (isCsEmployee(act.employee_name, null, { strictMaster: true })) {
+        actualEmployeesSet.add(act.employee_name);
+      }
+    }
     if (!firstAction) firstAction = act.event_datetime;
     lastAction = act.event_datetime;
     if (act.status) lastLoggedStatus = act.status;
 
     timeline.push({
-      step_number: idx + 2,
+      step_number: timeline.length + 1,
       type: 'ACTION',
       timestamp: act.event_datetime,
       status: act.status || 'Action Recorded',
@@ -378,9 +437,34 @@ export function getOrderTracking(workDate, orderCode) {
     });
   });
 
+  // Tracking events from lifecycle transitions and internal handoffs
+  trackingEvents.forEach((ev) => {
+    if (ev.employee_name && ev.employee_name !== 'UNASSIGNED' && isCsEmployee(ev.employee_name, null, { strictMaster: true })) {
+      actualEmployeesSet.add(ev.employee_name);
+    }
+    if (!firstAction) firstAction = ev.timestamp;
+    lastAction = ev.timestamp;
+    if (ev.stage) lastLoggedStatus = ev.stage;
+    if (ev.work_state) workState = ev.work_state;
+
+    timeline.push({
+      step_number: timeline.length + 1,
+      type: ev.action === 'HANDOFF' ? 'HANDOFF' : 'LIFECYCLE',
+      timestamp: ev.timestamp,
+      status: ev.stage || ev.work_state || 'Updated',
+      employee: ev.employee_name || 'System',
+      previous_employee: ev.previous_employee_name || null,
+      action_text: ev.action === 'HANDOFF'
+        ? `Internal Handoff: ${ev.previous_employee_name || 'Previous Agent'} -> ${ev.employee_name || 'New Agent'} [${ev.stage}]`
+        : `${ev.action || 'Updated'} (${ev.stage || ev.work_state})`,
+      reason: ev.reason || null,
+      source: ev.source || 'Operational Workflow',
+    });
+  });
+
   const actualEmployees = Array.from(actualEmployeesSet);
-  const ordersWorked = deduplicatedActions.length > 0;
-  const currentFinalStatus = ordersWorked ? (lastLoggedStatus || openingStatus) : openingStatus;
+  const ordersWorked = deduplicatedActions.length > 0 || trackingEvents.some(e => ['CLAIMED', 'IN_PROGRESS', 'COMPLETED'].includes((e.action || '').toUpperCase()));
+  const currentFinalStatus = lastLoggedStatus || openingStatus;
 
   // Determine alignment
   let isAssignedWork = false;
@@ -390,16 +474,19 @@ export function getOrderTracking(workDate, orderCode) {
 
   return {
     order_code: cleanCode,
+    tracking_id: trackingId,
     work_date: workDate,
     account,
     opening_status: openingStatus,
+    work_state: workState,
+    priority: priority,
     is_opening_conflict: isConflict,
     source_file_slot: sourceSlot,
     assigned_to: assignedTo,
     assigned_employees: assignedEmployees,
     actual_employees: actualEmployees,
     orders_worked_today: ordersWorked ? 1 : 0,
-    real_actions_count: deduplicatedActions.length,
+    real_actions_count: deduplicatedActions.length + trackingEvents.length,
     first_action: firstAction,
     last_action: lastAction,
     last_logged_status: lastLoggedStatus,
@@ -460,16 +547,51 @@ export function getSourcesUploadStatus(workDate) {
  * ============================================================
  */
 export function getEmployeeTracking(workDate, employeeIdOrName) {
-  // Find employee in DB
+  // Authoritative employee lookup
   let emp = null;
-  if (typeof employeeIdOrName === 'number' || !isNaN(employeeIdOrName)) {
-    emp = db.prepare('SELECT id, name, department FROM employees WHERE id = ?').get(employeeIdOrName);
-  } else {
-    emp = db.prepare('SELECT id, name, department FROM employees WHERE name = ?').get(String(employeeIdOrName).trim());
+  let suppliedId = null;
+  let suppliedName = null;
+
+  if (typeof employeeIdOrName === 'object' && employeeIdOrName !== null) {
+    if (employeeIdOrName.employee_id !== undefined && employeeIdOrName.employee_id !== null && employeeIdOrName.employee_id !== '') {
+      suppliedId = employeeIdOrName.employee_id;
+    } else if (employeeIdOrName.id !== undefined && employeeIdOrName.id !== null && employeeIdOrName.id !== '') {
+      suppliedId = employeeIdOrName.id;
+    }
+    suppliedName = employeeIdOrName.name || employeeIdOrName.employee_name || null;
+  } else if (typeof employeeIdOrName === 'number') {
+    suppliedId = employeeIdOrName;
+  } else if (typeof employeeIdOrName === 'string') {
+    const trimmed = employeeIdOrName.trim();
+    if (/^\d+$/.test(trimmed)) {
+      suppliedId = parseInt(trimmed, 10);
+    } else {
+      suppliedName = trimmed;
+    }
   }
 
-  const empName = emp ? emp.name : String(employeeIdOrName).trim();
-  const empId = emp ? emp.id : null;
+  // If employee_id was supplied: resolve ONLY by employee_id. Never fall back to matching by name!
+  if (suppliedId !== null) {
+    emp = db.prepare('SELECT id, name, department, active, status FROM employees WHERE id = ?').get(suppliedId);
+    if (!emp) {
+      return null;
+    }
+  } else if (suppliedName) {
+    emp = db.prepare('SELECT id, name, department, active, status FROM employees WHERE name = ? COLLATE NOCASE').get(suppliedName);
+    if (!emp) {
+      return null;
+    }
+  } else {
+    return null;
+  }
+
+  // Non-CS employees cannot be operational CS workers
+  if (!isCsEmployee(emp)) {
+    return null;
+  }
+
+  const empName = emp.name;
+  const empId = emp.id;
 
   // 1. Check if Daily Log was uploaded for workDate
   const dailyLogUploaded = isDailyLogUploaded(workDate);
@@ -513,15 +635,45 @@ export function getEmployeeTracking(workDate, employeeIdOrName) {
     orderAccountMap.set(o.order_code, o.account);
   }
 
-  // 4. Fetch all Daily Log actions for this employee
+  // 4. Fetch all Daily Log actions for this employee with EXACT matching
   const rawActions = db.prepare(`
     SELECT id, order_code, action, status, event_datetime, is_cs
     FROM raw_log_records
-    WHERE work_date = ? AND (employee_name = ? OR employee_name LIKE ?)
+    WHERE work_date = ? AND LOWER(TRIM(employee_name)) = LOWER(TRIM(?))
     ORDER BY event_datetime ASC, id ASC
-  `).all(workDate, empName, `%${empName}%`);
+  `).all(workDate, empName);
 
-  // 5. Deduplicate actions using 120s window
+  // Derive Last Activity and Last Productive Activity from all raw actions
+  let lastActivityTime = null;
+  let lastProductiveActivityTime = null;
+  let lastAction = null;
+  let lastProductiveAction = null;
+  let lastOrderCode = null;
+  let lastAccount = null;
+
+  for (const act of rawActions) {
+    const actStr = String(act.action || '');
+    const upperAct = actStr.toUpperCase();
+    const isProd = PRODUCTIVE_ACTIONS.has(upperAct) ||
+      upperAct.includes('PRINT') || upperAct.includes('PROCESS') || upperAct.includes('CANCEL') ||
+      upperAct.includes('PEND') || upperAct.includes('STAGE_CHANGE') || upperAct.includes('CLAIM') ||
+      actStr.includes('عدل') || actStr.includes('أضاف') || actStr.includes('تغيير') ||
+      actStr.includes('طباعة') || actStr.includes('تحويل') || actStr.includes('حذف');
+
+    if (act.event_datetime) {
+      lastActivityTime = act.event_datetime;
+      lastAction = act.action;
+      lastOrderCode = act.order_code;
+      lastAccount = orderAccountMap.get(act.order_code) || 'Unmatched Account';
+
+      if (isProd) {
+        lastProductiveActivityTime = act.event_datetime;
+        lastProductiveAction = act.action;
+      }
+    }
+  }
+
+  // 5. Deduplicate actions using 120s window for real actions count
   const deduplicatedActions = [];
   const dedupMap = new Map();
 
@@ -659,6 +811,38 @@ export function getEmployeeTracking(workDate, employeeIdOrName) {
     statusMessage = 'End-of-Day Log Not Uploaded';
   }
 
+  // Live status and idle calculation
+  const isHistorical = isHistoricalBusinessDate(workDate);
+  let liveStatus = 'NO_ACTIVITY';
+  let idleSeconds = null;
+  let idleDurationFormatted = '—';
+
+  if (isHistorical) {
+    liveStatus = 'HISTORICAL';
+    idleSeconds = null;
+    idleDurationFormatted = '—';
+  } else if (dailyLogUploaded) {
+    if (uniqueOrdersWorkedSet.size === 0 && (!deduplicatedActions || deduplicatedActions.length === 0)) {
+      liveStatus = 'NO_ACTIVITY';
+    } else if (!lastProductiveActivityTime) {
+      liveStatus = 'INACTIVE';
+    } else {
+      const prodDt = parseCairoTimestamp(lastProductiveActivityTime) || new Date(lastProductiveActivityTime);
+      const prodMs = prodDt.getTime();
+      if (!isNaN(prodMs)) {
+        idleSeconds = Math.max(0, Math.floor((Date.now() - prodMs) / 1000));
+        idleDurationFormatted = formatIdleDuration(idleSeconds);
+        if (idleSeconds <= 15 * 60) {
+          liveStatus = 'ACTIVE';
+        } else if (idleSeconds <= 45 * 60) {
+          liveStatus = 'INACTIVE';
+        } else {
+          liveStatus = 'CRITICAL';
+        }
+      }
+    }
+  }
+
   return {
     employee_id: empId,
     employee_name: empName,
@@ -682,6 +866,15 @@ export function getEmployeeTracking(workDate, employeeIdOrName) {
     processing_orders: dailyLogUploaded ? processingCount : null,
     alt_phones: dailyLogUploaded ? altCount : null,
     added_orders: dailyLogUploaded ? addedCount : null,
+    last_activity_time: lastActivityTime,
+    last_productive_activity_time: lastProductiveActivityTime,
+    last_activity_action: lastAction,
+    last_productive_action: lastProductiveAction,
+    last_activity_order_code: lastOrderCode,
+    last_activity_account: lastAccount,
+    idle_seconds: idleSeconds,
+    idle_duration_formatted: idleDurationFormatted,
+    live_status: liveStatus,
     outside_allocation: {
       has_unassigned_activity: extraUnassignedAccounts.length > 0,
       extra_accounts_count: extraUnassignedAccounts.length,
@@ -731,28 +924,36 @@ export function getTeamTrackingSummary(workDate) {
   const activeCSEmps = db.prepare(`
     SELECT id, name, department
     FROM employees
-    WHERE (active = 1 OR active IS NULL) AND (department = 'CS' OR department IS NULL OR department = '')
+    WHERE (active = 1 OR status = 'ACTIVE')
+      AND UPPER(TRIM(department)) IN ('CS', 'CUSTOMER SERVICE')
+    ORDER BY name ASC
   `).all();
 
-  // Combine into a unique employee set
+  // Combine into a strictly authoritative CS employee set
   const empMap = new Map();
   for (const e of activeCSEmps) {
-    empMap.set(e.name, { id: e.id, name: e.name, department: e.department || 'CS' });
+    empMap.set(e.name, { id: e.id, name: e.name, department: 'CS' });
   }
   for (const e of workingTeamRows) {
-    empMap.set(e.name, { id: e.id, name: e.name, department: e.department || 'CS' });
+    if (isCsEmployee(e)) {
+      empMap.set(e.name, { id: e.id, name: e.name, department: 'CS' });
+    }
   }
   for (const e of allocEmpRows) {
-    empMap.set(e.name, { id: e.id, name: e.name, department: e.department || 'CS' });
+    if (isCsEmployee(e)) {
+      empMap.set(e.name, { id: e.id, name: e.name, department: 'CS' });
+    }
   }
   for (const l of logEmpRows) {
     if (!empMap.has(l.name)) {
-      const found = db.prepare('SELECT id, name, department FROM employees WHERE name = ?').get(l.name);
-      empMap.set(l.name, {
-        id: found ? found.id : null,
-        name: l.name,
-        department: found ? found.department : 'CS',
-      });
+      const found = db.prepare('SELECT id, name, department, status, active FROM employees WHERE name = ? COLLATE NOCASE').get(l.name);
+      if (found && isCsEmployee(found)) {
+        empMap.set(found.name, {
+          id: found.id,
+          name: found.name,
+          department: 'CS',
+        });
+      }
     }
   }
 
@@ -772,6 +973,16 @@ export function getTeamTrackingSummary(workDate) {
       employee_id: tracking.employee_id,
       employee_name: tracking.employee_name,
       department: info.department || 'CS',
+      working_today: workingTeamRows.some(w => w.name === name || w.id === info.id),
+      live_status: tracking.live_status,
+      idle_seconds: tracking.idle_seconds,
+      idle_duration_formatted: tracking.idle_duration_formatted,
+      last_activity_time: tracking.last_activity_time,
+      last_productive_activity_time: tracking.last_productive_activity_time,
+      last_activity_action: tracking.last_activity_action,
+      last_productive_action: tracking.last_productive_action,
+      last_activity_order_code: tracking.last_activity_order_code,
+      last_activity_account: tracking.last_activity_account,
       assigned_accounts_count: tracking.assigned_accounts.length,
       assigned_accounts: tracking.assigned_accounts,
       worked_accounts_count: tracking.actually_worked_accounts.length,
@@ -925,7 +1136,9 @@ export function getAccountTracking(workDate, accountName) {
   const actualEmployeesSet = new Set();
 
   for (const act of deduplicatedActions) {
-    actualEmployeesSet.add(act.employee_name);
+    if (act.is_cs === 1 || isCsEmployee(act.employee_name)) {
+      actualEmployeesSet.add(act.employee_name);
+    }
 
     if (!orderDetailsMap.has(act.order_code)) {
       const opening = orderOpeningMap.get(act.order_code);
@@ -945,9 +1158,11 @@ export function getAccountTracking(workDate, accountName) {
     ord.action_count++;
     ord.last_action = act.event_datetime;
     if (act.status) ord.latest_status = act.status;
-    ord.actual_employees.add(act.employee_name);
-    if (assignedSet.has(act.employee_name)) {
-      ord.is_assigned_worker = true;
+    if (act.is_cs === 1 || isCsEmployee(act.employee_name)) {
+      ord.actual_employees.add(act.employee_name);
+      if (assignedSet.has(act.employee_name)) {
+        ord.is_assigned_worker = true;
+      }
     }
   }
 
@@ -1556,26 +1771,31 @@ export function getAccountDetailedData(workDate, accountName) {
         dedupMap.set(key, dt);
 
         if (!empActivityMap.has(r.employee_name)) {
-          empActivityMap.set(r.employee_name, {
-            employee_name: r.employee_name,
-            is_assigned: assignedSet.has(r.employee_name),
-            allocated_orders: 0,
-            orders_worked: 0,
-            real_actions: 0,
-            printed: 0,
-            pending: 0,
-            cancelled: 0,
-            alt: 0
-          });
+          // Strictly CS employees only
+          if (isCsEmployee(r.employee_name)) {
+            empActivityMap.set(r.employee_name, {
+              employee_name: r.employee_name,
+              is_assigned: assignedSet.has(r.employee_name),
+              allocated_orders: 0,
+              orders_worked: 0,
+              real_actions: 0,
+              printed: 0,
+              pending: 0,
+              cancelled: 0,
+              alt: 0
+            });
+          }
         }
 
         const actEmp = empActivityMap.get(r.employee_name);
-        actEmp.real_actions++;
-        if (r.status === 'Printed') { actEmp.printed++; printedCount++; }
-        if (r.status === 'Pending') { actEmp.pending++; pendingCount++; }
-        if (r.status === 'Cancelled') { actEmp.cancelled++; cancelledCount++; }
-        if (r.status === 'Processing') processingCount++;
-        if (/هاتف\s*آخر|تليفون\s*بديل|alt/i.test(r.action)) { actEmp.alt++; altCount++; }
+        if (actEmp) {
+          actEmp.real_actions++;
+          if (r.status === 'Printed') { actEmp.printed++; printedCount++; }
+          if (r.status === 'Pending') { actEmp.pending++; pendingCount++; }
+          if (r.status === 'Cancelled') { actEmp.cancelled++; cancelledCount++; }
+          if (r.status === 'Processing') processingCount++;
+          if (/هاتف\s*آخر|تليفون\s*بديل|alt/i.test(r.action)) { actEmp.alt++; altCount++; }
+        }
 
         timeline.push({
           order_code: r.order_code,
@@ -1605,12 +1825,19 @@ export function getAccountDetailedData(workDate, accountName) {
     }
   }
 
-  // Count unique orders worked per employee
+  // Count distinct canonical orders worked per employee for this account
+  const empUniqueOrdersMap = new Map();
   for (const o of tracking.orders || []) {
-    for (const emp of o.actual_employees || []) {
-      if (empActivityMap.has(emp)) {
-        empActivityMap.get(emp).orders_worked++;
-      }
+    if (!o.worked) continue;
+    const emps = Array.isArray(o.actual_employees) ? Array.from(new Set(o.actual_employees)) : [];
+    for (const emp of emps) {
+      if (!empUniqueOrdersMap.has(emp)) empUniqueOrdersMap.set(emp, new Set());
+      empUniqueOrdersMap.get(emp).add(o.order_code);
+    }
+  }
+  for (const [emp, ordSet] of empUniqueOrdersMap.entries()) {
+    if (empActivityMap.has(emp)) {
+      empActivityMap.get(emp).orders_worked = ordSet.size;
     }
   }
 
@@ -1734,7 +1961,7 @@ export function getAccountDetailedData(workDate, accountName) {
  * Strictly guarantees KPI data-scope consistency.
  */
 export function getOperationalDashboardData(workDate) {
-  const targetDate = workDate || new Date().toISOString().slice(0, 10);
+  const targetDate = workDate || getCairoBusinessDate();
 
   // 1. Check daily_metrics_snapshots first
   const snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(targetDate);
@@ -2042,6 +2269,887 @@ export function getOperationalDashboardData(workDate) {
       allCSContributors: []
     },
     dedup: { removed: 0, removed_pct: 0 }
+  };
+}
+
+/**
+ * ============================================================
+ * OPERATIONAL WORKFLOW, INDIVIDUAL TRACKING & LIVE ACTIVITY
+ * ============================================================
+ */
+
+export const ORDER_WORKFLOW_STATES = [
+  'New', 'Printed', 'Sealed', 'Dispatched', 'Delivered', 'Completed', 'Cancelled', 'Refunded', 'Returned'
+];
+
+export const WORK_STATES = [
+  'UNASSIGNED', 'ASSIGNED', 'CLAIMED', 'IN_PROGRESS', 'COMPLETED'
+];
+
+export const PRODUCTIVE_ACTIONS = new Set([
+  'ASSIGNED', 'CLAIMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'HANDOFF'
+]);
+
+export function generateTrackingId(orderCode, workDate, index = 0) {
+  const cleanCode = String(orderCode || '').trim();
+  const cleanDate = String(workDate || '').replace(/[^0-9]/g, '');
+  const rand = Math.random().toString(36).substring(2, 6);
+  return `TRK-${cleanDate}-${cleanCode}-${index || 1}-${rand}`;
+}
+
+export function recordOrderLifecycleEvent({
+  tracking_id,
+  order_code,
+  work_date,
+  stage,
+  work_state = 'UNASSIGNED',
+  employee_id = null,
+  employee_name = null,
+  previous_employee_id = null,
+  previous_employee_name = null,
+  action = 'STAGE_CHANGE',
+  timestamp = null,
+  reason = null,
+  source = 'SYSTEM',
+  details = null
+}) {
+  const ts = timestamp || new Date().toISOString();
+  const cleanCode = String(order_code || '').trim();
+  const date = work_date || ts.slice(0, 10);
+
+  let finalTrackingId = tracking_id;
+  if (!finalTrackingId) {
+    const existing = db.prepare('SELECT tracking_id FROM current_work_orders WHERE work_date = ? AND order_code = ?').get(date, cleanCode);
+    finalTrackingId = existing?.tracking_id || generateTrackingId(cleanCode, date);
+  }
+
+  const res = db.prepare(`
+    INSERT INTO order_tracking_events (
+      tracking_id, order_code, work_date, stage, work_state, employee_id, employee_name,
+      previous_employee_id, previous_employee_name, action, timestamp, reason, source, details
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    finalTrackingId, cleanCode, date, stage || 'New', work_state, employee_id, employee_name,
+    previous_employee_id, previous_employee_name, action, ts, reason, source,
+    details ? (typeof details === 'object' ? JSON.stringify(details) : String(details)) : null
+  );
+
+  // Sync current_work_orders if present
+  try {
+    db.prepare(`
+      UPDATE current_work_orders 
+      SET tracking_id = COALESCE(tracking_id, ?),
+          status = COALESCE(?, status),
+          work_state = COALESCE(?, work_state),
+          updated_at = datetime('now')
+      WHERE work_date = ? AND order_code = ?
+    `).run(finalTrackingId, stage, work_state, date, cleanCode);
+  } catch (_) {}
+
+  // Sync order_tracking
+  try {
+    db.prepare(`
+      INSERT INTO order_tracking (order_code, work_date, status, tracking_id, work_state, updated_at)
+      VALUES (?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(order_code, work_date) DO UPDATE SET
+        tracking_id = COALESCE(excluded.tracking_id, order_tracking.tracking_id),
+        status = COALESCE(excluded.status, order_tracking.status),
+        work_state = COALESCE(excluded.work_state, order_tracking.work_state),
+        updated_at = datetime('now')
+    `).run(cleanCode, date, stage, finalTrackingId, work_state);
+  } catch (_) {}
+
+  return { success: true, event_id: res.lastInsertRowid, tracking_id: finalTrackingId };
+}
+
+export function recordInternalHandoff({
+  tracking_id,
+  order_code,
+  work_date,
+  stage,
+  previous_employee_id,
+  previous_employee_name,
+  new_employee_id,
+  new_employee_name,
+  timestamp = null,
+  reason = 'Internal Workflow Handoff',
+  source = 'INTERNAL_HANDOFF'
+}) {
+  const ts = timestamp || new Date().toISOString();
+  const date = work_date || getCairoBusinessDate();
+
+  let newEmp = null;
+  if (new_employee_id) {
+    newEmp = assertActiveCsEmployee(new_employee_id, date);
+  }
+  let prevEmp = null;
+  if (previous_employee_id) {
+    prevEmp = assertActiveCsEmployee(previous_employee_id, date);
+  }
+
+  // Record in order_tracking_events
+  const evResult = recordOrderLifecycleEvent({
+    tracking_id,
+    order_code,
+    work_date: date,
+    stage: stage || 'HANDOFF',
+    work_state: 'ASSIGNED',
+    employee_id: newEmp ? newEmp.id : new_employee_id,
+    employee_name: newEmp ? newEmp.name : new_employee_name,
+    previous_employee_id: prevEmp ? prevEmp.id : previous_employee_id,
+    previous_employee_name: prevEmp ? prevEmp.name : previous_employee_name,
+    action: 'HANDOFF',
+    timestamp: ts,
+    reason,
+    source,
+    details: `Handoff from ${prevEmp ? prevEmp.name : (previous_employee_name || previous_employee_id)} to ${newEmp ? newEmp.name : (new_employee_name || new_employee_id)}`
+  });
+
+  // Log in employee_activity_log for the new employee
+  if (newEmp) {
+    try {
+      logEmployeeActivity({
+        work_date: date,
+        employee_id: newEmp.id,
+        employee_name: newEmp.name,
+        action: 'HANDOFF',
+        tracking_code: evResult.tracking_id,
+        order_code,
+        source: 'HANDOFF',
+        details: `Received handoff from ${prevEmp ? prevEmp.name : (previous_employee_name || previous_employee_id)}`,
+        timestamp: ts
+      });
+    } catch (_) {}
+  }
+
+  return evResult;
+}
+
+export function getOrderFullHistory(workDate, orderCodeOrTrackingId) {
+  const clean = String(orderCodeOrTrackingId || '').trim();
+
+  // Try to locate order in current_work_orders
+  let ord = db.prepare(`
+    SELECT * FROM current_work_orders 
+    WHERE work_date = ? AND (order_code = ? OR tracking_id = ?)
+  `).get(workDate, clean, clean);
+
+  const orderCode = ord ? ord.order_code : clean;
+  const trackingId = ord ? ord.tracking_id : null;
+
+  // Fetch all lifecycle events
+  const events = db.prepare(`
+    SELECT * FROM order_tracking_events
+    WHERE work_date = ? AND (order_code = ? OR (tracking_id IS NOT NULL AND tracking_id = ?))
+    ORDER BY timestamp ASC, id ASC
+  `).all(workDate, orderCode, trackingId || clean);
+
+  // Fetch daily log raw records
+  const rawLogs = db.prepare(`
+    SELECT * FROM raw_log_records
+    WHERE work_date = ? AND order_code = ?
+    ORDER BY event_datetime ASC, id ASC
+  `).all(workDate, orderCode);
+
+  return {
+    order_code: orderCode,
+    tracking_id: trackingId || (events[0] ? events[0].tracking_id : null),
+    work_date: workDate,
+    current_status: ord ? ord.status : (events.length > 0 ? events[events.length - 1].stage : 'UNKNOWN'),
+    current_work_state: ord ? ord.work_state : (events.length > 0 ? events[events.length - 1].work_state : 'UNASSIGNED'),
+    priority: ord ? (ord.priority || 'REGULAR') : 'REGULAR',
+    account: ord ? ord.account : null,
+    assigned_employee: ord ? ord.assigned_employee_name : null,
+    total_events: events.length + rawLogs.length,
+    timeline: events,
+    lifecycle_events: events,
+    raw_logs: rawLogs
+  };
+}
+
+export function logEmployeeActivity({
+  work_date,
+  employee_id,
+  employee_name = null,
+  action,
+  tracking_code = null,
+  order_code = null,
+  account = null,
+  source = 'UI',
+  details = null,
+  timestamp = null
+}) {
+  if (!employee_id && !employee_name) throw new Error('employee_id or employee_name is required');
+  if (!action) throw new Error('action is required');
+
+  const date = work_date || getCairoBusinessDate();
+  const ts = timestamp || new Date().toISOString();
+
+  let emp = null;
+  if (employee_id) {
+    emp = assertActiveCsEmployee(employee_id, date);
+  } else if (employee_name) {
+    emp = db.prepare('SELECT id, name, department, active, status FROM employees WHERE name = ? COLLATE NOCASE').get(String(employee_name).trim());
+    if (!emp) {
+      throw new Error(`Employee with name ${employee_name} not found in master records.`);
+    }
+    const isCs = String(emp.department || '').trim().toUpperCase() === 'CS';
+    if (!isCs) {
+      throw new Error(`Employee ${emp.name} is not a CS employee.`);
+    }
+    const isActive = (emp.active === 1 || emp.active === true || emp.active === '1') &&
+                     String(emp.status || '').trim().toUpperCase() === 'ACTIVE';
+    if (!isActive) {
+      throw new Error(`Employee ${emp.name} is not active.`);
+    }
+  }
+
+  const actUpper = String(action).trim().toUpperCase();
+
+  const res = db.prepare(`
+    INSERT INTO employee_activity_log (
+      work_date, timestamp, employee_id, employee_name_snapshot, action,
+      tracking_code, order_code, account, source, details
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    date, ts, emp.id, emp.name, actUpper,
+    tracking_code, order_code, account, source,
+    details ? (typeof details === 'object' ? JSON.stringify(details) : String(details)) : null
+  );
+
+  return {
+    success: true,
+    id: res.lastInsertRowid,
+    employee_id: emp.id,
+    employee_name: emp.name,
+    action: actUpper,
+    timestamp: ts
+  };
+}
+
+/**
+ * Authoritative Active CS Employee Validator for operational actions.
+ * Verifies Employee Master existence, department = 'CS', and active = 1 / status = 'ACTIVE'.
+ */
+export function assertActiveCsEmployee(employeeId, workDate = null) {
+  if (!employeeId) throw new Error('employee_id is required');
+  const emp = db.prepare('SELECT id, name, department, active, status FROM employees WHERE id = ?').get(employeeId);
+  if (!emp) {
+    throw new Error(`Employee with ID ${employeeId} not found in master records.`);
+  }
+  const isCs = isCsEmployee(emp);
+  if (!isCs) {
+    throw new Error(`Employee ${emp.name} (ID ${emp.id}) is not a CS employee (Department: ${emp.department}). Operational mutations are restricted to CS.`);
+  }
+  const isActive = isOperationallyActiveCsEmployee(emp);
+  if (!isActive) {
+    throw new Error(`Employee ${emp.name} (ID ${emp.id}) is not active.`);
+  }
+  return emp;
+}
+
+export function claimOrder(workDate, orderCode, employeeId) {
+  const date = workDate || getCairoBusinessDate();
+  const cleanCode = String(orderCode || '').trim();
+
+  const emp = assertActiveCsEmployee(employeeId, date);
+
+  const order = db.prepare('SELECT * FROM current_work_orders WHERE work_date = ? AND order_code = ?').get(date, cleanCode);
+  if (!order) throw new Error(`Order ${cleanCode} not found on date ${date}`);
+
+  const now = new Date().toISOString();
+
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE current_work_orders 
+      SET work_state = 'CLAIMED',
+          assigned_employee_id = ?,
+          assigned_employee_name = ?,
+          claimed_at = ?,
+          updated_at = datetime('now')
+      WHERE work_date = ? AND order_code = ?
+    `).run(emp.id, emp.name, now, date, cleanCode);
+
+    db.prepare(`
+      UPDATE order_level_allocations
+      SET work_state = 'CLAIMED',
+          employee_id = ?,
+          employee_name = ?
+      WHERE allocation_date = ? AND order_code = ?
+    `).run(emp.id, emp.name, date, cleanCode);
+
+    recordOrderLifecycleEvent({
+      tracking_id: order.tracking_id,
+      order_code: cleanCode,
+      work_date: date,
+      stage: order.status,
+      work_state: 'CLAIMED',
+      employee_id: emp.id,
+      employee_name: emp.name,
+      action: 'CLAIMED',
+      timestamp: now,
+      source: 'UI_CLAIM'
+    });
+
+    logEmployeeActivity({
+      work_date: date,
+      employee_id: emp.id,
+      employee_name: emp.name,
+      action: 'CLAIMED',
+      tracking_code: order.tracking_id,
+      order_code: cleanCode,
+      account: order.account,
+      timestamp: now
+    });
+  })();
+
+  return { success: true, work_state: 'CLAIMED', order_code: cleanCode, claimed_by: emp.name };
+}
+
+export function startOrderProgress(workDate, orderCode, employeeId) {
+  const date = workDate || getCairoBusinessDate();
+  const cleanCode = String(orderCode || '').trim();
+
+  const emp = assertActiveCsEmployee(employeeId, date);
+
+  const order = db.prepare('SELECT * FROM current_work_orders WHERE work_date = ? AND order_code = ?').get(date, cleanCode);
+  if (!order) throw new Error(`Order ${cleanCode} not found on date ${date}`);
+
+  const now = new Date().toISOString();
+
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE current_work_orders 
+      SET work_state = 'IN_PROGRESS',
+          assigned_employee_id = ?,
+          assigned_employee_name = ?,
+          updated_at = datetime('now')
+      WHERE work_date = ? AND order_code = ?
+    `).run(emp.id, emp.name, date, cleanCode);
+
+    db.prepare(`
+      UPDATE order_level_allocations
+      SET work_state = 'IN_PROGRESS',
+          employee_id = ?,
+          employee_name = ?
+      WHERE allocation_date = ? AND order_code = ?
+    `).run(emp.id, emp.name, date, cleanCode);
+
+    recordOrderLifecycleEvent({
+      tracking_id: order.tracking_id,
+      order_code: cleanCode,
+      work_date: date,
+      stage: order.status,
+      work_state: 'IN_PROGRESS',
+      employee_id: emp.id,
+      employee_name: emp.name,
+      action: 'IN_PROGRESS',
+      timestamp: now,
+      source: 'UI_PROGRESS'
+    });
+
+    logEmployeeActivity({
+      work_date: date,
+      employee_id: emp.id,
+      employee_name: emp.name,
+      action: 'IN_PROGRESS',
+      tracking_code: order.tracking_id,
+      order_code: cleanCode,
+      account: order.account,
+      timestamp: now
+    });
+  })();
+
+  return { success: true, work_state: 'IN_PROGRESS', order_code: cleanCode };
+}
+
+export function completeOrder(workDate, orderCode, employeeId) {
+  const date = workDate || getCairoBusinessDate();
+  const cleanCode = String(orderCode || '').trim();
+
+  const emp = assertActiveCsEmployee(employeeId, date);
+
+  const order = db.prepare('SELECT * FROM current_work_orders WHERE work_date = ? AND order_code = ?').get(date, cleanCode);
+  if (!order) throw new Error(`Order ${cleanCode} not found on date ${date}`);
+
+  const now = new Date().toISOString();
+
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE current_work_orders 
+      SET work_state = 'COMPLETED',
+          status = 'Completed',
+          assigned_employee_id = ?,
+          assigned_employee_name = ?,
+          completed_at = ?,
+          updated_at = datetime('now')
+      WHERE work_date = ? AND order_code = ?
+    `).run(emp.id, emp.name, now, date, cleanCode);
+
+    db.prepare(`
+      UPDATE order_level_allocations
+      SET work_state = 'COMPLETED',
+          status = 'Completed',
+          employee_id = ?,
+          employee_name = ?
+      WHERE allocation_date = ? AND order_code = ?
+    `).run(emp.id, emp.name, date, cleanCode);
+
+    recordOrderLifecycleEvent({
+      tracking_id: order.tracking_id,
+      order_code: cleanCode,
+      work_date: date,
+      stage: 'Completed',
+      work_state: 'COMPLETED',
+      employee_id: emp.id,
+      employee_name: emp.name,
+      action: 'COMPLETED',
+      timestamp: now,
+      source: 'UI_COMPLETE'
+    });
+
+    logEmployeeActivity({
+      work_date: date,
+      employee_id: emp.id,
+      employee_name: emp.name,
+      action: 'COMPLETED',
+      tracking_code: order.tracking_id,
+      order_code: cleanCode,
+      account: order.account,
+      timestamp: now
+    });
+  })();
+
+  return { success: true, work_state: 'COMPLETED', order_code: cleanCode };
+}
+
+export function cancelOrder(workDate, orderCode, employeeId = null, reason = 'Order Cancelled') {
+  const date = workDate || getCairoBusinessDate();
+  const cleanCode = String(orderCode || '').trim();
+
+  let emp = null;
+  if (employeeId) {
+    emp = assertActiveCsEmployee(employeeId, date);
+  }
+
+  const order = db.prepare('SELECT * FROM current_work_orders WHERE work_date = ? AND order_code = ?').get(date, cleanCode);
+  if (!order) throw new Error(`Order ${cleanCode} not found on date ${date}`);
+
+  const now = new Date().toISOString();
+  const empId = emp ? emp.id : order.assigned_employee_id;
+  const empName = emp ? emp.name : order.assigned_employee_name;
+
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE current_work_orders 
+      SET work_state = 'CANCELLED',
+          status = 'Cancelled',
+          updated_at = datetime('now')
+      WHERE work_date = ? AND order_code = ?
+    `).run(date, cleanCode);
+
+    db.prepare(`
+      UPDATE order_level_allocations
+      SET work_state = 'CANCELLED',
+          status = 'Cancelled'
+      WHERE allocation_date = ? AND order_code = ?
+    `).run(date, cleanCode);
+
+    recordOrderLifecycleEvent({
+      tracking_id: order.tracking_id,
+      order_code: cleanCode,
+      work_date: date,
+      stage: 'Cancelled',
+      work_state: 'CANCELLED',
+      employee_id: empId,
+      employee_name: empName,
+      action: 'CANCELLED',
+      timestamp: now,
+      reason: reason || 'Order Cancelled',
+      source: 'UI_CANCEL'
+    });
+
+    if (empId) {
+      logEmployeeActivity({
+        work_date: date,
+        employee_id: empId,
+        employee_name: empName,
+        action: 'CANCELLED',
+        tracking_code: order.tracking_id,
+        order_code: cleanCode,
+        account: order.account,
+        timestamp: now,
+        details: reason
+      });
+    }
+  })();
+
+  return { success: true, work_state: 'CANCELLED', order_code: cleanCode, reason };
+}
+
+export function getEmployeeLiveRealtime(workDate, options = {}) {
+  const inactiveThreshold = options.inactiveThreshold || 900; // 15 mins (seconds)
+  const criticalThreshold = options.criticalThreshold || 2700; // 45 mins (seconds)
+  const currentCDate = options.currentTime ? getCairoBusinessDate(options.currentTime) : getCairoBusinessDate();
+  const isHistorical = workDate < currentCDate;
+  const refTime = options.currentTime 
+    ? new Date(options.currentTime).getTime() 
+    : (isHistorical ? new Date(`${workDate}T23:59:59.999Z`).getTime() : Date.now());
+
+  // 1. Strict CS Department Only (Non-CS employees never appear as operational CS workers)
+  const allEmployees = db.prepare(`
+    SELECT id, name, department, team_membership, active
+    FROM employees
+    WHERE active = 1
+    ORDER BY name ASC
+  `).all();
+  const csEmployees = allEmployees.filter(e => isCsEmployee(e));
+
+  // 2. Daily working team for business date
+  const workingRows = db.prepare(`
+    SELECT employee_id, is_working, source, observed_at, last_activity_at
+    FROM daily_working_team
+    WHERE work_date = ?
+  `).all(workDate);
+
+  const workingMap = new Map();
+  for (const wr of workingRows) {
+    if (wr.is_working === 1 || wr.is_working === true || wr.is_working === '1') {
+      workingMap.set(wr.employee_id, wr);
+    }
+  }
+
+  // 3. True order stats from current_work_orders and order_level_allocations
+  const unassignedRow = db.prepare(`
+    SELECT COUNT(*) as count FROM current_work_orders
+    WHERE work_date = ? AND (work_state = 'UNASSIGNED' OR work_state IS NULL OR assigned_employee_id IS NULL)
+  `).get(workDate);
+  const totalUnassigned = unassignedRow ? unassignedRow.count : 0;
+
+  const employeeOrderStats = new Map();
+  const allocOrders = db.prepare(`
+    SELECT 
+      ola.employee_id,
+      COALESCE(cwo.work_state, ola.work_state, 'ASSIGNED') as effective_state
+    FROM order_level_allocations ola
+    LEFT JOIN current_work_orders cwo ON cwo.work_date = ola.allocation_date AND cwo.order_code = ola.order_code
+    WHERE ola.allocation_date = ? AND ola.employee_id IS NOT NULL AND ola.employee_name != 'UNASSIGNED'
+      AND ola.id IN (
+        SELECT MAX(id) FROM order_level_allocations 
+        WHERE allocation_date = ? 
+        GROUP BY order_code
+      )
+  `).all(workDate, workDate);
+
+  for (const row of allocOrders) {
+    if (!employeeOrderStats.has(row.employee_id)) {
+      employeeOrderStats.set(row.employee_id, {
+        assigned: 0,
+        claimed: 0,
+        in_progress: 0,
+        completed: 0
+      });
+    }
+    const st = employeeOrderStats.get(row.employee_id);
+    st.assigned++;
+    const state = String(row.effective_state || '').toUpperCase();
+    if (state === 'CLAIMED') st.claimed++;
+    else if (state === 'IN_PROGRESS') st.in_progress++;
+    else if (state === 'COMPLETED') st.completed++;
+  }
+
+  // 4. Employee activity log records (Phase 3 + Raw Log Records + Vendoor Logs)
+  const activityLogs = db.prepare(`
+    SELECT id, employee_id, action, timestamp, details, tracking_code, order_code, account
+    FROM employee_activity_log
+    WHERE work_date = ?
+    ORDER BY timestamp ASC, id ASC
+  `).all(workDate);
+
+  const empActivities = new Map();
+  for (const act of activityLogs) {
+    if (!empActivities.has(act.employee_id)) {
+      empActivities.set(act.employee_id, []);
+    }
+    empActivities.get(act.employee_id).push(act);
+  }
+
+  // Also ingest raw_log_records for rich, second-by-second activity timestamps
+  const nameToEmpId = new Map();
+  allEmployees.forEach(e => nameToEmpId.set((e.name || '').toLowerCase().trim(), e.id));
+
+  // Build quick order-to-account map for fast account resolution
+  const orderAccountMap = new Map();
+  try {
+    const cwoRows = db.prepare('SELECT order_code, account FROM current_work_orders WHERE work_date = ?').all(workDate);
+    for (const r of cwoRows) {
+      if (r.order_code && r.account) orderAccountMap.set(r.order_code, r.account);
+    }
+  } catch (_) {}
+
+  try {
+    const rawLogs = db.prepare(`
+      SELECT employee_name, action, status, event_datetime, order_code
+      FROM raw_log_records
+      WHERE work_date = ?
+      ORDER BY event_datetime ASC, id ASC
+    `).all(workDate);
+
+    if (rawLogs.length > 0) {
+      for (const r of rawLogs) {
+        const empId = nameToEmpId.get((r.employee_name || '').toLowerCase().trim());
+        if (empId) {
+          if (!empActivities.has(empId)) empActivities.set(empId, []);
+          const acc = orderAccountMap.get(r.order_code) || null;
+          empActivities.get(empId).push({
+            id: `raw_${r.order_code}_${r.event_datetime}`,
+            employee_id: empId,
+            action: r.action,
+            status: r.status || extractCanonicalStatus(r.action),
+            timestamp: r.event_datetime,
+            details: r.action,
+            tracking_code: null,
+            order_code: r.order_code,
+            account: acc
+          });
+        }
+      }
+    } else {
+      // Fallback to vendoor_logs ONLY if raw_log_records has no entries for this date
+      const vLogs = db.prepare(`
+        SELECT employee_name, matched_employee_id, action, action_classification, timestamp_str, order_code
+        FROM vendoor_logs
+        WHERE work_date = ?
+        ORDER BY timestamp_str ASC, id ASC
+      `).all(workDate);
+
+      for (const vl of vLogs) {
+        const empId = vl.matched_employee_id || nameToEmpId.get((vl.employee_name || '').toLowerCase().trim());
+        if (empId) {
+          if (!empActivities.has(empId)) empActivities.set(empId, []);
+          const acc = orderAccountMap.get(vl.order_code) || null;
+          empActivities.get(empId).push({
+            id: `vl_${vl.order_code}_${vl.timestamp_str}`,
+            employee_id: empId,
+            action: vl.action,
+            status: vl.action_classification || extractCanonicalStatus(vl.action),
+            timestamp: vl.timestamp_str,
+            details: vl.action,
+            tracking_code: null,
+            order_code: vl.order_code,
+            account: acc
+          });
+        }
+      }
+    }
+  } catch (_) {}
+
+  // Sort each employee's activities chronologically
+  for (const [empId, list] of empActivities.entries()) {
+    list.sort((a, b) => {
+      const ta = new Date(a.timestamp || 0).getTime() || 0;
+      const tb = new Date(b.timestamp || 0).getTime() || 0;
+      return ta - tb;
+    });
+  }
+
+  // 5. Build Live Monitor Payload
+  const employeesResult = csEmployees.map(emp => {
+    const isWorkingToday = workingMap.has(emp.id);
+    const stats = employeeOrderStats.get(emp.id) || { assigned: 0, claimed: 0, in_progress: 0, completed: 0 };
+    const acts = empActivities.get(emp.id) || [];
+
+    let lastActivityTime = null;
+    let lastProductiveActivityTime = null;
+    let lastAction = null;
+    let lastProductiveAction = null;
+    let lastOrderCode = null;
+    let lastAccount = null;
+    let lastDetails = null;
+
+    // Deduplicate actions for accurate metric counts
+    const dedupMap = new Map();
+    const deduplicatedActs = [];
+    const uniqueOrdersSet = new Set();
+    let printedCount = 0;
+    let pendingCount = 0;
+    let cancelledCount = 0;
+    let processingCount = 0;
+
+    for (const act of acts) {
+      lastActivityTime = act.timestamp;
+      lastAction = act.action;
+      lastOrderCode = act.order_code || lastOrderCode;
+      if (act.account) lastAccount = act.account;
+      else if (act.order_code && orderAccountMap.has(act.order_code)) lastAccount = orderAccountMap.get(act.order_code);
+      lastDetails = act.details || lastDetails;
+
+      if (act.order_code) {
+        uniqueOrdersSet.add(act.order_code);
+      }
+      
+      const actStr = String(act.action || '');
+      const upperAct = actStr.toUpperCase();
+      const isProductive = PRODUCTIVE_ACTIONS.has(upperAct) ||
+        upperAct.includes('PRINT') || upperAct.includes('PROCESS') || upperAct.includes('CANCEL') ||
+        upperAct.includes('PEND') || upperAct.includes('STAGE_CHANGE') || upperAct.includes('CLAIM') ||
+        actStr.includes('عدل') || actStr.includes('أضاف') || actStr.includes('تغيير') ||
+        actStr.includes('طباعة') || actStr.includes('تحويل') || actStr.includes('حذف');
+
+      if (isProductive) {
+        lastProductiveActivityTime = act.timestamp;
+        lastProductiveAction = act.action;
+      }
+
+      const dt = act.timestamp ? new Date(act.timestamp).getTime() : 0;
+      const actStatus = act.status || null;
+      const key = `${act.order_code || 'none'}|${actStatus || act.action}`;
+      const lastTime = dedupMap.get(key) || 0;
+      if (dt - lastTime >= 120000 || lastTime === 0) {
+        dedupMap.set(key, dt);
+        deduplicatedActs.push(act);
+
+        if (actStatus === 'Printed') printedCount++;
+        else if (actStatus === 'Pending') pendingCount++;
+        else if (actStatus === 'Cancelled') cancelledCount++;
+        else if (actStatus === 'Processing') processingCount++;
+      }
+    }
+
+    // Dynamic calculation of idle_seconds
+    let idleSeconds = null;
+    let idleFormatted = '—';
+    let liveStatus = 'NO_ACTIVITY';
+
+    if (isHistorical) {
+      liveStatus = acts.length === 0 ? (isWorkingToday ? 'NO_ACTIVITY' : 'OFF_DUTY') : 'HISTORICAL';
+      idleSeconds = null;
+      idleFormatted = '—';
+    } else {
+      if (lastProductiveActivityTime) {
+        const prodDt = parseCairoTimestamp(lastProductiveActivityTime) || new Date(lastProductiveActivityTime);
+        const prodMs = prodDt.getTime();
+        if (!isNaN(prodMs)) {
+          idleSeconds = Math.max(0, Math.floor((refTime - prodMs) / 1000));
+          idleFormatted = formatIdleDuration(idleSeconds);
+        }
+      }
+
+      // Determine current live status
+      if (!isWorkingToday) {
+        liveStatus = acts.length > 0 ? (idleSeconds !== null && idleSeconds > criticalThreshold ? 'INACTIVE' : 'ACTIVE') : 'OFF_DUTY';
+      } else {
+        if (acts.length === 0) {
+          liveStatus = 'NO_ACTIVITY';
+        } else if (lastProductiveActivityTime === null) {
+          liveStatus = 'INACTIVE';
+        } else if (idleSeconds !== null) {
+          if (idleSeconds <= inactiveThreshold) {
+            liveStatus = 'ACTIVE';
+          } else if (idleSeconds <= criticalThreshold) {
+            liveStatus = 'INACTIVE';
+          } else {
+            liveStatus = 'CRITICAL';
+          }
+        }
+      }
+    }
+
+    // Historical distinct orders worked check
+    let historicalOrdersWorked = 0;
+    try {
+      const histSnap = db.prepare(`
+        SELECT SUM(new_orders + printed_orders) as hist_o
+        FROM performance_snapshots
+        WHERE (employee_id = ? OR employee_name = ?) AND date < ?
+      `).get(emp.id, emp.name, workDate);
+      if (histSnap && histSnap.hist_o) historicalOrdersWorked = histSnap.hist_o;
+    } catch (_) {}
+
+    const statusRealActions = printedCount + pendingCount + cancelledCount + processingCount;
+
+    return {
+      employee_id: emp.id,
+      employee_name: emp.name,
+      department: emp.department,
+      team_membership: emp.team_membership,
+      working_today: isWorkingToday,
+      live_status: liveStatus,
+      is_idle: (liveStatus === 'INACTIVE' || liveStatus === 'CRITICAL'),
+      assigned_orders: stats.assigned,
+      claimed_orders: stats.claimed,
+      in_progress_orders: stats.in_progress,
+      completed_orders: stats.completed,
+      unassigned_relevant_orders: totalUnassigned,
+      orders_worked_today: uniqueOrdersSet.size,
+      real_actions_today: statusRealActions,
+      deduped_actions_today: deduplicatedActs.length,
+      printed_orders: printedCount,
+      pending_orders: pendingCount,
+      cancelled_orders: cancelledCount,
+      processing_orders: processingCount,
+      historical_orders_worked: historicalOrdersWorked,
+      last_activity_time: lastActivityTime,
+      last_activity_action: lastAction,
+      last_activity_order_code: lastOrderCode,
+      last_activity_account: lastAccount,
+      last_activity_details: lastDetails,
+      last_productive_activity_time: lastProductiveActivityTime,
+      last_productive_action: lastProductiveAction,
+      idle_seconds: idleSeconds,
+      idle_duration_formatted: idleFormatted,
+      total_actions_today: acts.length
+    };
+  });
+
+  return {
+    work_date: workDate,
+    is_historical: isHistorical,
+    reference_time: new Date(refTime).toISOString(),
+    unassigned_total: totalUnassigned,
+    total_cs_employees: csEmployees.length,
+    working_today_count: workingRows.filter(r => r.is_working === 1 || r.is_working === true || r.is_working === '1').length,
+    employees: employeesResult
+  };
+}
+
+export function getTeamLiveStatusSummary(workDate, options = {}) {
+  const realtime = getEmployeeLiveRealtime(workDate, options);
+  const emps = realtime.employees;
+
+  let activeCount = 0;
+  let inactiveCount = 0;
+  let criticalCount = 0;
+  let noActivityCount = 0;
+  let totalAssigned = 0;
+  let totalInProgress = 0;
+  let totalCompleted = 0;
+
+  for (const e of emps) {
+    if (e.working_today) {
+      if (e.live_status === 'ACTIVE') activeCount++;
+      else if (e.live_status === 'INACTIVE') inactiveCount++;
+      else if (e.live_status === 'CRITICAL') criticalCount++;
+      else if (e.live_status === 'NO_ACTIVITY') noActivityCount++;
+
+      totalAssigned += e.assigned_orders;
+      totalInProgress += e.in_progress_orders;
+      totalCompleted += e.completed_orders;
+    }
+  }
+
+  return {
+    work_date: workDate,
+    working_today_count: realtime.working_today_count,
+    active_count: activeCount,
+    inactive_count: inactiveCount,
+    critical_count: criticalCount,
+    no_activity_count: noActivityCount,
+    total_assigned: totalAssigned,
+    total_in_progress: totalInProgress,
+    total_completed: totalCompleted,
+    unassigned_orders: realtime.unassigned_total,
+    employees: emps
   };
 }
 

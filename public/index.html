@@ -360,6 +360,9 @@ input:checked + .slider:before{transform:translateX(16px)}
       </div>
 
       <div class="actions">
+        <button class="btn sm" onclick="show('tracking', 'employees')" style="background:#16A34A;color:#fff;font-weight:700;box-shadow:0 0 8px rgba(22,163,74,0.3)">
+          ⚡ Live Agent Monitor
+        </button>
         <button class="btn primary sm" onclick="show('operations', 'allocation')" style="background:var(--blue);color:#fff">
           ⚡ Auto Fair Allocation
         </button>
@@ -372,6 +375,10 @@ input:checked + .slider:before{transform:translateX(16px)}
     <div class="wrap">
       <!-- GLOBAL OPERATIONAL CONTEXT BAR -->
       <div class="global-ctx-bar" id="globalContextBar">
+        <div class="global-ctx-item" title="Live Agent Activity & Idle Monitor" style="cursor:pointer;background:#F0FDF4;border:1px solid #BBF7D0" onclick="show('tracking', 'employees')">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#16A34A"></span>
+          <span style="color:#15803D;font-weight:700">⚡ Live CS Monitor</span>
+        </div>
         <div class="global-ctx-item" title="Vendoor Employee Portal Live Status" style="cursor:pointer" onclick="show('management', 'vendoor')">
           <span>Vendoor:</span>
           <span class="global-ctx-pill" id="gctxVendoorStatus" style="background:#F1F5F9;color:#64748B">CHECKING...</span>
@@ -516,6 +523,46 @@ function formatDisplayDate(dateStr) {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const dayStr = String(d).padStart(2, '0');
   return `${dayStr} ${months[m]} ${y}`;
+}
+
+function formatTimeOnly(ts) {
+  if (!ts) return '—';
+  try {
+    const cleanTs = typeof ts === 'string' ? ts.replace(' ', 'T') : ts;
+    const d = new Date(cleanTs);
+    if (isNaN(d.getTime())) return String(ts);
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  } catch (e) {
+    return String(ts);
+  }
+}
+
+function formatTimeAgo(ts) {
+  if (!ts) return '—';
+  try {
+    const cleanTs = typeof ts === 'string' ? ts.replace(' ', 'T') : ts;
+    const ms = new Date(cleanTs).getTime();
+    if (isNaN(ms)) return String(ts);
+    const diffSec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+    if (diffSec < 60) return `${diffSec}s ago`;
+    const mins = Math.floor(diffSec / 60);
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    return `${hrs}h ${mins % 60}m ago`;
+  } catch (e) {
+    return String(ts);
+  }
+}
+
+function formatIdleDuration(sec) {
+  if (sec === null || sec === undefined) return '—';
+  const s = Math.max(0, parseInt(sec, 10) || 0);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const remS = s % 60;
+  if (m < 60) return `${m}m ${remS}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
 }
 
 function shiftDate(dateStr, offsetDays) {
@@ -969,7 +1016,7 @@ async function loadWorkAllocationData() {
       apiFetch(`/api/allocations/${currentWorkDate}`).catch(() => ({ exists: false, items: [] }))
     ]);
 
-    currentAccountsList = accRes || [];
+    currentAccountsList = (accRes || []).sort((a, b) => (b.total_orders || 0) - (a.total_orders || 0) || (a.account || '').localeCompare(b.account || ''));
     todayWorkingEmployees = (teamRes || []).filter(e => e.is_working && String(e.department || '').trim().toUpperCase() === 'CS');
 
     if (allocRes && allocRes.exists && allocRes.items) {
@@ -1151,6 +1198,9 @@ function renderWorkAllocationUI(overview) {
         }
       });
     }
+
+    // Sort Account Cards: accounts with highest order counts appear first
+    accountGroups.sort((a, b) => (b.total_orders || 0) - (a.total_orders || 0) || (a.account || '').localeCompare(b.account || ''));
 
     accountGroups.forEach(grp => {
       const accName = extractAccountDisplayName(grp.account);
@@ -4861,8 +4911,12 @@ function renderAccountsDirectoryUI(data) {
   const container = document.getElementById('accountsDirectoryContainer');
   if (!container) return;
 
-  const accounts = currentAccountsDirectory;
-  const totalOrders = accounts.reduce((s, a) => s + (a.opening_orders?.total || a.opening_orders || 0), 0);
+  const accounts = (currentAccountsDirectory || []).slice().sort((a, b) => {
+    const bTot = b.opening_orders?.total !== undefined ? b.opening_orders.total : (b.total_orders || 0);
+    const aTot = a.opening_orders?.total !== undefined ? a.opening_orders.total : (a.total_orders || 0);
+    return bTot - aTot || (a.account_name || '').localeCompare(b.account_name || '');
+  });
+  const totalOrders = accounts.reduce((s, a) => s + (a.opening_orders?.total !== undefined ? a.opening_orders.total : (a.total_orders || 0)), 0);
   const totalNew = accounts.reduce((s, a) => s + (a.opening_orders?.new || 0), 0);
   const totalPending = accounts.reduce((s, a) => s + (a.opening_orders?.pending || 0), 0);
   const workedAccounts = accounts.filter(a => (a.unique_orders_worked || a.orders_worked || 0) > 0);
@@ -6246,26 +6300,27 @@ function searchOrderFromInput() {
   }
 }
 
+let liveRealtimeFilter = 'all';
+let liveRealtimePollTimer = null;
+
 async function loadEmployeeTrackingView(empIdToSelect) {
   const container = document.getElementById('employeeTrackingContainer');
   if (!container) return;
 
-  try {
-    let employees = [];
-    try {
-      employees = await apiFetch('/api/employees');
-    } catch(e) {
-      employees = [];
-    }
+  if (liveRealtimePollTimer) {
+    clearInterval(liveRealtimePollTimer);
+    liveRealtimePollTimer = null;
+  }
 
-    let teamSummary = null;
-    try {
-      teamSummary = await apiFetch(`/api/tracking/${currentWorkDate}/team-summary`);
-    } catch(e) {
-      teamSummary = null;
-    }
+  try {
+    const [employees, teamSummary, realtimeData] = await Promise.all([
+      apiFetch('/api/employees').catch(() => []),
+      apiFetch(`/api/tracking/${currentWorkDate}/team-summary`).catch(() => null),
+      apiFetch(`/api/tracking/employee/realtime?date=${currentWorkDate}`).catch(() => null)
+    ]);
 
     const teamList = (teamSummary && teamSummary.employees) || [];
+    const rtEmps = (realtimeData && realtimeData.employees) || [];
 
     if (empIdToSelect) {
       currentTrackedEmployeeId = empIdToSelect;
@@ -6290,14 +6345,28 @@ async function loadEmployeeTrackingView(empIdToSelect) {
     const sources = (teamSummary && teamSummary.sources) || {};
     const teamKpis = (teamSummary && teamSummary.team_kpis) || {};
 
+    const workingCount = rtEmps.filter(e => e.working_today).length;
+    const activeCount = rtEmps.filter(e => e.live_status === 'ACTIVE').length;
+    const idleCount = rtEmps.filter(e => e.live_status === 'INACTIVE').length;
+    const criticalCount = rtEmps.filter(e => e.live_status === 'CRITICAL').length;
+    const noActCount = rtEmps.filter(e => e.live_status === 'NO_ACTIVITY').length;
+    const totalRealActions = rtEmps.reduce((s, e) => s + (e.total_actions_today || 0), 0);
+
+    // If working count > 0 and user hasn't explicitly chosen 'all', default to 'working', else 'all'
+    if (workingCount > 0 && liveRealtimeFilter === 'all') {
+      liveRealtimeFilter = 'working';
+    } else if (workingCount === 0 && liveRealtimeFilter === 'working') {
+      liveRealtimeFilter = 'all';
+    }
+
     let html = `
       <!-- Top Source Upload Integrity Status Bar -->
       <div class="panel" style="margin-bottom:20px;padding:16px 20px">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
           <div>
-            <h3 style="margin:0 0 4px 0;font-size:17px;color:var(--navy)">👤 Employee Reality Tracking</h3>
+            <h3 style="margin:0 0 4px 0;font-size:17px;color:var(--navy)">👤 Employee Reality Tracking & Live Activity</h3>
             <p style="margin:0;font-size:12.5px;color:var(--mut)">
-              Truth-telling tracking: manual assignment vs actual daily log activity on <b>${formatDisplayDate(currentWorkDate)}</b>.
+              Live agent monitoring & activity inspection for <b>${formatDisplayDate(currentWorkDate)}</b>. Day-by-day isolated tracking.
             </p>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -6311,6 +6380,162 @@ async function loadEmployeeTrackingView(empIdToSelect) {
               ${logsSynced ? '✓ Vendoor Activity Synced' : '⚠️ Activity Sync Pending'}
             </span>
           </div>
+        </div>
+      </div>
+
+      <!-- LIVE REAL-TIME EMPLOYEE MONITORING SECTION -->
+      <div class="panel" style="margin-bottom:24px;border:1px solid #BFDBFE;background:linear-gradient(180deg,#FFFFFF,#F8FAFC)">
+        <div class="hd" style="flex-wrap:wrap;gap:12px;border-bottom:1px solid #E2E8F0;padding-bottom:14px">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#16A34A;box-shadow:0 0 8px #16A34A"></span>
+              <h3 style="margin:0;font-size:16px;color:var(--navy)">⚡ Live Agent Activity & Idle Status Monitor</h3>
+            </div>
+            <p style="margin:4px 0 0 0;font-size:12.5px;color:var(--slate)">
+              Showing working employees, idle durations, last action timestamps, and live statuses for <b>${formatDisplayDate(currentWorkDate)}</b>.
+            </p>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span class="tag" style="background:#EFF6FF;color:#1D4ED8;font-weight:700;font-size:11px">
+              🔄 Live Auto-Refresh Active (Every 30s)
+            </span>
+            <button class="btn sm primary" onclick="loadEmployeeTrackingView('${escapeHtml(String(currentTrackedEmployeeId || ''))}')">
+              ⚡ Refresh Now
+            </button>
+          </div>
+        </div>
+
+        <!-- Live Status KPIs -->
+        <div class="kpis" style="margin:16px 0">
+          ${kpiCard('👥', fmt(workingCount), 'Working Today', `Out of ${rtEmps.length} CS agents`, NAVY)}
+          ${kpiCard('🟢', fmt(activeCount), 'Active Now', 'Last action < 15 min', GREEN)}
+          ${kpiCard('🟡', fmt(idleCount), 'Idle / Inactive', 'Stopped for 10-45 min', AMBER)}
+          ${kpiCard('🔴', fmt(criticalCount), 'Critical Idle', 'Stopped > 45 min', RED)}
+          ${kpiCard('⚡', fmt(totalRealActions), 'Actions Today', 'Real deduplicated actions', BLUE)}
+        </div>
+
+        <!-- Live Controls & Filters -->
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px;background:#F1F5F9;padding:10px 14px;border-radius:10px">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span style="font-size:12px;font-weight:700;color:var(--slate);margin-right:4px">Filter:</span>
+            <button class="btn sm ${liveRealtimeFilter === 'working' ? 'primary' : ''}" onclick="setLiveRealtimeFilter('working')">
+              👥 Working Today (${workingCount})
+            </button>
+            <button class="btn sm ${liveRealtimeFilter === 'active' ? 'primary' : ''}" onclick="setLiveRealtimeFilter('active')">
+              🟢 Active (${activeCount})
+            </button>
+            <button class="btn sm ${liveRealtimeFilter === 'idle' ? 'primary' : ''}" onclick="setLiveRealtimeFilter('idle')">
+              🟡 Idle / Stopped (${idleCount + criticalCount})
+            </button>
+            <button class="btn sm ${liveRealtimeFilter === 'all' ? 'primary' : ''}" onclick="setLiveRealtimeFilter('all')">
+              All CS Agents (${rtEmps.length})
+            </button>
+          </div>
+          <div>
+            <input type="text" placeholder="Search live agent..." id="liveRtSearchInput" class="date-in"
+                   style="padding:6px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;width:180px"
+                   oninput="applyLiveRealtimeTableFilter()">
+          </div>
+        </div>
+
+        <!-- Live Real-Time Table -->
+        <div class="tbl-scroll">
+          <table id="liveRealtimeTable">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Working Today</th>
+                <th>Live Status</th>
+                <th>Idle Duration</th>
+                <th>Last Action Time</th>
+                <th>Last Action Details</th>
+                <th>Orders State</th>
+                <th>Actions</th>
+                <th style="text-align:right">Audit</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rtEmps.length === 0 ? `
+                <tr><td colspan="9" style="text-align:center;padding:24px;color:var(--mut)">No agent activity found for ${formatDisplayDate(currentWorkDate)}.</td></tr>
+              ` : rtEmps.map(e => {
+                const empName = e.employee_name || 'Unknown';
+                const isWorking = Boolean(e.working_today);
+                const st = e.live_status || 'NO_ACTIVITY';
+
+                let statusBadge = '<span class="tag" style="background:#F1F5F9;color:#64748B">⚪ No Activity</span>';
+                if (st === 'ACTIVE') {
+                  statusBadge = '<span class="tag" style="background:#DCFCE7;color:#15803D;font-weight:800;display:inline-flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#16A34A;display:inline-block"></span> 🟢 ACTIVE</span>';
+                } else if (st === 'INACTIVE') {
+                  const idleMins = e.idle_seconds ? Math.floor(e.idle_seconds / 60) : 0;
+                  statusBadge = `<span class="tag" style="background:#FEF3C7;color:#B45309;font-weight:800">🟡 IDLE (${idleMins}m idle)</span>`;
+                } else if (st === 'CRITICAL') {
+                  const idleMins = e.idle_seconds ? Math.floor(e.idle_seconds / 60) : 0;
+                  statusBadge = `<span class="tag" style="background:#FEE2E2;color:#991B1B;font-weight:800">🔴 CRITICAL (${idleMins}m idle)</span>`;
+                } else if (st === 'OFF_DUTY') {
+                  statusBadge = '<span class="tag" style="background:#F8FAFC;color:#94A3B8">Off Duty</span>';
+                }
+
+                const idleText = e.idle_seconds !== null ? formatIdleDuration(e.idle_seconds) : '—';
+                const lastTimeText = e.last_activity_time ? formatTimeOnly(e.last_activity_time) : '—';
+                const lastTimeAgo = e.last_activity_time ? formatTimeAgo(e.last_activity_time) : '';
+
+                return `
+                  <tr data-emp="${escapeHtml(empName.toLowerCase())}"
+                      data-working="${isWorking ? '1' : '0'}"
+                      data-status="${escapeHtml(st)}"
+                      data-idle="${e.is_idle ? '1' : '0'}">
+                    <td>
+                      <b style="color:var(--navy);font-size:13px">${escapeHtml(empName)}</b>
+                      <span style="font-size:11px;color:var(--mut);display:block">${escapeHtml(e.department || 'CS')} · ${escapeHtml(e.team_membership || 'Both')}</span>
+                    </td>
+                    <td>
+                      <span class="tag" style="background:${isWorking ? '#DCFCE7' : '#F1F5F9'};color:${isWorking ? '#15803D' : '#64748B'};font-weight:700">
+                        ${isWorking ? '✓ Working Today' : 'Off Duty'}
+                      </span>
+                    </td>
+                    <td>${statusBadge}</td>
+                    <td>
+                      ${e.idle_seconds !== null ? `
+                        <b style="color:${st === 'CRITICAL' ? '#991B1B' : (st === 'INACTIVE' ? '#B45309' : '#15803D')}">
+                          ${idleText}
+                        </b>
+                      ` : '<span style="color:var(--mut)">—</span>'}
+                    </td>
+                    <td>
+                      ${e.last_activity_time ? `
+                        <b style="color:var(--navy);font-size:12.5px">${escapeHtml(lastTimeText)}</b>
+                        <span style="display:block;font-size:10.5px;color:var(--mut)">${escapeHtml(lastTimeAgo)}</span>
+                      ` : '<span style="color:var(--mut)">No actions</span>'}
+                    </td>
+                    <td>
+                      ${e.last_activity_action ? `
+                        <div style="font-size:12px">
+                          <span class="tag sm" style="background:#EFF6FF;color:#1D4ED8;font-weight:700">${escapeHtml(e.last_activity_action)}</span>
+                          ${e.last_activity_order_code ? `<b style="color:var(--navy);margin-left:4px">#${escapeHtml(e.last_activity_order_code)}</b>` : ''}
+                          ${e.last_activity_account ? `<span style="color:var(--mut);font-size:11px;margin-left:4px">(${escapeHtml(e.last_activity_account)})</span>` : ''}
+                        </div>
+                      ` : '<span style="color:var(--mut);font-size:11.5px">—</span>'}
+                    </td>
+                    <td>
+                      <div style="font-size:11.5px;line-height:1.4">
+                        <span style="color:var(--slate)">Assigned: <b>${fmt(e.assigned_orders)}</b></span> ·
+                        <span style="color:#D97706">Prog: <b>${fmt(e.in_progress_orders)}</b></span> ·
+                        <span style="color:#15803D">Done: <b>${fmt(e.completed_orders)}</b></span>
+                      </div>
+                    </td>
+                    <td>
+                      <b style="color:var(--blue)">${fmt(e.total_actions_today)}</b>
+                    </td>
+                    <td style="text-align:right">
+                      <button class="btn sm" onclick="selectEmployeeForRealityDetail('${escapeHtml(String(e.employee_id || empName))}')">
+                        Inspect 🔍
+                      </button>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -6344,7 +6569,7 @@ async function loadEmployeeTrackingView(empIdToSelect) {
       <div class="panel" style="margin-bottom:24px">
         <div class="hd" style="flex-wrap:wrap;gap:12px">
           <div>
-            <h3>👥 Team-Level Tracking Summary</h3>
+            <h3>👥 Team-Level Tracking Summary (Full Day Reconciliation)</h3>
             <p>Overview of all CS employees, assigned workload, actual touches, and compliance.</p>
           </div>
           <div style="display:flex;align-items:center;gap:10px">
@@ -6370,6 +6595,10 @@ async function loadEmployeeTrackingView(empIdToSelect) {
             <thead>
               <tr>
                 <th>Employee</th>
+                <th>Live Status</th>
+                <th>Last Activity</th>
+                <th>Last Productive Activity</th>
+                <th>Idle</th>
                 <th>Assigned</th>
                 <th>Worked</th>
                 <th>Outside Allocation</th>
@@ -6384,18 +6613,41 @@ async function loadEmployeeTrackingView(empIdToSelect) {
             </thead>
             <tbody>
               ${teamList.length === 0 ? `
-                <tr><td colspan="11" style="text-align:center;padding:24px;color:var(--mut)">No team members recorded for this date.</td></tr>
+                <tr><td colspan="15" style="text-align:center;padding:24px;color:var(--mut)">No team members recorded for this date.</td></tr>
               ` : teamList.map(e => {
                 const empName = e.employee_name || 'Unknown';
                 const complianceLabel = e.allocation_compliance_label || (e.allocation_compliance !== null ? `${e.allocation_compliance}%` : 'N/A');
                 const isNA = e.allocation_compliance === null;
                 const hasOut = e.has_outside_activity;
+                const st = e.live_status || 'NO_ACTIVITY';
+
+                let statusBadge = '<span class="tag" style="background:#F1F5F9;color:#64748B">⚪ No Activity</span>';
+                if (st === 'ACTIVE') {
+                  statusBadge = '<span class="tag" style="background:#DCFCE7;color:#15803D;font-weight:800;display:inline-flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#16A34A;display:inline-block"></span> 🟢 ACTIVE</span>';
+                } else if (st === 'INACTIVE') {
+                  statusBadge = '<span class="tag" style="background:#FEF3C7;color:#B45309;font-weight:800">🟡 IDLE</span>';
+                } else if (st === 'CRITICAL') {
+                  statusBadge = '<span class="tag" style="background:#FEE2E2;color:#991B1B;font-weight:800">🔴 CRITICAL</span>';
+                } else if (st === 'OFF_DUTY') {
+                  statusBadge = '<span class="tag" style="background:#F8FAFC;color:#94A3B8">Off Duty</span>';
+                } else if (st === 'HISTORICAL') {
+                  statusBadge = '<span class="tag" style="background:#F1F5F9;color:#475569">Historical</span>';
+                }
+
+                const lastActStr = e.last_activity_time ? `${formatTimeOnly(e.last_activity_time)} <span style="font-size:11px;color:var(--mut);display:block">${formatTimeAgo(e.last_activity_time)}</span>` : '<span style="color:var(--mut)">—</span>';
+                const lastProdStr = e.last_productive_activity_time ? `${formatTimeOnly(e.last_productive_activity_time)} <span style="font-size:11px;color:var(--mut);display:block">${formatTimeAgo(e.last_productive_activity_time)}</span>` : '<span style="color:var(--mut)">—</span>';
+                const idleStr = e.idle_seconds !== null ? `<b style="color:${st === 'CRITICAL' ? '#991B1B' : (st === 'INACTIVE' ? '#B45309' : '#15803D')}">${formatIdleDuration(e.idle_seconds)}</b>` : '<span style="color:var(--mut)">—</span>';
+
                 return `
                   <tr data-emp="${escapeHtml(empName.toLowerCase())}">
                     <td>
                       <b>${escapeHtml(empName)}</b>
                       <span style="font-size:11px;color:var(--mut);display:block">${escapeHtml(e.department || 'CS')}</span>
                     </td>
+                    <td>${statusBadge}</td>
+                    <td>${lastActStr}</td>
+                    <td>${lastProdStr}</td>
+                    <td>${idleStr}</td>
                     <td>
                       <span class="tag" style="background:#EFF6FF;color:#1D4ED8;font-weight:700">
                         ${fmt(e.assigned_accounts_count)} Accounts
@@ -6411,7 +6663,7 @@ async function loadEmployeeTrackingView(empIdToSelect) {
                     <td>
                       ${logsSynced ? (
                         hasOut
-                          ? `<span class="tag" style="background:#FEE2E2;color:#991B1B;font-weight:700">⚠️ ${fmt(e.extra_accounts_count)} Unassigned</span>`
+                           ? `<span class="tag" style="background:#FEE2E2;color:#991B1B;font-weight:700">⚠️ ${fmt(e.extra_accounts_count)} Unassigned</span>`
                           : '<span class="tag" style="background:#F0FDF4;color:#15803D">None</span>'
                       ) : '<span style="color:var(--mut)">—</span>'}
                     </td>
@@ -6513,10 +6765,12 @@ async function loadEmployeeTrackingView(empIdToSelect) {
       }
 
       html += `
-        <!-- Metric Cards with Truthful N/A Handling -->
+        <!-- Metric Cards with Truthful N/A Handling & Precise Activity Timestamps -->
         <div class="kpis" style="margin-bottom:20px">
           ${kpiCard('📦', isLogUp ? fmt(empData.orders_worked_today) : '—', 'Orders Worked Today', isLogUp ? 'Unique orders touched' : 'Log not synced', NAVY)}
           ${kpiCard('⚡', isLogUp ? fmt(empData.real_actions) : '—', 'Real Actions', isLogUp ? 'Deduplicated (120s window)' : 'Log not synced', BLUE)}
+          ${kpiCard('⏱️', empData.last_activity_time ? formatTimeOnly(empData.last_activity_time) : '—', 'Last Activity Time', empData.last_activity_order_code ? `#${escapeHtml(empData.last_activity_order_code)} (${escapeHtml(empData.last_activity_account || '')})` : (empData.last_activity_time ? formatTimeAgo(empData.last_activity_time) : 'No actions today'), PURPLE)}
+          ${kpiCard('🎯', empData.last_productive_activity_time ? formatTimeOnly(empData.last_productive_activity_time) : '—', 'Last Productive Time', empData.last_productive_action ? escapeHtml(empData.last_productive_action) : 'No productive actions', GREEN)}
           ${kpiCard('⚠️', isLogUp ? fmt(empData.orders_worked_outside_allocation) : '—', 'Orders Outside Allocation', isLogUp ? (hasOutside ? 'Touched unassigned accounts' : '0 unassigned') : 'Log not synced', hasOutside ? AMBER : GREEN)}
           ${kpiCard('✓', escapeHtml(complianceLabel), 'Allocation Compliance', isNA ? 'No activity recorded' : 'Actions in assigned accounts', isNA ? SLATE : (empData.allocation_compliance >= 100 ? GREEN : AMBER))}
         </div>
@@ -6632,6 +6886,82 @@ async function loadEmployeeTrackingView(empIdToSelect) {
     }
 
     container.innerHTML = html;
+    applyLiveRealtimeTableFilter();
+
+    // Start 30-second live polling
+    liveRealtimePollTimer = setInterval(async () => {
+      const cont = document.getElementById('employeeTrackingContainer');
+      if (!cont || !cont.offsetParent) {
+        clearInterval(liveRealtimePollTimer);
+        liveRealtimePollTimer = null;
+        return;
+      }
+      try {
+        const rtUpdate = await apiFetch(`/api/tracking/employee/realtime?date=${currentWorkDate}`);
+        if (rtUpdate && rtUpdate.employees) {
+          rtUpdate.employees.forEach(emp => {
+            const row = document.querySelector(`#liveRealtimeTable tbody tr[data-emp="${(emp.employee_name || '').toLowerCase()}"]`);
+            if (row) {
+              row.setAttribute('data-status', emp.live_status || 'NO_ACTIVITY');
+              row.setAttribute('data-idle', emp.is_idle ? '1' : '0');
+              row.setAttribute('data-working', emp.working_today ? '1' : '0');
+
+              // Update live status cell
+              const statusCell = row.children[2];
+              if (statusCell) {
+                if (emp.live_status === 'ACTIVE') {
+                  statusCell.innerHTML = '<span class="tag" style="background:#DCFCE7;color:#15803D;font-weight:800;display:inline-flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#16A34A;display:inline-block"></span> 🟢 ACTIVE</span>';
+                } else if (emp.live_status === 'INACTIVE') {
+                  const idleMins = emp.idle_seconds ? Math.floor(emp.idle_seconds / 60) : 0;
+                  statusCell.innerHTML = `<span class="tag" style="background:#FEF3C7;color:#B45309;font-weight:800">🟡 IDLE (${idleMins}m idle)</span>`;
+                } else if (emp.live_status === 'CRITICAL') {
+                  const idleMins = emp.idle_seconds ? Math.floor(emp.idle_seconds / 60) : 0;
+                  statusCell.innerHTML = `<span class="tag" style="background:#FEE2E2;color:#991B1B;font-weight:800">🔴 CRITICAL (${idleMins}m idle)</span>`;
+                } else if (emp.live_status === 'OFF_DUTY') {
+                  statusCell.innerHTML = '<span class="tag" style="background:#F8FAFC;color:#94A3B8">Off Duty</span>';
+                } else {
+                  statusCell.innerHTML = '<span class="tag" style="background:#F1F5F9;color:#64748B">⚪ No Activity</span>';
+                }
+              }
+
+              // Update idle duration cell
+              const idleCell = row.children[3];
+              if (idleCell) {
+                if (emp.idle_seconds !== null) {
+                  const color = emp.live_status === 'CRITICAL' ? '#991B1B' : (emp.live_status === 'INACTIVE' ? '#B45309' : '#15803D');
+                  idleCell.innerHTML = `<b style="color:${color}">${formatIdleDuration(emp.idle_seconds)}</b>`;
+                } else {
+                  idleCell.innerHTML = '<span style="color:var(--mut)">—</span>';
+                }
+              }
+
+              // Update last action time cell
+              const timeCell = row.children[4];
+              if (timeCell) {
+                if (emp.last_activity_time) {
+                  timeCell.innerHTML = `<b style="color:var(--navy);font-size:12.5px">${escapeHtml(formatTimeOnly(emp.last_activity_time))}</b><span style="display:block;font-size:10.5px;color:var(--mut)">${escapeHtml(formatTimeAgo(emp.last_activity_time))}</span>`;
+                } else {
+                  timeCell.innerHTML = '<span style="color:var(--mut)">No actions</span>';
+                }
+              }
+
+              // Update last action details cell
+              const actCell = row.children[5];
+              if (actCell) {
+                if (emp.last_activity_action) {
+                  actCell.innerHTML = `<div style="font-size:12px"><span class="tag sm" style="background:#EFF6FF;color:#1D4ED8;font-weight:700">${escapeHtml(emp.last_activity_action)}</span>${emp.last_activity_order_code ? `<b style="color:var(--navy);margin-left:4px">#${escapeHtml(emp.last_activity_order_code)}</b>` : ''}${emp.last_activity_account ? `<span style="color:var(--mut);font-size:11px;margin-left:4px">(${escapeHtml(emp.last_activity_account)})</span>` : ''}</div>`;
+                } else {
+                  actCell.innerHTML = '<span style="color:var(--mut);font-size:11.5px">—</span>';
+                }
+              }
+            }
+          });
+          applyLiveRealtimeTableFilter();
+        }
+      } catch (err) {
+        console.warn('Realtime poll error:', err);
+      }
+    }, 30000);
   } catch (err) {
     console.error('Error loading Employee Reality Tracking:', err);
     container.innerHTML = `
@@ -6649,6 +6979,67 @@ async function loadEmployeeTrackingView(empIdToSelect) {
     `;
   }
 }
+
+window.setLiveRealtimeFilter = function(filter) {
+  liveRealtimeFilter = filter;
+  const buttons = document.querySelectorAll('#employeeTrackingContainer button[onclick^="setLiveRealtimeFilter"]');
+  buttons.forEach(b => {
+    if (b.getAttribute('onclick').includes(`'${filter}'`)) {
+      b.classList.add('primary');
+    } else {
+      b.classList.remove('primary');
+    }
+  });
+  applyLiveRealtimeTableFilter();
+};
+
+window.applyLiveRealtimeTableFilter = function() {
+  const q = (document.getElementById('liveRtSearchInput')?.value || '').trim().toLowerCase();
+  const rows = document.querySelectorAll('#liveRealtimeTable tbody tr:not(#liveRtNoMatchRow)');
+  let visibleCount = 0;
+  rows.forEach(r => {
+    const name = r.getAttribute('data-emp') || '';
+    const isWorking = r.getAttribute('data-working') === '1';
+    const status = r.getAttribute('data-status') || '';
+    const isIdle = r.getAttribute('data-idle') === '1';
+
+    let matchFilter = true;
+    if (liveRealtimeFilter === 'working') {
+      matchFilter = isWorking;
+    } else if (liveRealtimeFilter === 'active') {
+      matchFilter = (status === 'ACTIVE');
+    } else if (liveRealtimeFilter === 'idle') {
+      matchFilter = (status === 'INACTIVE' || status === 'CRITICAL' || isIdle);
+    }
+
+    const matchQuery = !q || name.includes(q);
+    const show = matchFilter && matchQuery;
+    r.style.display = show ? '' : 'none';
+    if (show) visibleCount++;
+  });
+
+  const existingNoMatch = document.getElementById('liveRtNoMatchRow');
+  if (visibleCount === 0 && rows.length > 0) {
+    if (!existingNoMatch) {
+      const tbody = document.querySelector('#liveRealtimeTable tbody');
+      if (tbody) {
+        const tr = document.createElement('tr');
+        tr.id = 'liveRtNoMatchRow';
+        tr.innerHTML = `
+          <td colspan="9" style="text-align:center;padding:24px;color:var(--slate)">
+            No agents found matching the current filter (<b>${escapeHtml(liveRealtimeFilter)}</b>).
+            <button class="btn sm primary" style="margin-left:10px" onclick="setLiveRealtimeFilter('all')">
+              👥 Show All Agents
+            </button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+  } else if (existingNoMatch) {
+    existingNoMatch.remove();
+  }
+};
 
 window.filterTeamTrackingTable = function(query) {
   const q = String(query || '').trim().toLowerCase();

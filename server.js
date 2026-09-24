@@ -6,6 +6,7 @@ import multer from 'multer';
 import XLSX from 'xlsx';
 import { db } from './db/index.js';
 import { parseDailyLogBuffer, parseSpecificOrdersBuffer, isCsEmployee } from './services/parser.js';
+import { getCairoBusinessDate } from './services/time_utils.js';
 import { computePerformanceFromRecords, savePerformanceSnapshotToDB, getSystemWeights } from './services/performance.js';
 import {
   saveCurrentWorkOrders,
@@ -49,7 +50,9 @@ import {
   getAllocationVersions,
   getAccountOwners,
   reassignAccountOwner,
-  getAccountReassignmentLogs
+  getAccountReassignmentLogs,
+  generateRoundBasedAllocation,
+  reallocateWorkOrders
 } from './services/allocation.js';
 import {
   inspectExcelSchema,
@@ -64,7 +67,16 @@ import {
   getRangeTracking,
   getAccountsDirectory,
   getAccountDetailedData,
-  getOperationalDashboardData
+  getOperationalDashboardData,
+  getEmployeeLiveRealtime,
+  getTeamLiveStatusSummary,
+  logEmployeeActivity,
+  claimOrder,
+  startOrderProgress,
+  completeOrder,
+  cancelOrder,
+  recordInternalHandoff,
+  getOrderFullHistory
 } from './services/tracking.js';
 import {
   createExcelWorkbook,
@@ -504,7 +516,7 @@ app.patch('/api/employees/:id/status', (req, res) => {
 app.get('/api/employees/:id/active-orders', (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const workDate = req.query.date || req.query.work_date || new Date().toISOString().slice(0, 10);
+    const workDate = req.query.date || req.query.work_date || getCairoBusinessDate();
     const result = getEmployeeActiveOrders(id, workDate);
     res.json({ success: true, ...result });
   } catch (err) {
@@ -528,7 +540,7 @@ app.get('/api/employees/:id/history', (req, res) => {
 app.get('/api/employees/:id/departure-impact', (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const workDate = req.query.date || req.query.work_date || new Date().toISOString().slice(0, 10);
+    const workDate = req.query.date || req.query.work_date || getCairoBusinessDate();
     const impact = analyzeDepartureImpact(id, workDate);
     res.json({ success: true, impact });
   } catch (err) {
@@ -595,7 +607,7 @@ app.post('/api/review-queue/:id/resolve', (req, res) => {
 
 app.get('/api/operations/working-team/detailed', (req, res) => {
   try {
-    const workDate = req.query.date || req.query.work_date || new Date().toISOString().slice(0, 10);
+    const workDate = req.query.date || req.query.work_date || getCairoBusinessDate();
     const result = getComprehensiveWorkingTeamStatus(workDate);
     res.json({ success: true, ...result });
   } catch (err) {
@@ -609,7 +621,7 @@ app.post('/api/operations/working-team/toggle', (req, res) => {
     if (!employee_id) {
       return res.status(400).json({ success: false, error: 'employee_id is required' });
     }
-    const workDate = date || new Date().toISOString().slice(0, 10);
+    const workDate = date || getCairoBusinessDate();
     const result = toggleWorkingTeamMember(workDate, parseInt(employee_id, 10), is_working);
     res.json(result);
   } catch (err) {
@@ -619,7 +631,7 @@ app.post('/api/operations/working-team/toggle', (req, res) => {
 
 app.post('/api/operations/working-team/auto-restore', (req, res) => {
   try {
-    const workDate = req.body?.date || req.query?.date || new Date().toISOString().slice(0, 10);
+    const workDate = req.body?.date || req.query?.date || getCairoBusinessDate();
     const forceReset = Boolean(req.body?.reset_manual);
     let result;
     if (forceReset) {
@@ -637,7 +649,7 @@ app.get('/api/vendoor/logs/live', (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
     const sinceId = parseInt(req.query.since_id, 10) || 0;
-    const workDate = req.query.date || req.query.work_date || new Date().toISOString().slice(0, 10);
+    const workDate = req.query.date || req.query.work_date || getCairoBusinessDate();
 
     let query = `
       SELECT vl.id, vl.employee_name, vl.order_code, vl.action, vl.action_classification,
@@ -928,7 +940,7 @@ app.get('/api/global-context', (req, res) => {
 
 // GET /api/integrations/vendoor/reconciliation/latest (Live Reconciliation Diagnostic Panel - Enhancement 5)
 app.get(['/api/integrations/vendoor/reconciliation/latest', '/api/vendoor/reconciliation/latest', '/api/reconciliation/live'], (req, res) => {
-  const date = req.query.date || new Date().toISOString().slice(0, 10);
+  const date = req.query.date || getCairoBusinessDate();
   try {
     const data = getLatestReconciliationAudit(date);
     res.json(data);
@@ -1059,18 +1071,41 @@ app.get('/api/work/available-orders', (req, res) => {
 /**
  * GENERATE ORDER-LEVEL ALLOCATION (Automatic Engine)
  */
-app.post('/api/allocations/:date/generate', (req, res) => {
-  const { date } = req.params;
-  const { method, account_specific_rules, regenerate } = req.body || {};
+app.post(['/api/allocations/:date/generate', '/api/allocations/generate', '/api/allocation/generate'], (req, res) => {
+  const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
+  const { method, account_specific_rules, regenerate, round_based, round_number, max_capacity_per_employee, max_capacity } = req.body || {};
   try {
-    const result = generateOrderLevelAllocation(date, {
+    const result = generateRoundBasedAllocation(date, {
       method: method || 'fair_random',
       account_specific_rules,
-      regenerate: regenerate === true
+      regenerate: regenerate === true,
+      round_number: round_number || 1,
+      max_capacity_per_employee: max_capacity_per_employee || max_capacity || 40,
+      ...req.body
     });
     res.json(result);
   } catch (err) {
     console.error('Error generating allocation:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * REALLOCATE REMAINING / UNCLAIMED ORDERS (Round 2+)
+ */
+app.post(['/api/allocations/:date/reallocate', '/api/allocations/reallocate', '/api/allocation/reallocate'], (req, res) => {
+  const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
+  const { method, max_capacity_per_employee, max_capacity, round_number } = req.body || {};
+  try {
+    const result = reallocateWorkOrders(date, {
+      method,
+      max_capacity_per_employee: max_capacity_per_employee || max_capacity || 40,
+      round_number,
+      ...req.body
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('Error reallocating orders:', err);
     res.status(400).json({ error: err.message });
   }
 });
@@ -1681,13 +1716,138 @@ app.post('/api/uploads/pending-orders', upload.single('file'), (req, res) => {
 
 /**
  * ============================================================
- * ORDER & EMPLOYEE TRACKING APIS (PHASE 23)
+ * ORDER & EMPLOYEE TRACKING APIS (PHASE 23 & REALTIME MONITOR)
  * ============================================================
  */
 
+// GET /api/tracking/employee/realtime?date=YYYY-MM-DD (CRITICAL: Must precede /:employeeId)
+app.get('/api/tracking/employee/realtime', (req, res) => {
+  const date = req.query.date || req.query.workDate || getCairoBusinessDate();
+  try {
+    const data = getEmployeeLiveRealtime(date, {
+      inactiveThreshold: req.query.inactive_threshold ? parseInt(req.query.inactive_threshold, 10) : 900,
+      criticalThreshold: req.query.critical_threshold ? parseInt(req.query.critical_threshold, 10) : 2700,
+      currentTime: req.query.current_time || null
+    });
+    res.json(data);
+  } catch (err) {
+    console.error('Realtime employee tracking error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/tracking/team/status/:date (Team live monitoring status)
+app.get('/api/tracking/team/status/:date', (req, res) => {
+  const { date } = req.params;
+  try {
+    const data = getTeamLiveStatusSummary(date, {
+      inactiveThreshold: req.query.inactive_threshold ? parseInt(req.query.inactive_threshold, 10) : 900,
+      criticalThreshold: req.query.critical_threshold ? parseInt(req.query.critical_threshold, 10) : 2700,
+      currentTime: req.query.current_time || null
+    });
+    res.json(data);
+  } catch (err) {
+    console.error('Team status summary error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/tracking/employee/:employeeId (Employee tracking: assigned vs worked)
+app.get('/api/tracking/employee/:employeeId', (req, res) => {
+  const { employeeId } = req.params;
+  const date = req.query.date || req.query.workDate || getCairoBusinessDate();
+  try {
+    const data = getEmployeeTracking(date, employeeId);
+    res.json(data);
+  } catch (err) {
+    console.error('Employee tracking error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/tracking/log (Log operational employee activity)
+app.post('/api/tracking/log', (req, res) => {
+  try {
+    const result = logEmployeeActivity(req.body || {});
+    res.json(result);
+  } catch (err) {
+    console.error('Log employee activity error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/tracking/order/claim
+app.post('/api/tracking/order/claim', (req, res) => {
+  const { work_date, date, order_code, employee_id } = req.body || {};
+  const targetDate = work_date || date || getCairoBusinessDate();
+  try {
+    const result = claimOrder(targetDate, order_code, employee_id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/tracking/order/progress
+app.post('/api/tracking/order/progress', (req, res) => {
+  const { work_date, date, order_code, employee_id } = req.body || {};
+  const targetDate = work_date || date || getCairoBusinessDate();
+  try {
+    const result = startOrderProgress(targetDate, order_code, employee_id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/tracking/order/complete
+app.post('/api/tracking/order/complete', (req, res) => {
+  const { work_date, date, order_code, employee_id } = req.body || {};
+  const targetDate = work_date || date || getCairoBusinessDate();
+  try {
+    const result = completeOrder(targetDate, order_code, employee_id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/tracking/order/cancel
+app.post('/api/tracking/order/cancel', (req, res) => {
+  const { work_date, date, order_code, employee_id, reason } = req.body || {};
+  const targetDate = work_date || date || getCairoBusinessDate();
+  try {
+    const result = cancelOrder(targetDate, order_code, employee_id, reason);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/tracking/order/handoff
+app.post('/api/tracking/order/handoff', (req, res) => {
+  try {
+    const result = recordInternalHandoff(req.body || {});
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// GET /api/tracking/:date/order/:orderCode/history
+app.get('/api/tracking/:date/order/:orderCode/history', (req, res) => {
+  const { date, orderCode } = req.params;
+  try {
+    const data = getOrderFullHistory(date, orderCode);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/tracking/overview (handles ?date=YYYY-MM-DD)
 app.get('/api/tracking/overview', (req, res) => {
-  const date = req.query.date || req.query.workDate || new Date().toISOString().slice(0, 10);
+  const date = req.query.date || req.query.workDate || getCairoBusinessDate();
   try {
     const data = getTrackingOverview(date);
     res.json(data);
@@ -2371,7 +2531,7 @@ app.post('/api/integrations/vendoor/sync/logs', async (req, res) => {
 app.post('/api/integrations/vendoor/sync/all', async (req, res) => {
   try {
     const { workDate, fromDate, toDate, forceMode, isHistoricalSync } = req.body || {};
-    const targetDate = workDate || fromDate || new Date().toISOString().slice(0, 10);
+    const targetDate = workDate || fromDate || getCairoBusinessDate();
     const targetEndDate = toDate || targetDate;
     const isHistorical = isHistoricalSync === true;
 
@@ -2508,7 +2668,7 @@ app.delete('/api/integrations/vendoor/identity/:id', (req, res) => {
 
 app.get('/api/integrations/vendoor/productivity', (req, res) => {
   try {
-    const workDate = req.query.date || new Date().toISOString().slice(0, 10);
+    const workDate = req.query.date || getCairoBusinessDate();
     const profiles = getFullEmployeeProductivityProfiles(workDate);
     const config = getProductivityConfig();
     return res.json({ success: true, date: workDate, config, profiles });
@@ -2578,7 +2738,7 @@ app.post('/api/vendoor/dispatcher/config', (req, res) => {
 
 app.get('/api/vendoor/dispatcher/workloads', (req, res) => {
   try {
-    const workDate = req.query.date || new Date().toISOString().slice(0, 10);
+    const workDate = req.query.date || getCairoBusinessDate();
     const workloads = getEmployeeWorkloadAndRefillStates(workDate);
     return res.json({ success: true, date: workDate, workloads });
   } catch (err) {
@@ -2588,7 +2748,7 @@ app.get('/api/vendoor/dispatcher/workloads', (req, res) => {
 
 app.get('/api/vendoor/dispatcher/unallocated', (req, res) => {
   try {
-    const workDate = req.query.date || new Date().toISOString().slice(0, 10);
+    const workDate = req.query.date || getCairoBusinessDate();
     const limit = parseInt(req.query.limit, 10) || 50;
     const pool = getUnallocatedOrdersPool(workDate, { limit });
     return res.json({ success: true, date: workDate, pool });
@@ -2599,7 +2759,7 @@ app.get('/api/vendoor/dispatcher/unallocated', (req, res) => {
 
 app.get('/api/vendoor/dispatcher/completion', (req, res) => {
   try {
-    const workDate = req.query.date || new Date().toISOString().slice(0, 10);
+    const workDate = req.query.date || getCairoBusinessDate();
     const data = getCompletedOrdersForDate(workDate);
     return res.json({
       success: true,
