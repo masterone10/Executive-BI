@@ -139,6 +139,147 @@ export function formatIdleDuration(seconds) {
 }
 
 /**
+ * Format relative time ago (e.g. 3m ago, or Historical if historical date)
+ */
+export function formatTimeAgo(ts, refDate = new Date(), isHistorical = false) {
+  if (!ts) return '—';
+  if (isHistorical) return 'Historical';
+  const dt = ts instanceof Date ? ts : parseCairoTimestamp(ts);
+  if (!dt || isNaN(dt.getTime())) return '—';
+  const refMs = refDate instanceof Date ? refDate.getTime() : new Date(refDate).getTime();
+  const diffSec = Math.max(0, Math.floor((refMs - dt.getTime()) / 1000));
+  if (diffSec < 60) return `${diffSec}s ago`;
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) {
+    const mins = Math.floor((diffSec % 3600) / 60);
+    return `${Math.floor(diffSec / 3600)}h ${mins}m ago`;
+  }
+  return `${Math.floor(diffSec / 86400)}d ago`;
+}
+
+/**
+ * Normalizes a time string (e.g. "17:00", "17:00:00", "05:30 PM") into wall-clock seconds from midnight [0, 86399].
+ * Returns null if invalid or empty.
+ */
+export function normalizeTimeToSeconds(timeStr) {
+  if (timeStr === undefined || timeStr === null || String(timeStr).trim() === '') {
+    return null;
+  }
+  const s = String(timeStr).trim().toUpperCase();
+  
+  // Format: "HH:mm:ss" or "HH:mm" (24h)
+  const match24 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (match24) {
+    const h = parseInt(match24[1], 10);
+    const m = parseInt(match24[2], 10);
+    const sec = match24[3] ? parseInt(match24[3], 10) : 0;
+    if (h >= 0 && h <= 24 && m >= 0 && m < 60 && sec >= 0 && sec < 60) {
+      if (h === 24 && m === 0 && sec === 0) return 86400; // end of day boundary
+      return h * 3600 + m * 60 + sec;
+    }
+  }
+
+  // Format: "HH:mm:ss AM/PM" or "HH:mm AM/PM" (12h)
+  const match12 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  if (match12) {
+    let h = parseInt(match12[1], 10);
+    const m = parseInt(match12[2], 10);
+    const sec = match12[3] ? parseInt(match12[3], 10) : 0;
+    const isPm = match12[4].toUpperCase() === 'PM';
+    if (h === 12) h = isPm ? 12 : 0;
+    else if (isPm) h += 12;
+    if (h >= 0 && h < 24 && m >= 0 && m < 60 && sec >= 0 && sec < 60) {
+      return h * 3600 + m * 60 + sec;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extracts Africa/Cairo local date (YYYY-MM-DD) and wall-clock seconds from midnight [0, 86399]
+ * from any raw timestamp (string, Date, or number).
+ */
+export function extractCairoDateTimeComponents(rawTimestamp) {
+  if (!rawTimestamp) return null;
+  const dt = rawTimestamp instanceof Date ? rawTimestamp : parseCairoTimestamp(rawTimestamp);
+  if (!dt || isNaN(dt.getTime())) return null;
+
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: BUSINESS_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  });
+
+  const parts = formatter.formatToParts(dt);
+  let y = '', m = '', d = '', h = 0, min = 0, s = 0;
+  for (const p of parts) {
+    if (p.type === 'year') y = p.value;
+    else if (p.type === 'month') m = p.value;
+    else if (p.type === 'day') d = p.value;
+    else if (p.type === 'hour') h = parseInt(p.value, 10);
+    else if (p.type === 'minute') min = parseInt(p.value, 10);
+    else if (p.type === 'second') s = parseInt(p.value, 10);
+  }
+
+  const cairoDate = `${y}-${m}-${d}`;
+  const cairoSeconds = h * 3600 + min * 60 + s;
+  const timeFormatted = `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+
+  return {
+    cairoDate,
+    cairoSeconds,
+    cairoTimeFormatted: timeFormatted,
+    hour: h,
+    minute: min,
+    second: s,
+    epochMs: dt.getTime()
+  };
+}
+
+/**
+ * Checks if an event timestamp is within a specified time window for a given business date.
+ * Strictly uses half-open interval: [fromSec <= eventSec < toSec]
+ *
+ * @param {string|Date} rawTimestamp - Event timestamp
+ * @param {string} workDate - YYYY-MM-DD business date
+ * @param {string} [fromTime] - e.g. "17:00" or "17:00:00"
+ * @param {string} [toTime] - e.g. "18:00" or "18:00:00"
+ * @returns {boolean}
+ */
+export function isEventInTimeWindow(rawTimestamp, workDate, fromTime, toTime) {
+  if (!rawTimestamp || !workDate) return false;
+  const comps = extractCairoDateTimeComponents(rawTimestamp);
+  if (!comps) return false;
+
+  // Strict Date check: Event must belong to workDate in Africa/Cairo
+  if (comps.cairoDate !== String(workDate).trim()) {
+    return false;
+  }
+
+  // If no time window specified, full day is included
+  const fromSec = normalizeTimeToSeconds(fromTime);
+  const toSec = normalizeTimeToSeconds(toTime);
+
+  if (fromSec === null || toSec === null) {
+    return true;
+  }
+
+  // Standard half-open interval [from, to): START <= event_time < END
+  if (fromSec <= toSec) {
+    return comps.cairoSeconds >= fromSec && comps.cairoSeconds < toSec;
+  } else {
+    // Spanning overnight / midnight
+    return comps.cairoSeconds >= fromSec || comps.cairoSeconds < toSec;
+  }
+}
+
+/**
  * Diagnostic payload for time configuration
  */
 export function getTimeDiagnostic() {

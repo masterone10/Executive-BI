@@ -348,6 +348,30 @@ input:checked + .slider:before{transform:translateX(16px)}
         </div>
       </div>
 
+      <!-- GLOBAL TRUE EVENT TIME WINDOW FILTER -->
+      <div class="global-time-selector" id="globalTimeSelector" style="display:flex;align-items:center;background:#fff;border:1px solid var(--line);border-radius:10px;padding:4px 10px;gap:8px;box-shadow:var(--shadow)">
+        <div style="display:flex;flex-direction:column;gap:1px">
+          <span style="font-size:10px;font-weight:700;color:var(--slate);text-transform:uppercase;letter-spacing:0.3px">Time Window</span>
+          <div id="timeWindowStatusIndicator" style="font-size:11px;font-weight:800;color:var(--blue)">All Day</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="display:flex;align-items:center;gap:4px">
+            <span style="font-size:11.5px;color:var(--slate);font-weight:600">From</span>
+            <input type="time" id="timeFilterFrom" class="inp sm" style="padding:3px 6px;font-size:12px;width:86px;height:28px;border-radius:6px;border:1px solid var(--line)" step="60" value="" placeholder="17:00">
+          </div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <span style="font-size:11.5px;color:var(--slate);font-weight:600">To</span>
+            <input type="time" id="timeFilterTo" class="inp sm" style="padding:3px 6px;font-size:12px;width:86px;height:28px;border-radius:6px;border:1px solid var(--line)" step="60" value="" placeholder="18:00">
+          </div>
+          <button type="button" class="btn primary sm" id="btnApplyTimeWindow" onclick="applyTimeWindowFilter()" style="padding:4px 10px;font-size:11.5px;font-weight:700;height:28px" title="Apply exact event time window filter">
+            Apply
+          </button>
+          <button type="button" class="btn sm" id="btnResetTimeWindow" onclick="resetTimeWindowAllDay()" style="padding:4px 10px;font-size:11.5px;height:28px" title="Clear time window and view All Day">
+            All Day
+          </button>
+        </div>
+      </div>
+
       <div class="actions">
         <button class="btn sm" onclick="show('tracking', 'employees')" style="background:#16A34A;color:#fff;font-weight:700;box-shadow:0 0 8px rgba(22,163,74,0.3)">
           ⚡ Live Agent Monitor
@@ -501,6 +525,8 @@ let currentWorkDate = getInitialDate();
 let currentAccountsList = [];
 let todayWorkingEmployees = [];
 let activeAllocations = []; // [ { employee_id, account, status, available_orders }, ... ]
+let currentTimeWindowFrom = '';
+let currentTimeWindowTo = '';
 
 function formatDisplayDate(dateStr) {
   if (!dateStr) return '';
@@ -585,6 +611,22 @@ function updateGlobalDateUI() {
       btnToday.classList.add('active-today');
     } else {
       btnToday.classList.remove('active-today');
+    }
+  }
+
+  // Synchronize Time Window UI
+  const timeIndicator = document.getElementById('timeWindowStatusIndicator');
+  const fromInput = document.getElementById('timeFilterFrom');
+  const toInput = document.getElementById('timeFilterTo');
+  if (fromInput && fromInput.value !== (currentTimeWindowFrom || '')) fromInput.value = currentTimeWindowFrom || '';
+  if (toInput && toInput.value !== (currentTimeWindowTo || '')) toInput.value = currentTimeWindowTo || '';
+  if (timeIndicator) {
+    if (currentTimeWindowFrom || currentTimeWindowTo) {
+      timeIndicator.textContent = `${currentTimeWindowFrom || '00:00'} → ${currentTimeWindowTo || '24:00'}`;
+      timeIndicator.style.color = '#15803D';
+    } else {
+      timeIndicator.textContent = 'All Day';
+      timeIndicator.style.color = 'var(--blue)';
     }
   }
 
@@ -769,14 +811,52 @@ async function setGlobalSelectedDate(newDate) {
   show(currentMainPage, currentPage);
 }
 
-async function fetchPerformanceDataForDate(dateStr) {
+window.applyTimeWindowFilter = async function() {
+  const fromVal = (document.getElementById('timeFilterFrom')?.value || '').trim();
+  const toVal = (document.getElementById('timeFilterTo')?.value || '').trim();
+
+  if (!fromVal && !toVal) {
+    return resetTimeWindowAllDay();
+  }
+
+  currentTimeWindowFrom = fromVal;
+  currentTimeWindowTo = toVal;
+  updateGlobalDateUI();
+  showToast('⏱️ Time Window Filter Active', `Filtering canonical events for ${formatDisplayDate(currentWorkDate)} from ${fromVal || '00:00'} to ${toVal || '24:00'}.`);
+  await fetchPerformanceDataForDate(currentWorkDate, currentTimeWindowFrom, currentTimeWindowTo);
+  RENDERED = pages();
+  show(currentMainPage, currentSubTabs[currentMainPage]);
+};
+
+window.resetTimeWindowAllDay = async function() {
+  currentTimeWindowFrom = '';
+  currentTimeWindowTo = '';
+  const fromInput = document.getElementById('timeFilterFrom');
+  const toInput = document.getElementById('timeFilterTo');
+  if (fromInput) fromInput.value = '';
+  if (toInput) toInput.value = '';
+  updateGlobalDateUI();
+  showToast('✓ All Day Mode', `Displaying full-day activity for ${formatDisplayDate(currentWorkDate)}.`);
+  await fetchPerformanceDataForDate(currentWorkDate, '', '');
+  RENDERED = pages();
+  show(currentMainPage, currentSubTabs[currentMainPage]);
+};
+
+async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindowFrom, toTime = currentTimeWindowTo) {
   try {
-    const data = await apiFetch(`/api/data?date=${dateStr}`);
-    if (data && data.exists !== false && (data.employees || data.hr || data.log_totals)) {
+    let url = `/api/data?date=${encodeURIComponent(dateStr)}`;
+    if (fromTime || toTime) {
+      url += `&from=${encodeURIComponent(fromTime || '')}&to=${encodeURIComponent(toTime || '')}`;
+    }
+    const data = await apiFetch(url);
+    if (data && data.exists !== false && (data.employees || data.hr || data.log_totals || data.time_window)) {
       D = {
         exists: true,
         date: dateStr,
         employees: data.employees || [],
+        time_window: data.time_window || null,
+        kpis: data.kpis || null,
+        order_events: data.order_events || [],
         log_totals: {
           actions: data.log_totals?.actions || 0,
           printed: data.log_totals?.printed || 0,
@@ -819,6 +899,9 @@ async function fetchPerformanceDataForDate(dateStr) {
         exists: false,
         date: dateStr,
         employees: [],
+        time_window: null,
+        kpis: null,
+        order_events: [],
         log_totals: { actions: 0, printed: 0, pending: 0, processing: 0, cancelled: 0, alt: 0 },
         status_totals: { Printed: 0, Pending: 0, Processing: 0, Cancelled: 0 },
         hr: { days: 0, tot_new: 0, tot_printed: 0, tot_cancel: 0, tot_add: 0 },
@@ -833,6 +916,9 @@ async function fetchPerformanceDataForDate(dateStr) {
       exists: false,
       date: dateStr,
       employees: [],
+      time_window: null,
+      kpis: null,
+      order_events: [],
       log_totals: { actions: 0, printed: 0, pending: 0, processing: 0, cancelled: 0, alt: 0 },
       status_totals: { Printed: 0, Pending: 0, Processing: 0, Cancelled: 0 },
       hr: { days: 0, tot_new: 0, tot_printed: 0, tot_cancel: 0, tot_add: 0 },
@@ -1112,8 +1198,10 @@ function renderWorkAllocationUI(overview) {
           <button class="btn sm ${workAllocViewMode === 'agents' ? 'primary' : ''}" style="border-radius:0;border:none;padding:5px 10px;font-size:11.5px" onclick="setWorkAllocViewMode('agents')">👥 Agent Cards</button>
         </div>
 
-        <!-- Smart Allocation Engine Action Buttons -->
-        <button class="btn primary" onclick="runAutoFairAllocation(false)" title="Distributes work fairly. Preserves existing allocations if any.">⚡ Auto Fair Allocation</button>
+        <!-- Enterprise Allocation Engine Action Buttons -->
+        <button class="btn primary" onclick="runEnterpriseAllocationPreview()" style="background:linear-gradient(135deg,#1E3A8A,#2563EB);color:#fff;font-weight:700" title="Evaluate eligibility, schedules, capacity, and preview state machine assignments">🔍 Enterprise Preview</button>
+        <button class="btn success" onclick="runEnterpriseAllocationExecute()" style="background:#16A34A;color:#fff;font-weight:700" title="Atomically commit Enterprise Allocation (NEW/PENDING State Machine, Hard Capacities, Rescue, Uniqueness)">⚡ Execute Enterprise</button>
+        <button class="btn sm" onclick="runAutoFairAllocation(false)" title="Distributes work fairly. Preserves existing allocations if any.">⚡ Auto Fair Allocation</button>
         <button class="btn sm" onclick="confirmRegenerateAllocation()" title="Wipe current assignments and distribute from scratch" style="background:#FFF1F2;color:#BE123C;border-color:#FECDD3">🔄 Re-allocate All</button>
         <button class="btn sm" onclick="copyAllEmployeesDirect()" style="background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE" title="Copy combined WhatsApp/Teams message for the entire group">📋 Copy All Employees</button>
         <button class="btn sm" onclick="copySelectedEmployeeDirect()" style="background:#F8FAFC;color:var(--slate)" title="Copy allocation for a specific CS agent">👤 Copy Selected</button>
@@ -1449,35 +1537,38 @@ async function runAutoFairAllocation(regenerate = false) {
       currentOrderLevelAllocation = res;
       // Convert order-level by_employee into activeAllocations structure for UI
       const newActive = [];
-      if (Array.isArray(res.by_employee)) {
-        for (const emp of res.by_employee) {
-          if (Array.isArray(emp.accounts)) {
-            for (const acc of emp.accounts) {
-              newActive.push({
-                employee_id: emp.employee_id,
-                account: acc.account,
-                status: acc.status,
-                available_orders: acc.count || 0
-              });
-            }
+      const byEmp = Array.isArray(res.by_employee) ? res.by_employee : [];
+      for (const emp of byEmp) {
+        if (Array.isArray(emp.accounts)) {
+          for (const acc of emp.accounts) {
+            newActive.push({
+              employee_id: emp.employee_id,
+              account: acc.account,
+              status: acc.status,
+              available_orders: acc.count || 0
+            });
           }
         }
       }
       activeAllocations = newActive;
       
-      // Auto-save the generated allocation to finalize version
-      await apiFetch(`/api/allocations/${currentWorkDate}/save-order-level`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          raw_allocations: res.raw_allocations,
-          by_employee: res.by_employee,
-          notes: regenerate ? 'Re-generated Fair Allocation (Scratch)' : 'Incremental Fair Allocation'
-        })
-      }).catch(console.warn);
+      // Auto-save the generated allocation to finalize version if not already committed
+      const rawAllocs = res.raw_allocations || res.allocations || res.orderLevelAllocations || [];
+      if (!res.already_saved && res.status !== 'COMMITTED' && rawAllocs.length > 0) {
+        await apiFetch(`/api/allocations/${currentWorkDate}/save-order-level`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            raw_allocations: rawAllocs,
+            by_employee: byEmp,
+            notes: regenerate ? 'Re-generated Fair Allocation (Scratch)' : 'Incremental Fair Allocation'
+          })
+        }).catch(console.warn);
+      }
 
-      const presMsg = res.preserved_orders_count > 0 ? ` (${res.preserved_orders_count} previously assigned orders preserved)` : '';
-      showToast('✓ Fair Allocation Complete!', `${res.assigned_orders} orders distributed across ${res.by_employee.length} agents${presMsg}.`);
+      const assignedCount = res.assigned_orders !== undefined ? res.assigned_orders : (res.assigned_count !== undefined ? res.assigned_count : rawAllocs.filter(a => a.employee_id !== null).length);
+      const presMsg = (res.preserved_orders_count || 0) > 0 ? ` (${res.preserved_orders_count} previously assigned orders preserved)` : '';
+      showToast('✓ Fair Allocation Complete!', `${assignedCount} orders distributed across ${byEmp.length} agents${presMsg}.`);
       
       const overview = await apiFetch(`/api/work/current?date=${currentWorkDate}`).catch(() => null);
       renderWorkAllocationUI(overview);
@@ -1917,7 +2008,649 @@ async function saveWorkingTeamSelection() {
 }
 
 // -------------------------------------------------------------
-// EMPLOYEE MASTER (Part 11)
+// ENTERPRISE ALLOCATION ENGINE & CONFIGURATION CENTER (Sections 133A, 142-148)
+// -------------------------------------------------------------
+let currentConfigCenterData = null;
+let configDraft = null;
+let configUnsavedChangesCount = 0;
+let currentEnterprisePreviewPlan = null;
+
+async function loadAllocationConfigCenterView() {
+  const container = document.getElementById('allocationConfigCenterContainer');
+  if (!container) return;
+
+  container.innerHTML = '<div class="panel" style="text-align:center;padding:40px;color:var(--mut)">Loading Allocation Configuration Center...</div>';
+
+  try {
+    const [configRes, alertsRes] = await Promise.all([
+      apiFetch('/api/allocation/configuration'),
+      apiFetch(`/api/allocation/alerts?date=${currentWorkDate}`).catch(() => ({ alerts: [] }))
+    ]);
+
+    currentConfigCenterData = configRes;
+    configDraft = JSON.parse(JSON.stringify(configRes));
+    configUnsavedChangesCount = 0;
+
+    renderAllocationConfigCenterUI(alertsRes?.alerts || []);
+  } catch (err) {
+    console.error('Error loading Allocation Configuration Center:', err);
+    container.innerHTML = `
+      <div class="panel" style="text-align:center;padding:40px 20px">
+        <div style="font-size:36px;margin-bottom:12px">⚠️</div>
+        <h3 style="margin:0 0 8px 0;color:var(--ink)">Failed to load Allocation Configuration Center</h3>
+        <p style="color:var(--mut);font-size:13px">${escapeHtml(err.message || 'Unknown error')}</p>
+        <button class="btn primary" onclick="loadAllocationConfigCenterView()">↻ Retry</button>
+      </div>
+    `;
+  }
+}
+
+function renderAllocationConfigCenterUI(alerts = []) {
+  const container = document.getElementById('allocationConfigCenterContainer');
+  if (!container || !configDraft) return;
+
+  const ver = configDraft.version || 1;
+  const pubAt = configDraft.published_at ? formatTimeOnly(configDraft.published_at) + ' (' + formatDisplayDate(configDraft.published_at.slice(0, 10)) + ')' : 'Initial Setup';
+  const pubBy = configDraft.published_by || 'Supervisor';
+  const globals = configDraft.global_settings || {};
+  const accounts = configDraft.accounts || [];
+  const employees = configDraft.employees || [];
+
+  const mode = globals.allocation_mode || 'ACTIVE';
+  const modeBadgeCol = mode === 'ACTIVE' ? '#15803D' : (mode === 'SHADOW' ? '#7C3AED' : (mode === 'PREVIEW' ? '#1D4ED8' : '#64748B'));
+  const modeBadgeBg = mode === 'ACTIVE' ? '#DCFCE7' : (mode === 'SHADOW' ? '#F3E8FF' : (mode === 'PREVIEW' ? '#DBEAFE' : '#F1F5F9'));
+
+  let html = `
+    <!-- Top Configuration Center Header -->
+    <div style="background:linear-gradient(135deg, #0F172A, #1E293B);color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:20px;box-shadow:var(--shadow)">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px">
+        <div style="display:flex;align-items:center;gap:16px">
+          <div style="width:48px;height:48px;border-radius:12px;background:rgba(255,255,255,0.1);display:grid;place-items:center;font-size:24px">⚙️</div>
+          <div>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap">
+              <h2 style="margin:0;font-size:18px;font-weight:800;color:#fff">Allocation Configuration Center</h2>
+              <span class="tag" style="background:${modeBadgeBg};color:${modeBadgeCol};font-weight:800;font-size:11px">Mode: ${mode}</span>
+              <span class="tag" style="background:rgba(255,255,255,0.15);color:#fff;font-size:11px">Published Version #${ver}</span>
+            </div>
+            <p style="margin:0;font-size:12.5px;color:#94A3B8">
+              One authoritative place for managing Account Schedules, CS Employee Capacities, and Global Policy Settings.
+              Published by <b>${escapeHtml(pubBy)}</b> at ${escapeHtml(pubAt)}.
+            </p>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <div id="cfgUnsavedBadge" style="font-size:12px;padding:6px 12px;border-radius:8px;font-weight:700;background:${configUnsavedChangesCount > 0 ? '#FEF3C7' : '#DCFCE7'};color:${configUnsavedChangesCount > 0 ? '#B45309' : '#15803D'}">
+            ${configUnsavedChangesCount > 0 ? `⚠️ ${configUnsavedChangesCount} Unsaved Changes` : '✓ All Settings Published'}
+          </div>
+          <button class="btn sm" onclick="validateConfigDraftUI()" style="background:#334155;color:#fff;border:none">🔍 Validate All</button>
+          <button class="btn success sm" onclick="saveAllConfigurationCenter()" style="background:#16A34A;color:#fff;border:none;font-weight:700">💾 Save All Configuration</button>
+          <button class="btn sm" onclick="discardConfigChanges()" style="background:rgba(255,255,255,0.15);color:#fff;border:none">Discard Changes</button>
+          <button class="btn sm" onclick="openConfigHistoryModal()" style="background:rgba(255,255,255,0.15);color:#fff;border:none">📜 Version History</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Active Operational Alerts (if any) -->
+    ${alerts.length > 0 ? `
+      <div class="panel" style="margin-bottom:20px;border-left:4px solid #F59E0B;background:#FFFDF5;padding:14px 18px">
+        <b style="font-size:13px;color:#92400E;display:block;margin-bottom:6px">⚡ Live Allocation Operational Alerts (${alerts.length})</b>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${alerts.map(a => `
+            <div style="font-size:12px;color:#78350F;display:flex;align-items:center;gap:8px">
+              <span class="tag sm" style="background:#FEF3C7;color:#92400E;font-weight:700">${a.type}</span>
+              <span>${escapeHtml(a.message)}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
+
+    <!-- SECTION A: GLOBAL ALLOCATION SETTINGS -->
+    <div class="panel" style="margin-bottom:20px">
+      <div class="hd">
+        <div>
+          <h3>🌐 Global Allocation Settings</h3>
+          <p>Controlled execution modes, activity recency gates, and PENDING rescue operational thresholds.</p>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px;padding:10px 0">
+        <div>
+          <label style="font-size:12px;font-weight:700;color:var(--slate);display:block;margin-bottom:4px">Allocation Engine Mode:</label>
+          <select id="cfgGlobalMode" class="filter" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--line)" onchange="updateDraftGlobal('allocation_mode', this.value)">
+            <option value="ACTIVE" ${globals.allocation_mode === 'ACTIVE' ? 'selected' : ''}>ACTIVE (One Authoritative Writer)</option>
+            <option value="SHADOW" ${globals.allocation_mode === 'SHADOW' ? 'selected' : ''}>SHADOW (Diagnostic Proposals)</option>
+            <option value="PREVIEW" ${globals.allocation_mode === 'PREVIEW' ? 'selected' : ''}>PREVIEW (Preview Only)</option>
+            <option value="OFF" ${globals.allocation_mode === 'OFF' ? 'selected' : ''}>OFF (Legacy Allocation Writer)</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="font-size:12px;font-weight:700;color:var(--slate);display:block;margin-bottom:4px">Activity Lookback (Minutes):</label>
+          <input type="number" min="1" max="1440" id="cfgGlobalLookback" value="${globals.activity_lookback_minutes || 15}" 
+                 style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--line);font-size:13px"
+                 oninput="updateDraftGlobal('activity_lookback_minutes', parseInt(this.value, 10))">
+          <span style="font-size:11px;color:var(--mut)">CS agent must have activity within X min to receive work.</span>
+        </div>
+
+        <div>
+          <label style="font-size:12px;font-weight:700;color:var(--slate);display:block;margin-bottom:4px">Low-Remaining Alert Threshold:</label>
+          <input type="number" min="0" max="500" id="cfgGlobalLowRemaining" value="${globals.low_remaining_threshold || 3}" 
+                 style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--line);font-size:13px"
+                 oninput="updateDraftGlobal('low_remaining_threshold', parseInt(this.value, 10))">
+          <span style="font-size:11px;color:var(--mut)">Triggers replenishment evaluation alert when capacity <= X.</span>
+        </div>
+
+        <div>
+          <label style="font-size:12px;font-weight:700;color:var(--slate);display:block;margin-bottom:4px">PENDING Rescue Threshold:</label>
+          <input type="number" min="1" max="5000" id="cfgGlobalRescueThreshold" value="${globals.pending_rescue_threshold || 20}" 
+                 style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--line);font-size:13px"
+                 oninput="updateDraftGlobal('pending_rescue_threshold', parseInt(this.value, 10))">
+          <span style="font-size:11px;color:var(--mut)">Unabsorbed PENDING deficit triggering NEW support mode.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION B: ACCOUNT SCHEDULES -->
+    <div class="panel" style="margin-bottom:20px">
+      <div class="hd">
+        <div>
+          <h3>⏰ Account + Status Schedules</h3>
+          <p>Independent time windows for NEW and PENDING work per account. Blank Start & End = ALL_DAY (Always open).</p>
+        </div>
+        <div style="font-size:12px;color:var(--mut)">
+          Showing ${accounts.length} Accounts
+        </div>
+      </div>
+
+      <div class="tbl-scroll" style="max-height:450px;overflow-y:auto">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:40px">#</th>
+              <th>Account</th>
+              <th>NEW Start Time (24h)</th>
+              <th>NEW End Time (24h)</th>
+              <th>NEW Live Status</th>
+              <th>PENDING Start Time</th>
+              <th>PENDING End Time</th>
+              <th>PENDING Live Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${accounts.map((acc, idx) => {
+              const ns = acc.new_start_time || '';
+              const ne = acc.new_end_time || '';
+              const ps = acc.pending_start_time || '';
+              const pe = acc.pending_end_time || '';
+
+              const newStatus = (!ns && !ne) ? 'ALL_DAY' : (isTimeWindowOpen(ns, ne) ? 'OPEN' : 'CLOSED');
+              const pendStatus = (!ps && !pe) ? 'ALL_DAY' : (isTimeWindowOpen(ps, pe) ? 'OPEN' : 'CLOSED');
+
+              const newBadgeBg = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
+              const newBadgeCol = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
+
+              const pendBadgeBg = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
+              const pendBadgeCol = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
+
+              return `
+                <tr>
+                  <td><span class="rk">${idx + 1}</span></td>
+                  <td><b style="font-size:13px;color:var(--navy)">${escapeHtml(acc.account)}</b></td>
+                  <td>
+                    <input type="text" placeholder="e.g. 18:00 or blank" value="${escapeHtml(ns)}" 
+                           style="width:90px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:12px"
+                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'new_start_time', this.value)">
+                  </td>
+                  <td>
+                    <input type="text" placeholder="e.g. 23:00 or blank" value="${escapeHtml(ne)}" 
+                           style="width:90px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:12px"
+                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'new_end_time', this.value)">
+                  </td>
+                  <td>
+                    <span class="tag sm" style="background:${newBadgeBg};color:${newBadgeCol};font-weight:700">${newStatus}</span>
+                  </td>
+                  <td>
+                    <input type="text" placeholder="HH:MM or blank" value="${escapeHtml(ps)}" 
+                           style="width:90px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:12px"
+                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'pending_start_time', this.value)">
+                  </td>
+                  <td>
+                    <input type="text" placeholder="HH:MM or blank" value="${escapeHtml(pe)}" 
+                           style="width:90px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:12px"
+                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'pending_end_time', this.value)">
+                  </td>
+                  <td>
+                    <span class="tag sm" style="background:${pendBadgeBg};color:${pendBadgeCol};font-weight:700">${pendStatus}</span>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- SECTION C: CS EMPLOYEE WORKLOAD CAPACITY -->
+    <div class="panel">
+      <div class="hd">
+        <div>
+          <h3>👥 CS Employee Maximum Order Capacities</h3>
+          <p>Configured individual hard capacity ceiling. The engine will NEVER allocate more orders than this maximum.</p>
+        </div>
+        <div style="font-size:12px;color:var(--mut)">
+          Showing ${employees.length} Active CS Agents
+        </div>
+      </div>
+
+      <div class="tbl-scroll" style="max-height:450px;overflow-y:auto">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:40px">#</th>
+              <th>Employee Name</th>
+              <th>Department / Team</th>
+              <th style="width:140px">Max Orders (Hard Cap)</th>
+              <th style="text-align:right">Current Workload</th>
+              <th style="text-align:right">Remaining Capacity</th>
+              <th>Capacity Health</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${employees.map((emp, idx) => {
+              const maxOrd = emp.max_orders !== undefined ? emp.max_orders : 40;
+              const load = emp.current_workload || 0;
+              const rem = Math.max(0, maxOrd - load);
+              const isExhausted = rem <= 0;
+              const isLow = rem > 0 && rem <= (globals.low_remaining_threshold || 3);
+
+              const healthBg = isExhausted ? '#FEE2E2' : (isLow ? '#FEF3C7' : '#DCFCE7');
+              const healthCol = isExhausted ? '#991B1B' : (isLow ? '#B45309' : '#15803D');
+              const healthText = isExhausted ? '🔴 Exhausted' : (isLow ? `🟡 Low (${rem})` : `🟢 OK (${rem})`);
+
+              return `
+                <tr>
+                  <td><span class="rk">${idx + 1}</span></td>
+                  <td><b style="font-size:13px;color:var(--navy)">${escapeHtml(emp.employee_name)}</b></td>
+                  <td><span class="tag sm" style="background:#F1F5F9;color:#334155">${escapeHtml(emp.department || 'CS')} · ${escapeHtml(emp.team_membership || 'Both')}</span></td>
+                  <td>
+                    <input type="number" min="0" max="500" value="${maxOrd}" 
+                           style="width:90px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-weight:700;font-size:13px"
+                           onchange="updateDraftEmployeeCapacity(${emp.employee_id}, parseInt(this.value, 10))">
+                  </td>
+                  <td style="text-align:right"><b>${load}</b></td>
+                  <td style="text-align:right;font-weight:800;color:${healthCol}">${rem}</td>
+                  <td><span class="tag sm" style="background:${healthBg};color:${healthCol};font-weight:700">${healthText}</span></td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  container.innerHTML = html;
+}
+
+function updateDraftGlobal(key, val) {
+  if (!configDraft) return;
+  configDraft.global_settings[key] = val;
+  configUnsavedChangesCount++;
+  updateUnsavedBadge();
+}
+
+function updateDraftAccountSchedule(accountName, field, val) {
+  if (!configDraft) return;
+  const acc = configDraft.accounts.find(a => a.account.toLowerCase() === accountName.toLowerCase());
+  if (acc) {
+    acc[field] = val.trim();
+    configUnsavedChangesCount++;
+    updateUnsavedBadge();
+  }
+}
+
+function updateDraftEmployeeCapacity(empId, maxOrders) {
+  if (!configDraft) return;
+  const emp = configDraft.employees.find(e => e.employee_id === empId);
+  if (emp) {
+    emp.max_orders = isNaN(maxOrders) ? 0 : Math.max(0, maxOrders);
+    configUnsavedChangesCount++;
+    updateUnsavedBadge();
+  }
+}
+
+function updateUnsavedBadge() {
+  const badge = document.getElementById('cfgUnsavedBadge');
+  if (badge) {
+    if (configUnsavedChangesCount > 0) {
+      badge.style.background = '#FEF3C7';
+      badge.style.color = '#B45309';
+      badge.textContent = `⚠️ ${configUnsavedChangesCount} Unsaved Changes`;
+    } else {
+      badge.style.background = '#DCFCE7';
+      badge.style.color = '#15803D';
+      badge.textContent = '✓ All Settings Published';
+    }
+  }
+}
+
+function isTimeWindowOpen(start, end) {
+  if (!start && !end) return true;
+  const now = new Date();
+  const nowStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  if (start && end) {
+    return nowStr >= start && nowStr < end;
+  }
+  return true;
+}
+
+async function validateConfigDraftUI() {
+  if (!configDraft) return;
+  try {
+    const res = await apiFetch('/api/allocation/configuration/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(configDraft)
+    });
+
+    if (res.valid) {
+      showToast('✓ Validation Succeeded', 'Complete allocation configuration draft passed all structure, time format, and numeric rules.');
+    } else {
+      const errMsgs = (res.errors || []).map(e => `${e.section}/${e.field || e.account || ''}: ${e.reason}`).join('\n• ');
+      alert('Validation Errors Found:\n• ' + errMsgs);
+    }
+  } catch (err) {
+    alert('Validation failed: ' + err.message);
+  }
+}
+
+async function saveAllConfigurationCenter() {
+  if (!configDraft) return;
+  if (!confirm('Publish all configuration changes atomically? This will create a new immutable configuration revision.')) return;
+
+  try {
+    showToast('⏳ Publishing Configuration...', 'Persisting Account schedules, employee capacities, and global settings...');
+    const res = await apiFetch('/api/allocation/configuration/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...configDraft,
+        expected_version: currentConfigCenterData?.version
+      })
+    });
+
+    if (res.success) {
+      showToast('✓ Configuration Published!', `Version #${res.version} is now active. Accounts: ${res.accounts_changed}, Employees: ${res.employees_changed}, Settings: ${res.settings_changed}`);
+      await loadAllocationConfigCenterView();
+    } else {
+      alert('Save failed: ' + (res.error || 'Unknown error'));
+    }
+  } catch (err) {
+    alert('Failed to save configuration: ' + err.message);
+  }
+}
+
+function discardConfigChanges() {
+  if (configUnsavedChangesCount > 0 && !confirm('Discard all unsaved edits and reset to currently published configuration?')) return;
+  configDraft = JSON.parse(JSON.stringify(currentConfigCenterData));
+  configUnsavedChangesCount = 0;
+  renderAllocationConfigCenterUI();
+  showToast('✓ Changes Discarded', 'Restored to latest published configuration.');
+}
+
+async function openConfigHistoryModal() {
+  let modal = document.getElementById('configHistoryModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'configHistoryModal';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:9999;align-items:center;justify-content:center;padding:20px';
+    document.body.appendChild(modal);
+  }
+
+  try {
+    const res = await apiFetch('/api/allocation/configuration/history');
+    const history = res.history || [];
+
+    let html = `
+      <div style="background:#fff;border-radius:16px;max-width:700px;width:100%;box-shadow:var(--shadow-lg);overflow:hidden;display:flex;flex-direction:column;max-height:85vh">
+        <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:#F8FAFC">
+          <div>
+            <h3 style="margin:0;font-size:16px;color:var(--navy)">📜 Configuration Version History</h3>
+            <p style="margin:2px 0 0 0;font-size:12px;color:var(--mut)">Audit trail of published configuration revisions.</p>
+          </div>
+          <button class="btn sm" onclick="document.getElementById('configHistoryModal').style.display='none'">✕ Close</button>
+        </div>
+        <div style="padding:16px;overflow-y:auto">
+          <div class="tbl-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Version</th>
+                  <th>Published Time</th>
+                  <th>Published By</th>
+                  <th>Accounts Changed</th>
+                  <th>Employees Changed</th>
+                  <th>Settings Changed</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${history.map(h => `
+                  <tr>
+                    <td><b>v${h.version}</b></td>
+                    <td style="font-size:12px">${escapeHtml(h.published_at)}</td>
+                    <td><b>${escapeHtml(h.published_by)}</b></td>
+                    <td>${h.accounts_changed}</td>
+                    <td>${h.employees_changed}</td>
+                    <td>${h.settings_changed}</td>
+                    <td>${h.is_active ? '<span class="tag" style="background:#DCFCE7;color:#15803D;font-weight:700">✓ ACTIVE</span>' : '<span class="tag" style="background:#F1F5F9;color:#64748B">ARCHIVED</span>'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    modal.innerHTML = html;
+    modal.style.display = 'flex';
+  } catch (err) {
+    alert('Error fetching history: ' + err.message);
+  }
+}
+
+// -------------------------------------------------------------
+// ENTERPRISE ALLOCATION EXECUTE & PREVIEW (Sections 98-100, 146)
+// -------------------------------------------------------------
+async function runEnterpriseAllocationPreview() {
+  try {
+    showToast('⏳ Generating Enterprise Preview...', `Evaluating ${currentWorkDate} rules, state machine, capacity and schedules...`);
+    const plan = await apiFetch(`/api/allocations/${currentWorkDate}/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ forceMode: 'PREVIEW' })
+    });
+
+    currentEnterprisePreviewPlan = plan;
+    renderEnterprisePreviewModal(plan);
+  } catch (err) {
+    alert('Preview failed: ' + err.message);
+  }
+}
+
+async function runEnterpriseAllocationExecute() {
+  if (!confirm(`Execute Enterprise Allocation for ${currentWorkDate}? This will atomically commit production assignments using the latest published configuration.`)) return;
+
+  try {
+    showToast('⏳ Executing Enterprise Allocation...', `Committing atomic state transitions for ${currentWorkDate}...`);
+    const res = await apiFetch(`/api/allocations/${currentWorkDate}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'ACTIVE' })
+    });
+
+    if (res.success) {
+      showToast('✓ Enterprise Allocation Committed!', `Committed ${res.assigned_count} orders across eligible CS agents. Fingerprint: ${res.fingerprint ? res.fingerprint.slice(0, 10) : 'N/A'}`);
+      await loadWorkAllocationData();
+    } else {
+      alert('Allocation error: ' + (res.error || 'Unknown error'));
+    }
+  } catch (err) {
+    alert('Failed to execute enterprise allocation: ' + err.message);
+  }
+}
+
+function renderEnterprisePreviewModal(plan) {
+  let modal = document.getElementById('enterprisePreviewModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'enterprisePreviewModal';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:9999;align-items:center;justify-content:center;padding:20px';
+    document.body.appendChild(modal);
+  }
+
+  const isBlocked = plan.status === 'BLOCKED';
+  const assignments = plan.assignments || [];
+  const candidates = plan.candidate_decisions || [];
+
+  let html = `
+    <div style="background:#fff;border-radius:16px;max-width:900px;width:100%;box-shadow:var(--shadow-lg);overflow:hidden;display:flex;flex-direction:column;max-height:90vh">
+      <div style="padding:16px 22px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:#F8FAFC">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <h3 style="margin:0;font-size:17px;font-weight:800;color:var(--navy)">🔍 Enterprise Allocation Preview Plan</h3>
+            <span class="tag" style="background:${isBlocked ? '#FEE2E2' : '#DCFCE7'};color:${isBlocked ? '#991B1B' : '#15803D'};font-weight:800">
+              ${plan.status}
+            </span>
+            ${plan.is_rescue_active ? '<span class="tag" style="background:#FEF3C7;color:#B45309;font-weight:800">⚠️ RESCUE ACTIVE</span>' : ''}
+          </div>
+          <p style="margin:3px 0 0 0;font-size:12px;color:var(--mut)">
+            Plan ID: <b>${escapeHtml(plan.run_id)}</b> · Context Hash: <span style="font-family:monospace">${plan.context_hash ? plan.context_hash.slice(0, 12) : 'N/A'}</span> · Config v${plan.configuration_version || 1}
+          </p>
+        </div>
+        <button class="btn sm" onclick="document.getElementById('enterprisePreviewModal').style.display='none'">✕ Close</button>
+      </div>
+
+      <div style="padding:20px;overflow-y:auto;display:flex;flex-direction:column;gap:16px">
+        ${isBlocked ? `
+          <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:14px;color:#991B1B;font-size:13px">
+            <b>BLOCKED: ${escapeHtml(plan.block_type || 'BUSINESS_RULE')}</b><br>
+            ${escapeHtml(plan.block_reason || 'No eligible candidates or schedules open.')}
+          </div>
+        ` : `
+          <!-- KPI Summary -->
+          <div class="kpis">
+            ${kpiCard('📦', assignments.length, 'Proposed Assignments', `${fmt(plan.total_orders_input || 0)} Total Inventory`, BLUE)}
+            ${kpiCard('👥', candidates.filter(c => c.is_eligible).length, 'Eligible CS Agents', `${candidates.filter(c => !c.is_eligible).length} Excluded`, GREEN)}
+            ${kpiCard('⏳', fmt(plan.unassigned_count || 0), 'Remaining Unassigned', 'Respects Hard Capacities & Time Windows', PURPLE)}
+            ${kpiCard('🛡️', plan.is_rescue_active ? 'ACTIVE' : 'NONE', 'PENDING Rescue', plan.is_rescue_active ? 'NEW orders support PENDING' : 'Normal Operations', plan.is_rescue_active ? AMBER : GREEN)}
+          </div>
+
+          <!-- Proposed Assignments Table -->
+          <div>
+            <h4 style="font-size:13px;color:var(--slate);margin-bottom:8px;text-transform:uppercase">Proposed Distributions (${assignments.length})</h4>
+            <div class="tbl-scroll" style="max-height:300px;overflow-y:auto">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Order Code</th>
+                    <th>Account</th>
+                    <th>Work Type</th>
+                    <th>Assigned CS Agent</th>
+                    <th>Distribution Mode</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${assignments.map(a => `
+                    <tr>
+                      <td><b style="font-family:monospace;color:var(--blue)">${escapeHtml(a.order_code)}</b></td>
+                      <td><b>${escapeHtml(a.account)}</b></td>
+                      <td><span class="tag sm" style="background:${a.work_type === 'NEW' ? '#DBEAFE' : '#F3E8FF'};color:${a.work_type === 'NEW' ? '#1D4ED8' : '#7C3AED'};font-weight:700">${escapeHtml(a.work_type)}</span></td>
+                      <td><b>${escapeHtml(a.employee_name)}</b></td>
+                      <td><span class="tag sm" style="background:#F1F5F9;color:#334155">${escapeHtml(a.allocation_mode)}</span></td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `}
+
+        <!-- Candidate Decisions Details -->
+        <div>
+          <h4 style="font-size:13px;color:var(--slate);margin-bottom:8px;text-transform:uppercase">Employee Eligibility Audit (${candidates.length})</h4>
+          <div class="tbl-scroll" style="max-height:200px;overflow-y:auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Status</th>
+                  <th>Current / Max</th>
+                  <th>Remaining Cap</th>
+                  <th>Next Event Due</th>
+                  <th>Exclusion Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${candidates.map(c => `
+                  <tr>
+                    <td><b>${escapeHtml(c.employee_name)}</b></td>
+                    <td><span class="tag sm" style="background:${c.is_eligible ? '#DCFCE7' : '#FEE2E2'};color:${c.is_eligible ? '#15803D' : '#991B1B'};font-weight:700">${c.is_eligible ? 'ELIGIBLE' : 'EXCLUDED'}</span></td>
+                    <td>${c.current_workload} / ${c.configured_max}</td>
+                    <td><b>${c.remaining_capacity}</b></td>
+                    <td><span class="tag sm" style="background:#EFF6FF;color:#1D4ED8">${c.next_event_due || 'PENDING'}</span></td>
+                    <td style="font-size:11px;color:var(--mut)">${(c.exclusion_reasons || []).join(', ') || 'None'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div style="padding:14px 22px;border-top:1px solid var(--line);background:#F8FAFC;display:flex;justify-content:flex-end;gap:10px">
+        <button class="btn" onclick="document.getElementById('enterprisePreviewModal').style.display='none'">Dismiss</button>
+        ${!isBlocked ? `
+          <button class="btn success" onclick="commitEnterprisePreviewPlan()" style="background:#16A34A;color:#fff;font-weight:700">✓ Confirm & Commit Production Allocation</button>
+        ` : ''}
+      </div>
+    </div>
+  `;
+
+  modal.innerHTML = html;
+  modal.style.display = 'flex';
+}
+
+async function commitEnterprisePreviewPlan() {
+  if (!currentEnterprisePreviewPlan) return;
+  if (!confirm('Commit this validated plan to production state?')) return;
+
+  try {
+    showToast('⏳ Committing Allocation...', 'Atomically writing assignments, snapshots, and updating sequence state...');
+    const res = await apiFetch(`/api/allocations/${currentWorkDate}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        plan: currentEnterprisePreviewPlan,
+        previewPlanId: currentEnterprisePreviewPlan.run_id,
+        work_date: currentWorkDate
+      })
+    });
+
+    if (res.success) {
+      document.getElementById('enterprisePreviewModal').style.display = 'none';
+      showToast('✓ Allocation Committed!', `Committed ${res.assigned_count} orders. Fingerprint: ${res.fingerprint ? res.fingerprint.slice(0, 10) : 'N/A'}`);
+      await loadWorkAllocationData();
+    } else {
+      alert('Commit failed: ' + (res.error || 'Unknown error'));
+    }
+  } catch (err) {
+    alert('Commit failed: ' + err.message);
+  }
+}
+
 // -------------------------------------------------------------
 let allEmployeesMaster = [];
 
@@ -7352,74 +8085,325 @@ function pages(){
   const top10ByScore = [...(D.employees||[])].sort((a,b)=>b.performance_score - a.performance_score).slice(0,10);
   const top10ByActions = [...(D.employees||[])].sort((a,b)=>b.actions - a.actions).slice(0,10);
 
-  const overview = dedupBanner + `
-    <div class="kpis">
-      ${kpiCard('▤',fmt(dops),'Total Real Actions',`Across <b>${D.employees.length}</b> agents · Deduplicated`,NAVY)}
-      ${kpiCard('📦',fmt(hr.tot_new),'Total New Orders',`Unique order codes created`,BLUE)}
-      ${kpiCard('✓',fmt(st.Printed),'Printed Orders',`<b>${pctv(st.Printed).toFixed(1)}%</b> of actions`,GREEN)}
-      ${kpiCard('✕',fmt(st.Cancelled),'Cancelled Orders',`<b>${D.team_cancel_rate}%</b> cancel rate`,RED)}
-    </div>
-    <div class="kpis">
-      ${kpiCard('⏳',fmt(st.Pending),'Current Pending Backlog',`<b>${D.team_pending_rate}%</b> queue volume`,PURPLE)}
-      ${kpiCard('⧗',fmt(st.Processing),'Processing Orders',`<b>${pctv(st.Processing).toFixed(1)}%</b> of actions`,AMBER)}
-      ${kpiCard('☎',fmt(tot.alt),'Alt Phones Added','Deduplicated phone updates',BLUE)}
-      ${kpiCard('★',initials(top10ByScore[0]?.name||''),'Top Performer',`<b>${top10ByScore[0]?.name||'-'}</b> (Score: ${top10ByScore[0]?.performance_score||0})`,GREEN)}
-    </div>
+  const isTimeWindow = Boolean(D.time_window && D.time_window.is_active);
+  let overview = '';
 
-    <div class="grid g2">
-      <div class="panel">
-        <div class="hd">
-          <div>
-            <h3>★ Top 10 Performers <span class="tag" style="background:#DCFCE7;color:#15803D">KPI Score</span></h3>
-            <p>Ranked strictly by Performance Score (Avoids double-counting)</p>
-          </div>
-        </div>
-        ${barList(top10ByScore.map(e=>({name: `${e.name} [${e.grade}]`, value: e.performance_score})), 100, GREEN, v=>v.toFixed(1))}
-      </div>
+  if (isTimeWindow) {
+    const tw = D.time_window;
+    const kpi = D.kpis || {};
+    const topEmps = kpi.top_confirmed_employees || [];
+    const events = D.order_events || [];
+    const emps = D.employees || [];
 
-      <div class="panel">
-        <div class="hd">
-          <div>
-            <h3>Status Distribution</h3>
-            <p>Unique actions breakdown — includes Pending</p>
+    const twBanner = `
+      <div class="panel" style="background:linear-gradient(135deg,#EFF6FF,#F0FDF4);border:2px solid var(--blue);margin-bottom:20px;padding:18px 24px;border-radius:14px;box-shadow:var(--shadow)">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px">
+          <div style="display:flex;align-items:center;gap:16px">
+            <div style="font-size:36px">⏱️</div>
+            <div>
+              <div style="font-size:11px;font-weight:800;color:var(--blue);text-transform:uppercase;letter-spacing:0.5px">
+                SHOWING: ${formatDisplayDate(D.date || currentWorkDate)}
+              </div>
+              <h2 style="margin:2px 0 0 0;font-size:22px;font-weight:900;color:var(--navy)">
+                ${tw.from} → ${tw.to}
+              </h2>
+              <p style="margin:3px 0 0 0;font-size:12.5px;color:var(--slate)">
+                True Event Time Window active: <b>${tw.from}:00 &le; event_time &lt; ${tw.to}:00</b>. Non-window activity strictly excluded.
+              </p>
+            </div>
           </div>
-        </div>
-        <div class="donut-wrap">
-          <div class="donut" style="background:${donutBg}">
-            <div class="ctr"><b>${fmt(dops)}</b><span>Actions</span></div>
-          </div>
-          <div class="leg">
-            <div class="li"><span class="dot" style="background:${GREEN}"></span><span class="lt">Printed</span><span class="lv">${fmt(st.Printed)}<span class="lp">${pctv(st.Printed).toFixed(1)}%</span></span></div>
-            <div class="li"><span class="dot" style="background:${PURPLE}"></span><span class="lt">Pending</span><span class="lv">${fmt(st.Pending)}<span class="lp">${pctv(st.Pending).toFixed(1)}%</span></span></div>
-            <div class="li"><span class="dot" style="background:${AMBER}"></span><span class="lt">Processing</span><span class="lv">${fmt(st.Processing)}<span class="lp">${pctv(st.Processing).toFixed(1)}%</span></span></div>
-            <div class="li"><span class="dot" style="background:${RED}"></span><span class="lt">Cancelled</span><span class="lv">${fmt(st.Cancelled)}<span class="lp">${pctv(st.Cancelled).toFixed(1)}%</span></span></div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <button class="btn primary sm" onclick="resetTimeWindowAllDay()" style="font-weight:700;padding:7px 14px">
+              ✕ View Full Day (All Day)
+            </button>
           </div>
         </div>
       </div>
-    </div>
+    `;
 
-    <div class="grid g2">
-      <div class="panel">
-        <div class="hd">
-          <div>
-            <h3>⚡ Most Active Agents</h3>
-            <p>By total real (deduplicated) action events</p>
+    const twKpis1 = `
+      <div class="kpis">
+        ${kpiCard('📦', fmt(kpi.total_orders_worked || 0), 'Total Orders Worked', `Unique orders worked in window`, NAVY)}
+        ${kpiCard('✓', fmt(kpi.confirmed_orders || 0), 'Confirmed Orders', `Unique orders confirmed in window`, GREEN)}
+        ${kpiCard('⏳', fmt(kpi.unconfirmed_orders || 0), 'Unconfirmed Orders', `Pending / Processing in window`, PURPLE)}
+        ${kpiCard('%', `${kpi.confirmation_rate || 0}%`, 'Confirmation Rate', `Confirmed ÷ Total Worked in window`, BLUE)}
+      </div>
+    `;
+
+    const twKpis2 = `
+      <div class="kpis">
+        ${kpiCard('⚡', fmt(kpi.real_actions || 0), 'Real Actions', `Deduplicated actions in window`, NAVY)}
+        ${kpiCard('👥', fmt(kpi.active_employees || 0), 'Active Employees', `CS team active in window`, BLUE)}
+        ${kpiCard('✕', fmt(st.Cancelled || 0), 'Cancelled in Window', `Orders cancelled in interval`, RED)}
+        ${kpiCard('★', topEmps[0] ? initials(topEmps[0].name) : '-', 'Top Confirmed Agent', topEmps[0] ? `<b>${topEmps[0].name}</b> (${topEmps[0].confirmed_orders} conf)` : 'None', AMBER)}
+      </div>
+    `;
+
+    const twCharts = `
+      <div class="grid g2">
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h3>★ Top Confirmed Orders in Window</h3>
+              <p>Ranked strictly by confirmations during ${tw.from} → ${tw.to}</p>
+            </div>
+            <span class="tag" style="background:#DCFCE7;color:#15803D">${topEmps.length} Agents</span>
+          </div>
+          ${topEmps.length > 0 
+            ? barList(topEmps.map(e => ({ name: `${e.name} (${e.confirmation_rate}%)`, value: e.confirmed_orders })), null, GREEN)
+            : '<div style="padding:36px;text-align:center;color:var(--mut)">No confirmations recorded inside this time window.</div>'}
+        </div>
+
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h3>Status Distribution in Window</h3>
+              <p>Breakdown of event types in ${tw.from} → ${tw.to}</p>
+            </div>
+            <span class="tag" style="background:#EFF6FF;color:var(--blue)">${fmt(kpi.real_actions || 0)} Total</span>
+          </div>
+          <div class="donut-wrap">
+            <div class="donut" style="background:${donutBg}">
+              <div class="ctr"><b>${fmt(kpi.real_actions || 0)}</b><span>Actions</span></div>
+            </div>
+            <div class="leg">
+              <div class="li"><span class="dot" style="background:${GREEN}"></span><span class="lt">Printed (Confirmed)</span><span class="lv">${fmt(st.Printed || 0)}</span></div>
+              <div class="li"><span class="dot" style="background:${PURPLE}"></span><span class="lt">Pending Backlog</span><span class="lv">${fmt(st.Pending || 0)}</span></div>
+              <div class="li"><span class="dot" style="background:${AMBER}"></span><span class="lt">Processing</span><span class="lv">${fmt(st.Processing || 0)}</span></div>
+              <div class="li"><span class="dot" style="background:${RED}"></span><span class="lt">Cancelled</span><span class="lv">${fmt(st.Cancelled || 0)}</span></div>
+            </div>
           </div>
         </div>
-        ${barList(top10ByActions.map(e=>({name: e.name, value: e.actions})), null, NAVY)}
       </div>
+    `;
 
-      <div class="panel">
+    // Employee Level Table in Window
+    const twEmpTable = `
+      <div class="panel" style="margin-top:20px">
         <div class="hd">
           <div>
-            <h3>Daily Volume Trend</h3>
-            <p>New vs Printed Orders</p>
+            <h3>👥 Employee Activity in Time Window (${emps.length} Agents)</h3>
+            <p>Workload, confirmations, and canonical activity strictly during ${tw.from} → ${tw.to}</p>
+          </div>
+          <div class="search" style="max-width:260px">
+            <span class="si">🔍</span>
+            <input type="text" id="twEmpSearchInput" placeholder="Search employee..." oninput="filterTimeWindowEmpTable(this.value)">
           </div>
         </div>
-        ${lineChart(D.daily||[],['new','printed'],[BLUE,GREEN],['New','Printed'],false)}
+        <div class="tbl-scroll" style="max-height:450px;overflow-y:auto">
+          <table id="twEmpTable">
+            <thead>
+              <tr>
+                <th style="width:50px">#</th>
+                <th>Employee</th>
+                <th style="text-align:right">Orders Worked</th>
+                <th style="text-align:right">Confirmed</th>
+                <th style="text-align:right">Conf. Rate</th>
+                <th style="text-align:right">Real Actions</th>
+                <th>Last Activity</th>
+                <th>Last Productive</th>
+                <th>Last Action</th>
+                <th>Last Order</th>
+                <th>Last Account</th>
+                <th>Phone Number</th>
+                <th>Live Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${emps.map((e, idx) => `
+                <tr data-emp="${(e.name || '').toLowerCase()}">
+                  <td><span class="rk ${idx < 3 ? 'g' + (idx + 1) : ''}">${idx + 1}</span></td>
+                  <td class="nm-cell"><b>${escapeHtml(e.name)}</b></td>
+                  <td style="text-align:right;font-weight:700">${fmt(e.orders_worked || e.actions || 0)}</td>
+                  <td style="text-align:right;color:#15803D;font-weight:800">${fmt(e.confirmed_orders || e.printed || 0)}</td>
+                  <td style="text-align:right;font-weight:700;color:var(--blue)">${e.confirmation_rate !== undefined ? e.confirmation_rate : (e.own_printed_rate || 0)}%</td>
+                  <td style="text-align:right;font-weight:700">${fmt(e.actions || 0)}</td>
+                  <td style="font-size:12px">${e.last_activity_time ? `<b style="color:var(--navy)">${formatTimeOnly(e.last_activity_time)}</b>` : '<span style="color:var(--mut)">—</span>'}</td>
+                  <td style="font-size:12px">${e.last_productive_time ? `<b style="color:#15803D">${formatTimeOnly(e.last_productive_time)}</b>` : '<span style="color:var(--mut)">—</span>'}</td>
+                  <td>${e.last_action ? `<span class="tag sm" style="background:#EFF6FF;color:#1D4ED8">${escapeHtml(e.last_action)}</span>` : '<span style="color:var(--mut)">—</span>'}</td>
+                  <td>${e.last_order_code ? `<a style="color:var(--blue);cursor:pointer;font-weight:700;text-decoration:underline" onclick="show('order-tracking');loadOrderTrackingView('${escapeHtml(e.last_order_code)}')">#${escapeHtml(e.last_order_code)}</a>` : '<span style="color:var(--mut)">—</span>'}</td>
+                  <td>${e.last_account ? `<span style="font-weight:600">${escapeHtml(e.last_account)}</span>` : '<span style="color:var(--mut)">—</span>'}</td>
+                  <td>${e.phone ? `<span style="font-family:monospace;font-weight:600">${escapeHtml(e.phone)}</span>` : '<span style="color:var(--mut)">—</span>'}</td>
+                  <td>
+                    <span class="tag" style="background:${e.live_status === 'ACTIVE' ? '#DCFCE7;color:#15803D' : (e.live_status === 'HISTORICAL' ? '#F1F5F9;color:#475569' : '#FEF3C7;color:#B45309')};font-weight:700">
+                      ${e.live_status || 'WORKING'}
+                    </span>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
-  `;
+    `;
+
+    // Order Level Table in Window
+    const twOrderTable = `
+      <div class="panel" style="margin-top:20px">
+        <div class="hd">
+          <div>
+            <h3>📦 Order-Level Event Activity in Window (${events.length} Events)</h3>
+            <p>Every row represents a real event / action during ${tw.from} → ${tw.to}</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="search" style="max-width:240px">
+              <span class="si">🔍</span>
+              <input type="text" id="twOrderSearchInput" placeholder="Search order/phone/customer..." oninput="filterTimeWindowOrderTable()">
+            </div>
+            <select class="filter" id="twOrderStatusFilter" onchange="filterTimeWindowOrderTable()" style="padding:6px 10px;border-radius:8px;border:1px solid var(--line);font-size:12px;background:#fff">
+              <option value="ALL">All Statuses</option>
+              <option value="CONFIRMED">Confirmed Only</option>
+              <option value="UNCONFIRMED">Unconfirmed Only</option>
+              <option value="PRINTED">Printed / Confirmed</option>
+              <option value="PENDING">Pending</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+          </div>
+        </div>
+        <div class="tbl-scroll" style="max-height:500px;overflow-y:auto">
+          <table id="twOrderTable">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Employee</th>
+                <th>Order Code</th>
+                <th>Customer / Account</th>
+                <th>Phone Number</th>
+                <th>Action</th>
+                <th>Confirmation Status</th>
+                <th>Status</th>
+                <th>Tracking ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${events.length > 0 ? events.map(ev => `
+                <tr data-status="${(ev.status || '').toLowerCase()}" data-conf="${ev.is_confirmed ? 'confirmed' : 'unconfirmed'}" data-txt="${(ev.order_code + ' ' + (ev.employee_name || '') + ' ' + (ev.customer || '') + ' ' + (ev.account || '') + ' ' + (ev.phone || '')).toLowerCase()}">
+                  <td style="font-size:12px;font-family:monospace;font-weight:700;color:var(--navy)">${formatTimeOnly(ev.event_timestamp)}</td>
+                  <td><b>${escapeHtml(ev.employee_name || 'System')}</b></td>
+                  <td>
+                    <a style="font-family:monospace;font-weight:800;color:var(--blue);cursor:pointer;text-decoration:underline" onclick="show('order-tracking');loadOrderTrackingView('${escapeHtml(ev.order_code)}')">
+                      ${escapeHtml(ev.order_code)}
+                    </a>
+                  </td>
+                  <td><b>${escapeHtml(ev.customer || ev.account || '—')}</b></td>
+                  <td>
+                    ${ev.phone 
+                      ? `<a href="tel:${escapeHtml(ev.phone)}" style="font-family:monospace;color:var(--navy);font-weight:700;text-decoration:none">📞 ${escapeHtml(ev.phone)}</a>` 
+                      : '<span style="color:var(--mut)">—</span>'}
+                  </td>
+                  <td><span class="tag sm" style="background:#EFF6FF;color:#1D4ED8;font-weight:700">${escapeHtml(ev.action || '—')}</span></td>
+                  <td>
+                    <span class="tag" style="background:${ev.is_confirmed ? '#DCFCE7;color:#15803D' : '#FEF3C7;color:#B45309'};font-weight:800">
+                      ${ev.confirmation_status || (ev.is_confirmed ? 'CONFIRMED' : 'UNCONFIRMED')}
+                    </span>
+                  </td>
+                  <td><span class="tag" style="font-size:11.5px">${escapeHtml(ev.status || '—')}</span></td>
+                  <td style="font-size:11.5px;font-family:monospace;color:var(--slate)">${escapeHtml(ev.tracking_id || ev.order_code || '—')}</td>
+                </tr>
+              `).join('') : `
+                <tr>
+                  <td colspan="9" style="text-align:center;padding:36px;color:var(--mut)">
+                    No order activity events detected within ${tw.from} → ${tw.to}.
+                  </td>
+                </tr>
+              `}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    overview = twBanner + twKpis1 + twKpis2 + twCharts + twEmpTable + twOrderTable;
+  } else {
+    // All-Day view with visible Showing All-Day banner
+    const allDayBanner = `
+      <div class="panel" style="background:#F8FAFC;border:1px solid #CBD5E1;margin-bottom:20px;padding:14px 20px;border-radius:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="font-size:24px">📅</div>
+            <div>
+              <div style="font-size:11px;font-weight:800;color:var(--slate);text-transform:uppercase;letter-spacing:0.5px">SHOWING: ${formatDisplayDate(D.date || currentWorkDate)}</div>
+              <h3 style="margin:0;font-size:17px;font-weight:800;color:var(--navy)">
+                All Day Business Date View
+              </h3>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;color:var(--mut)">Enter From / To times above to filter by exact event time window.</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    overview = allDayBanner + dedupBanner + `
+      <div class="kpis">
+        ${kpiCard('▤',fmt(dops),'Total Real Actions',`Across <b>${D.employees.length}</b> agents · Deduplicated`,NAVY)}
+        ${kpiCard('📦',fmt(hr.tot_new),'Total New Orders',`Unique order codes created`,BLUE)}
+        ${kpiCard('✓',fmt(st.Printed),'Printed Orders',`<b>${pctv(st.Printed).toFixed(1)}%</b> of actions`,GREEN)}
+        ${kpiCard('✕',fmt(st.Cancelled),'Cancelled Orders',`<b>${D.team_cancel_rate}%</b> cancel rate`,RED)}
+      </div>
+      <div class="kpis">
+        ${kpiCard('⏳',fmt(st.Pending),'Current Pending Backlog',`<b>${D.team_pending_rate}%</b> queue volume`,PURPLE)}
+        ${kpiCard('⧗',fmt(st.Processing),'Processing Orders',`<b>${pctv(st.Processing).toFixed(1)}%</b> of actions`,AMBER)}
+        ${kpiCard('☎',fmt(tot.alt),'Alt Phones Added','Deduplicated phone updates',BLUE)}
+        ${kpiCard('★',initials(top10ByScore[0]?.name||''),'Top Performer',`<b>${top10ByScore[0]?.name||'-'}</b> (Score: ${top10ByScore[0]?.performance_score||0})`,GREEN)}
+      </div>
+
+      <div class="grid g2">
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h3>★ Top 10 Performers <span class="tag" style="background:#DCFCE7;color:#15803D">KPI Score</span></h3>
+              <p>Ranked strictly by Performance Score (Avoids double-counting)</p>
+            </div>
+          </div>
+          ${barList(top10ByScore.map(e=>({name: `${e.name} [${e.grade}]`, value: e.performance_score})), 100, GREEN, v=>v.toFixed(1))}
+        </div>
+
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h3>Status Distribution</h3>
+              <p>Unique actions breakdown — includes Pending</p>
+            </div>
+          </div>
+          <div class="donut-wrap">
+            <div class="donut" style="background:${donutBg}">
+              <div class="ctr"><b>${fmt(dops)}</b><span>Actions</span></div>
+            </div>
+            <div class="leg">
+              <div class="li"><span class="dot" style="background:${GREEN}"></span><span class="lt">Printed</span><span class="lv">${fmt(st.Printed)}<span class="lp">${pctv(st.Printed).toFixed(1)}%</span></span></div>
+              <div class="li"><span class="dot" style="background:${PURPLE}"></span><span class="lt">Pending</span><span class="lv">${fmt(st.Pending)}<span class="lp">${pctv(st.Pending).toFixed(1)}%</span></span></div>
+              <div class="li"><span class="dot" style="background:${AMBER}"></span><span class="lt">Processing</span><span class="lv">${fmt(st.Processing)}<span class="lp">${pctv(st.Processing).toFixed(1)}%</span></span></div>
+              <div class="li"><span class="dot" style="background:${RED}"></span><span class="lt">Cancelled</span><span class="lv">${fmt(st.Cancelled)}<span class="lp">${pctv(st.Cancelled).toFixed(1)}%</span></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid g2">
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h3>⚡ Most Active Agents</h3>
+              <p>By total real (deduplicated) action events</p>
+            </div>
+          </div>
+          ${barList(top10ByActions.map(e=>({name: e.name, value: e.actions})), null, NAVY)}
+        </div>
+
+        <div class="panel">
+          <div class="hd">
+            <div>
+              <h3>Daily Volume Trend</h3>
+              <p>New vs Printed Orders</p>
+            </div>
+          </div>
+          ${lineChart(D.daily||[],['new','printed'],[BLUE,GREEN],['New','Printed'],false)}
+        </div>
+      </div>
+    `;
+  }
 
   // Work Allocation view
   const workAllocation = `<div id="workAllocContainer"></div>`;
@@ -7836,6 +8820,44 @@ window.filterTable=function(){
   document.getElementById('tCount').textContent=n;
 };
 
+window.filterTimeWindowEmpTable = function(query) {
+  const q = String(query || document.getElementById('twEmpSearchInput')?.value || '').trim().toLowerCase();
+  const rows = document.querySelectorAll('#twEmpTable tbody tr');
+  rows.forEach(r => {
+    const name = r.getAttribute('data-emp') || '';
+    const show = !q || name.includes(q);
+    r.style.display = show ? '' : 'none';
+  });
+};
+
+window.filterTimeWindowOrderTable = function() {
+  const q = String(document.getElementById('twOrderSearchInput')?.value || '').trim().toLowerCase();
+  const statusFilter = String(document.getElementById('twOrderStatusFilter')?.value || 'ALL').toUpperCase();
+  const rows = document.querySelectorAll('#twOrderTable tbody tr');
+
+  rows.forEach(r => {
+    const text = r.getAttribute('data-txt') || '';
+    const st = (r.getAttribute('data-status') || '').toUpperCase();
+    const conf = (r.getAttribute('data-conf') || '').toUpperCase();
+
+    let matchesStatus = true;
+    if (statusFilter === 'CONFIRMED') {
+      matchesStatus = conf === 'CONFIRMED';
+    } else if (statusFilter === 'UNCONFIRMED') {
+      matchesStatus = conf === 'UNCONFIRMED';
+    } else if (statusFilter === 'PRINTED') {
+      matchesStatus = st.includes('PRINT') || st.includes('CONFIRM');
+    } else if (statusFilter === 'PENDING') {
+      matchesStatus = st.includes('PEND');
+    } else if (statusFilter === 'CANCELLED') {
+      matchesStatus = st.includes('CANCEL');
+    }
+
+    const matchesQuery = !q || text.includes(q);
+    r.style.display = (matchesStatus && matchesQuery) ? '' : 'none';
+  });
+};
+
 let sortState={};
 window.sortTable=function(col){
   const tb=document.getElementById('tBody');const rows=[...tb.querySelectorAll('tr')];
@@ -7863,6 +8885,7 @@ const MAIN_PAGES_CONFIG = {
     defaultTab: 'allocation',
     tabs: [
       { id: 'allocation', label: 'Work Allocation', icon: '⚡' },
+      { id: 'config-center', label: 'Configuration Center', icon: '⚙️' },
       { id: 'dispatcher', label: 'Auto Dispatcher', icon: '🚀' },
       { id: 'working-team', label: "Today's Working Team", icon: '👥' },
       { id: 'orders-pool', label: 'Current Orders Pool', icon: '📦' },
@@ -7974,6 +8997,7 @@ function renderTabContent(mainPage, tab) {
     if (tab === 'alerts') return RENDERED.insights || '';
   } else if (mainPage === 'operations') {
     if (tab === 'allocation') return RENDERED['work-allocation'] || '';
+    if (tab === 'config-center') return '<div id="allocationConfigCenterContainer"><div style="text-align:center;padding:40px;color:var(--mut)">Loading Allocation Configuration Center...</div></div>';
     if (tab === 'dispatcher') return RENDERED['auto-dispatcher'] || '';
     if (tab === 'working-team') return RENDERED['working-team'] || '';
     if (tab === 'orders-pool') return RENDERED['current-orders'] || '';
@@ -8008,6 +9032,7 @@ function renderTabContent(mainPage, tab) {
 function triggerTabLoaders(mainPage, tab) {
   if (mainPage === 'operations') {
     if (tab === 'allocation') loadWorkAllocationData();
+    else if (tab === 'config-center') loadAllocationConfigCenterView();
     else if (tab === 'dispatcher') loadAutoDispatcherView();
     else if (tab === 'working-team') loadWorkingTeamView();
     else if (tab === 'orders-pool') loadCurrentOrdersView();

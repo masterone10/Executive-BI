@@ -8,10 +8,15 @@ test('EXECUTIVE-BI MINIMUM FRAGMENTATION & TRACKING ACCURACY SUITE', async (t) =
   const TEST_DATE = '2026-11-20';
 
   // Setup Clean State
+  db.prepare('DELETE FROM daily_working_team WHERE employee_id IN (801, 802, 803)').run();
+  db.prepare('DELETE FROM employee_activity_log WHERE employee_id IN (801, 802, 803)').run();
+  db.prepare('DELETE FROM employee_capacities WHERE employee_id IN (801, 802, 803)').run();
+  db.prepare('DELETE FROM employee_daily_allocation_states WHERE employee_id IN (801, 802, 803)').run();
+  db.prepare('DELETE FROM performance_snapshots WHERE employee_id IN (801, 802, 803)').run();
   db.prepare('DELETE FROM employees WHERE id IN (801, 802, 803)').run();
-  db.prepare("INSERT INTO employees (id, name, department, team_membership, status) VALUES (801, 'Sara CS Pro', 'CS', 'Both', 'active')").run();
-  db.prepare("INSERT INTO employees (id, name, department, team_membership, status) VALUES (802, 'Ahmed CS Core', 'CS', 'Both', 'active')").run();
-  db.prepare("INSERT INTO employees (id, name, department, team_membership, status) VALUES (803, 'Mohamed CS Pending', 'CS', 'Pending', 'active')").run();
+  db.prepare("INSERT INTO employees (id, name, department, team_membership, status, active) VALUES (801, 'Sara CS Pro', 'CS', 'Both', 'ACTIVE', 1)").run();
+  db.prepare("INSERT INTO employees (id, name, department, team_membership, status, active) VALUES (802, 'Ahmed CS Core', 'CS', 'Both', 'ACTIVE', 1)").run();
+  db.prepare("INSERT INTO employees (id, name, department, team_membership, status, active) VALUES (803, 'Mohamed CS Pending', 'CS', 'Pending', 'ACTIVE', 1)").run();
 
   db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(TEST_DATE);
   db.prepare("INSERT INTO daily_working_team (work_date, employee_id, is_working, source) VALUES (?, 801, 1, 'MANUAL')").run(TEST_DATE);
@@ -19,7 +24,7 @@ test('EXECUTIVE-BI MINIMUM FRAGMENTATION & TRACKING ACCURACY SUITE', async (t) =
   db.prepare("INSERT INTO daily_working_team (work_date, employee_id, is_working, source) VALUES (?, 803, 1, 'MANUAL')").run(TEST_DATE);
 
   // Setup performance snapshot: Sara has verified high throughput (A grade, 45 actions avg)
-  db.prepare('DELETE FROM performance_snapshots WHERE employee_id IN (801, 802, 803)').run();
+  db.prepare('DELETE FROM performance_snapshots WHERE date = ? OR employee_id IN (801, 802, 803)').run(TEST_DATE);
   db.prepare(`
     INSERT INTO performance_snapshots (date, employee_id, employee_name, real_actions, printed_orders, new_orders, efficiency_score, performance_score, grade)
     VALUES (?, 801, 'Sara CS Pro', 48, 24, 24, 90, 88, 'A')

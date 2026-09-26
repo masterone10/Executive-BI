@@ -214,8 +214,14 @@ export async function vendoorFetch(endpointPath, options = {}) {
         );
       }
 
-      if (attempt <= maxRetries && method === 'GET') {
-        console.warn(`[Vendoor] Network error: ${err.message}, retrying once in 1s...`);
+      const isIdempotentEndpoint = endpointPath.includes('/export/check/order') || 
+                                    endpointPath.includes('/export/excute') || 
+                                    endpointPath.includes('/login') ||
+                                    options.retryable === true;
+      const canRetryMethod = method === 'GET' || isIdempotentEndpoint;
+
+      if (attempt <= maxRetries && canRetryMethod) {
+        console.warn(`[Vendoor] Network error on ${method} ${endpointPath}: ${err.message}, retrying in 1s (attempt ${attempt}/${maxRetries})...`);
         await new Promise(r => setTimeout(r, 1000));
         continue;
       }

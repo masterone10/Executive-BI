@@ -9,7 +9,11 @@ import {
   isHistoricalBusinessDate,
   parseCairoTimestamp,
   formatCairoTime,
-  formatIdleDuration
+  formatIdleDuration,
+  formatTimeAgo,
+  isEventInTimeWindow,
+  normalizeTimeToSeconds,
+  extractCairoDateTimeComponents
 } from './time_utils.js';
 
 /**
@@ -628,22 +632,93 @@ export function getEmployeeTracking(workDate, employeeIdOrName) {
 
   const assignedSet = new Set(assignedAccounts.map(a => a.toLowerCase()));
 
-  // 3. Fetch all opening work orders for quick account lookup
-  const openingOrders = db.prepare('SELECT order_code, account, status FROM current_work_orders WHERE work_date = ?').all(workDate);
+  // 3. Fetch opening work orders and canonical order universe for robust account lookup
   const orderAccountMap = new Map();
-  for (const o of openingOrders) {
-    orderAccountMap.set(o.order_code, o.account);
+  try {
+    const openingOrders = db.prepare('SELECT order_code, account, status FROM current_work_orders WHERE work_date = ?').all(workDate);
+    for (const o of openingOrders) {
+      if (o.order_code && o.account) orderAccountMap.set(o.order_code, o.account);
+    }
+  } catch (_) {}
+  try {
+    const allCwos = db.prepare('SELECT order_code, account FROM current_work_orders').all();
+    for (const o of allCwos) {
+      if (o.order_code && o.account && !orderAccountMap.has(o.order_code)) {
+        orderAccountMap.set(o.order_code, o.account);
+      }
+    }
+  } catch (_) {}
+  try {
+    const allVos = db.prepare('SELECT order_code, account FROM vendoor_orders').all();
+    for (const v of allVos) {
+      if (v.order_code && v.account && !orderAccountMap.has(v.order_code)) {
+        orderAccountMap.set(v.order_code, v.account);
+      }
+    }
+  } catch (_) {}
+
+  // 4. Fetch all Daily Log actions for this employee with EXACT matching across canonical sources
+  const rawActions = [];
+  const seenEventKeys = new Set();
+
+  function addLogAction(orderCode, action, status, rawTs, source) {
+    if (!rawTs) return;
+    const normTs = String(rawTs).trim().replace('T', ' ').slice(0, 19);
+    const normOrder = String(orderCode || '').trim();
+    const dedupKey = `${empId || empName}|${normOrder}|${normTs}`;
+    if (seenEventKeys.has(dedupKey)) return;
+    seenEventKeys.add(dedupKey);
+
+    rawActions.push({
+      order_code: normOrder,
+      action: action,
+      status: status || extractCanonicalStatus(action),
+      event_datetime: normTs,
+      source: source
+    });
   }
 
-  // 4. Fetch all Daily Log actions for this employee with EXACT matching
-  const rawActions = db.prepare(`
+  // Source A: raw_log_records
+  const rawRows = db.prepare(`
     SELECT id, order_code, action, status, event_datetime, is_cs
     FROM raw_log_records
     WHERE work_date = ? AND LOWER(TRIM(employee_name)) = LOWER(TRIM(?))
     ORDER BY event_datetime ASC, id ASC
   `).all(workDate, empName);
+  for (const r of rawRows) {
+    addLogAction(r.order_code, r.action, r.status, r.event_datetime, 'raw_log_records');
+  }
 
-  // Derive Last Activity and Last Productive Activity from all raw actions
+  // Source B: vendoor_logs
+  try {
+    const vRows = db.prepare(`
+      SELECT id, order_code, action, action_classification, timestamp_str
+      FROM vendoor_logs
+      WHERE work_date = ? AND (matched_employee_id = ? OR LOWER(TRIM(employee_name)) = LOWER(TRIM(?)))
+      ORDER BY timestamp_str ASC, id ASC
+    `).all(workDate, empId, empName);
+    for (const vr of vRows) {
+      addLogAction(vr.order_code, vr.action, vr.action_classification, vr.timestamp_str, 'vendoor_logs');
+    }
+  } catch (_) {}
+
+  // Source C: employee_activity_log
+  try {
+    const eRows = db.prepare(`
+      SELECT id, order_code, action, timestamp
+      FROM employee_activity_log
+      WHERE work_date = ? AND (employee_id = ? OR LOWER(TRIM(employee_name)) = LOWER(TRIM(?)))
+      ORDER BY timestamp ASC, id ASC
+    `).all(workDate, empId, empName);
+    for (const er of eRows) {
+      addLogAction(er.order_code, er.action, null, er.timestamp, 'employee_activity_log');
+    }
+  } catch (_) {}
+
+  // Chronological sort
+  rawActions.sort((a, b) => new Date(a.event_datetime || 0).getTime() - new Date(b.event_datetime || 0).getTime());
+
+  // Derive Last Activity and Last Productive Activity from all merged canonical actions
   let lastActivityTime = null;
   let lastProductiveActivityTime = null;
   let lastAction = null;
@@ -658,13 +733,14 @@ export function getEmployeeTracking(workDate, employeeIdOrName) {
       upperAct.includes('PRINT') || upperAct.includes('PROCESS') || upperAct.includes('CANCEL') ||
       upperAct.includes('PEND') || upperAct.includes('STAGE_CHANGE') || upperAct.includes('CLAIM') ||
       actStr.includes('عدل') || actStr.includes('أضاف') || actStr.includes('تغيير') ||
-      actStr.includes('طباعة') || actStr.includes('تحويل') || actStr.includes('حذف');
+      actStr.includes('طباعة') || actStr.includes('تحويل') || actStr.includes('حذف') ||
+      act.status === 'Printed' || act.status === 'Pending' || act.status === 'Cancelled' || act.status === 'Processing';
 
     if (act.event_datetime) {
       lastActivityTime = act.event_datetime;
       lastAction = act.action;
       lastOrderCode = act.order_code;
-      lastAccount = orderAccountMap.get(act.order_code) || 'Unmatched Account';
+      lastAccount = orderAccountMap.get(act.order_code) || 'ORDER UNMATCHED / ACCOUNT UNRESOLVED';
 
       if (isProd) {
         lastProductiveActivityTime = act.event_datetime;
@@ -811,6 +887,15 @@ export function getEmployeeTracking(workDate, employeeIdOrName) {
     statusMessage = 'End-of-Day Log Not Uploaded';
   }
 
+  // Check working today status from daily_working_team
+  let isWorkingToday = true;
+  try {
+    const workingRow = db.prepare('SELECT is_working FROM daily_working_team WHERE work_date = ? AND (employee_id = ? OR employee_id IN (SELECT id FROM employees WHERE name = ? COLLATE NOCASE))').get(workDate, empId, empName);
+    if (workingRow) {
+      isWorkingToday = (workingRow.is_working === 1 || workingRow.is_working === '1' || workingRow.is_working === true);
+    }
+  } catch (_) {}
+
   // Live status and idle calculation
   const isHistorical = isHistoricalBusinessDate(workDate);
   let liveStatus = 'NO_ACTIVITY';
@@ -866,15 +951,26 @@ export function getEmployeeTracking(workDate, employeeIdOrName) {
     processing_orders: dailyLogUploaded ? processingCount : null,
     alt_phones: dailyLogUploaded ? altCount : null,
     added_orders: dailyLogUploaded ? addedCount : null,
+    department: 'CS',
+    working_today: isWorkingToday,
     last_activity_time: lastActivityTime,
+    last_activity_time_cairo: formatCairoTime(lastActivityTime, true),
+    last_activity_time_ago: formatTimeAgo(lastActivityTime, new Date(), isHistorical),
     last_productive_activity_time: lastProductiveActivityTime,
+    last_productive_activity_time_cairo: formatCairoTime(lastProductiveActivityTime, true),
+    last_productive_activity_time_ago: formatTimeAgo(lastProductiveActivityTime, new Date(), isHistorical),
     last_activity_action: lastAction,
+    last_action: lastAction,
     last_productive_action: lastProductiveAction,
     last_activity_order_code: lastOrderCode,
+    last_order_code: lastOrderCode,
     last_activity_account: lastAccount,
+    last_account: lastAccount,
     idle_seconds: idleSeconds,
     idle_duration_formatted: idleDurationFormatted,
     live_status: liveStatus,
+    total_actions_today: rawActions.length,
+    real_actions_today: realActions,
     outside_allocation: {
       has_unassigned_activity: extraUnassignedAccounts.length > 0,
       extra_accounts_count: extraUnassignedAccounts.length,
@@ -969,6 +1065,7 @@ export function getTeamTrackingSummary(workDate) {
 
   for (const [name, info] of empMap.entries()) {
     const tracking = getEmployeeTracking(workDate, info.id || name);
+    if (!tracking) continue;
     employeesList.push({
       employee_id: tracking.employee_id,
       employee_name: tracking.employee_name,
@@ -978,11 +1075,20 @@ export function getTeamTrackingSummary(workDate) {
       idle_seconds: tracking.idle_seconds,
       idle_duration_formatted: tracking.idle_duration_formatted,
       last_activity_time: tracking.last_activity_time,
+      last_activity_time_cairo: tracking.last_activity_time_cairo,
+      last_activity_time_ago: tracking.last_activity_time_ago,
       last_productive_activity_time: tracking.last_productive_activity_time,
+      last_productive_activity_time_cairo: tracking.last_productive_activity_time_cairo,
+      last_productive_activity_time_ago: tracking.last_productive_activity_time_ago,
       last_activity_action: tracking.last_activity_action,
+      last_action: tracking.last_action || tracking.last_activity_action,
       last_productive_action: tracking.last_productive_action,
       last_activity_order_code: tracking.last_activity_order_code,
+      last_order_code: tracking.last_order_code || tracking.last_activity_order_code,
       last_activity_account: tracking.last_activity_account,
+      last_account: tracking.last_account || tracking.last_activity_account,
+      real_actions_today: tracking.real_actions_today || tracking.real_actions,
+      total_actions_today: tracking.total_actions_today,
       assigned_accounts_count: tracking.assigned_accounts.length,
       assigned_accounts: tracking.assigned_accounts,
       worked_accounts_count: tracking.actually_worked_accounts.length,
@@ -1955,15 +2061,558 @@ export function getAccountDetailedData(workDate, accountName) {
 }
 
 /**
+ * Canonical customer and order data lookup
+ */
+export function getCanonicalOrderMetadata(orderCode) {
+  if (!orderCode) return { phone: null, customer: null, account: null, tracking_id: null };
+  const cleanCode = String(orderCode).trim();
+  
+  let phone = null;
+  let customer = null;
+  let account = null;
+  let tracking_id = null;
+
+  try {
+    const vo = db.prepare('SELECT account, raw_payload_json FROM vendoor_orders WHERE order_code = ?').get(cleanCode);
+    if (vo) {
+      account = vo.account || null;
+      if (vo.raw_payload_json) {
+        try {
+          const parsed = JSON.parse(vo.raw_payload_json);
+          phone = parsed.phone || parsed.raw_source?.phone || parsed.alt_phone || parsed.raw_source?.alt_phone || parsed['رقم الهاتف'] || parsed['الهاتف'] || null;
+          customer = parsed.client_name || parsed.customer_name || parsed.full_name || parsed.raw_source?.client_name || null;
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+
+  try {
+    const cwo = db.prepare('SELECT account, tracking_id FROM current_work_orders WHERE order_code = ?').get(cleanCode);
+    if (cwo) {
+      if (!account) account = cwo.account || null;
+      if (cwo.tracking_id) tracking_id = cwo.tracking_id;
+    }
+  } catch (_) {}
+
+  return { phone, customer, account, tracking_id };
+}
+
+/**
+ * ============================================================
+ * TRUE EVENT TIME WINDOW FILTER ENGINE
+ * ============================================================
+ * Strictly filters by actual event timestamps in Africa/Cairo timezone.
+ * Uses half-open interval: from_time <= event_time < to_time
+ * Recomputes all KPIs, employee performance, and order-level audit for the window.
+ */
+export function getHourlyTimeWindowEventData(workDate, fromTime, toTime, options = {}) {
+  const targetDate = workDate || getCairoBusinessDate();
+  const isHistorical = isHistoricalBusinessDate(targetDate);
+  const isAllDay = !fromTime && !toTime;
+
+  // 1. CS Employees Master map
+  const allEmployees = db.prepare(`
+    SELECT id, name, department, team_membership, active, status
+    FROM employees
+    ORDER BY name ASC
+  `).all();
+  const csEmployees = allEmployees.filter(e => isCsEmployee(e));
+  const nameToEmp = new Map();
+  const idToEmp = new Map();
+  for (const emp of allEmployees) {
+    idToEmp.set(emp.id, emp);
+    nameToEmp.set((emp.name || '').toLowerCase().trim(), emp);
+  }
+
+  // 2. Build metadata cache for all orders
+  const orderMetaCache = new Map();
+  function getCachedOrderMeta(orderCode) {
+    if (!orderCode) return { phone: null, customer: null, account: null, tracking_id: null };
+    const code = String(orderCode).trim();
+    if (orderMetaCache.has(code)) return orderMetaCache.get(code);
+    const meta = getCanonicalOrderMetadata(code);
+    orderMetaCache.set(code, meta);
+    return meta;
+  }
+
+  // Pre-fill cache from current_work_orders and vendoor_orders for targetDate
+  try {
+    const cwos = db.prepare('SELECT order_code, account, tracking_id FROM current_work_orders WHERE work_date = ?').all(targetDate);
+    for (const c of cwos) {
+      if (!orderMetaCache.has(c.order_code)) {
+        orderMetaCache.set(c.order_code, { phone: null, customer: null, account: c.account, tracking_id: c.tracking_id });
+      }
+    }
+    const vos = db.prepare('SELECT order_code, account, raw_payload_json FROM vendoor_orders WHERE source_date = ? OR business_date = ?').all(targetDate, targetDate);
+    for (const vo of vos) {
+      let phone = null, customer = null;
+      if (vo.raw_payload_json) {
+        try {
+          const parsed = JSON.parse(vo.raw_payload_json);
+          phone = parsed.phone || parsed.raw_source?.phone || parsed.alt_phone || parsed.raw_source?.alt_phone || parsed['رقم الهاتف'] || null;
+          customer = parsed.client_name || parsed.customer_name || parsed.full_name || parsed.raw_source?.client_name || null;
+        } catch (_) {}
+      }
+      const existing = orderMetaCache.get(vo.order_code) || {};
+      orderMetaCache.set(vo.order_code, {
+        phone: phone || existing.phone || null,
+        customer: customer || existing.customer || null,
+        account: vo.account || existing.account || null,
+        tracking_id: existing.tracking_id || null
+      });
+    }
+  } catch (_) {}
+
+  // 3. Collect all canonical event records for targetDate
+  const rawEvents = [];
+
+  // A. raw_log_records
+  try {
+    const rawLogs = db.prepare(`
+      SELECT id, order_code, employee_name, action, status, event_datetime, is_cs
+      FROM raw_log_records
+      WHERE work_date = ?
+      ORDER BY event_datetime ASC, id ASC
+    `).all(targetDate);
+    for (const r of rawLogs) {
+      rawEvents.push({
+        source: 'raw_log_records',
+        order_code: (r.order_code || '').trim(),
+        employee_name: (r.employee_name || '').trim(),
+        action: r.action,
+        status: r.status,
+        timestamp: r.event_datetime,
+        is_cs: r.is_cs !== 0
+      });
+    }
+  } catch (_) {}
+
+  // B. vendoor_logs
+  try {
+    const vLogs = db.prepare(`
+      SELECT id, order_code, employee_name, matched_employee_id, action, action_classification, timestamp_str
+      FROM vendoor_logs
+      WHERE work_date = ?
+      ORDER BY timestamp_str ASC, id ASC
+    `).all(targetDate);
+    for (const vl of vLogs) {
+      const emp = vl.matched_employee_id ? idToEmp.get(vl.matched_employee_id) : nameToEmp.get((vl.employee_name || '').toLowerCase().trim());
+      rawEvents.push({
+        source: 'vendoor_logs',
+        order_code: (vl.order_code || '').trim(),
+        employee_name: emp ? emp.name : (vl.employee_name || '').trim(),
+        employee_id: emp ? emp.id : vl.matched_employee_id,
+        action: vl.action,
+        status: vl.action_classification,
+        timestamp: vl.timestamp_str,
+        is_cs: emp ? isCsEmployee(emp) : true
+      });
+    }
+  } catch (_) {}
+
+  // C. employee_activity_log
+  try {
+    const actLogs = db.prepare(`
+      SELECT id, employee_id, employee_name_snapshot, action, timestamp, tracking_code, order_code, account, details
+      FROM employee_activity_log
+      WHERE work_date = ?
+      ORDER BY timestamp ASC, id ASC
+    `).all(targetDate);
+    for (const al of actLogs) {
+      const emp = al.employee_id ? idToEmp.get(al.employee_id) : nameToEmp.get((al.employee_name_snapshot || '').toLowerCase().trim());
+      rawEvents.push({
+        source: 'employee_activity_log',
+        order_code: (al.order_code || '').trim(),
+        employee_name: emp ? emp.name : (al.employee_name_snapshot || '').trim(),
+        employee_id: emp ? emp.id : al.employee_id,
+        action: al.action,
+        status: null,
+        timestamp: al.timestamp,
+        details: al.details,
+        tracking_code: al.tracking_code,
+        is_cs: emp ? isCsEmployee(emp) : true
+      });
+    }
+  } catch (_) {}
+
+  // D. order_tracking_events
+  try {
+    const trkLogs = db.prepare(`
+      SELECT id, tracking_id, order_code, stage, work_state, employee_id, employee_name, action, timestamp, details
+      FROM order_tracking_events
+      WHERE work_date = ?
+      ORDER BY timestamp ASC, id ASC
+    `).all(targetDate);
+    for (const tl of trkLogs) {
+      const emp = tl.employee_id ? idToEmp.get(tl.employee_id) : nameToEmp.get((tl.employee_name || '').toLowerCase().trim());
+      rawEvents.push({
+        source: 'order_tracking_events',
+        order_code: (tl.order_code || '').trim(),
+        employee_name: emp ? emp.name : (tl.employee_name || '').trim(),
+        employee_id: emp ? emp.id : tl.employee_id,
+        action: tl.action || tl.stage,
+        status: tl.stage,
+        timestamp: tl.timestamp,
+        details: tl.details,
+        tracking_code: tl.tracking_id,
+        is_cs: emp ? isCsEmployee(emp) : true
+      });
+    }
+  } catch (_) {}
+
+  // 4. Strict Event Time Window Filter
+  const filteredEvents = rawEvents.filter(ev => {
+    if (!ev.timestamp || !ev.order_code) return false;
+    return isEventInTimeWindow(ev.timestamp, targetDate, fromTime, toTime);
+  });
+
+  // Sort chronologically
+  filteredEvents.sort((a, b) => {
+    const ta = new Date(a.timestamp || 0).getTime() || 0;
+    const tb = new Date(b.timestamp || 0).getTime() || 0;
+    return ta - tb;
+  });
+
+  // 5. Deduplicate actions with 120s sliding window
+  const dedupMap = new Map();
+  const deduplicatedEvents = [];
+  const seenExactEventKeys = new Set();
+
+  for (const ev of filteredEvents) {
+    const empName = ev.employee_name || 'System';
+    const normAction = String(ev.action || '').trim();
+    const canonStatus = ev.status || extractCanonicalStatus(normAction, ev.status || '');
+    const dt = ev.timestamp ? new Date(ev.timestamp).getTime() : 0;
+
+    // Prevent cross-table duplicates on identical (order, emp, timestamp, action)
+    const exactKey = `${ev.order_code}|${empName.toLowerCase()}|${String(ev.timestamp).slice(0, 19)}|${normAction}`;
+    if (seenExactEventKeys.has(exactKey)) continue;
+    seenExactEventKeys.add(exactKey);
+
+    // 120s sliding window deduplication per order + employee + status
+    const groupKey = `${ev.order_code}|${empName.toLowerCase()}|${canonStatus || normAction}`;
+    const lastTime = dedupMap.get(groupKey) || 0;
+    if (dt - lastTime >= 120000 || lastTime === 0) {
+      dedupMap.set(groupKey, dt);
+
+      const meta = getCachedOrderMeta(ev.order_code);
+      const isConfirmed = canonStatus === 'Printed' || canonStatus === 'Confirmed' ||
+        normAction.includes('Printed') || normAction.includes('Print') ||
+        normAction.includes('طباعة') || normAction.includes('تأكيد') || normAction.includes('Confirm');
+
+      deduplicatedEvents.push({
+        id: `ev_${ev.source}_${ev.order_code}_${dt}`,
+        time: formatCairoTime(ev.timestamp, true),
+        timestamp: ev.timestamp,
+        event_timestamp: ev.timestamp,
+        employee: empName,
+        employee_name: empName,
+        order_code: ev.order_code,
+        account: meta.account || 'Unknown Account',
+        customer: meta.customer || null,
+        phone: meta.phone || null,
+        phone_number: meta.phone || '—',
+        action: normAction,
+        confirmation_status: isConfirmed ? 'CONFIRMED' : 'UNCONFIRMED',
+        status: canonStatus || 'Active',
+        tracking_id: ev.tracking_code || meta.tracking_id || ev.order_code,
+        is_confirmed: isConfirmed,
+        source: ev.source
+      });
+    }
+  }
+
+  // 6. Compute Window-Level KPIs & Aggregations
+  const uniqueOrdersWorkedSet = new Set();
+  const confirmedOrdersSet = new Set();
+  const empWindowStats = new Map();
+
+  let printedCount = 0;
+  let pendingCount = 0;
+  let cancelledCount = 0;
+  let processingCount = 0;
+  let altCount = 0;
+
+  for (const ev of deduplicatedEvents) {
+    uniqueOrdersWorkedSet.add(ev.order_code);
+    if (ev.is_confirmed) {
+      confirmedOrdersSet.add(ev.order_code);
+    }
+
+    if (ev.status === 'Printed' || ev.is_confirmed) printedCount++;
+    else if (ev.status === 'Pending') pendingCount++;
+    else if (ev.status === 'Cancelled') cancelledCount++;
+    else if (ev.status === 'Processing') processingCount++;
+
+    if (ev.action && (ev.action.includes('بديل') || ev.action.includes('هاتف') || ev.action.includes('تليفون') || ev.action.includes('alt'))) {
+      altCount++;
+    }
+
+    // Employee accumulation
+    const empName = ev.employee;
+    if (!empWindowStats.has(empName)) {
+      empWindowStats.set(empName, {
+        name: empName,
+        orders_set: new Set(),
+        confirmed_orders_set: new Set(),
+        real_actions: 0,
+        printed: 0,
+        pending: 0,
+        cancelled: 0,
+        processing: 0,
+        alt: 0,
+        last_activity_time: null,
+        last_productive_activity_time: null,
+        last_action: null,
+        last_productive_action: null,
+        last_order_code: null,
+        last_account: null,
+        last_phone: null
+      });
+    }
+
+    const st = empWindowStats.get(empName);
+    st.orders_set.add(ev.order_code);
+    if (ev.is_confirmed) {
+      st.confirmed_orders_set.add(ev.order_code);
+      st.printed++;
+    } else if (ev.status === 'Pending') {
+      st.pending++;
+    } else if (ev.status === 'Cancelled') {
+      st.cancelled++;
+    } else if (ev.status === 'Processing') {
+      st.processing++;
+    }
+
+    st.real_actions++;
+    st.last_activity_time = ev.timestamp;
+    st.last_action = ev.action;
+    st.last_order_code = ev.order_code;
+    st.last_account = ev.account;
+    if (ev.phone_number && ev.phone_number !== '—') {
+      st.last_phone = ev.phone_number;
+    }
+
+    const upperAct = ev.action.toUpperCase();
+    if (PRODUCTIVE_ACTIONS.has(upperAct) || ev.is_confirmed || upperAct.includes('PRINT') || upperAct.includes('PROCESS') || upperAct.includes('CANCEL') || upperAct.includes('PEND')) {
+      st.last_productive_activity_time = ev.timestamp;
+      st.last_productive_action = ev.action;
+    }
+  }
+
+  const totalOrdersWorked = uniqueOrdersWorkedSet.size;
+  const totalConfirmedOrders = confirmedOrdersSet.size;
+  const totalUnconfirmedOrders = Math.max(0, totalOrdersWorked - totalConfirmedOrders);
+  const confirmationRate = totalOrdersWorked > 0
+    ? Number(((totalConfirmedOrders / totalOrdersWorked) * 100).toFixed(1))
+    : 0.0;
+  const totalRealActions = deduplicatedEvents.length;
+
+  // Build employee list
+  const employeesResult = [];
+  const seenEmpNames = new Set();
+
+  for (const [name, st] of empWindowStats.entries()) {
+    seenEmpNames.add(name.toLowerCase());
+    const matchedEmp = nameToEmp.get(name.toLowerCase());
+    const workedCount = st.orders_set.size;
+    const confCount = st.confirmed_orders_set.size;
+    const empConfRate = workedCount > 0 ? Number(((confCount / workedCount) * 100).toFixed(1)) : 0.0;
+
+    employeesResult.push({
+      employee_id: matchedEmp?.id || null,
+      name: matchedEmp?.name || name,
+      employee_name: matchedEmp?.name || name,
+      department: matchedEmp?.department || 'CS',
+      team_membership: matchedEmp?.team_membership || 'Both',
+      orders_worked: workedCount,
+      orders_worked_today: workedCount,
+      confirmed_orders: confCount,
+      confirmation_rate: empConfRate,
+      real_actions: st.real_actions,
+      actions: st.real_actions,
+      printed: st.printed,
+      printed_orders: st.printed,
+      pending: st.pending,
+      pending_backlog: st.pending,
+      cancelled: st.cancelled,
+      cancelled_orders: st.cancelled,
+      processing: st.processing,
+      processing_orders: st.processing,
+      alt: st.alt,
+      alt_phones: st.alt,
+      performance_score: confCount * 2 + st.real_actions,
+      last_activity_time: st.last_activity_time,
+      last_activity_time_cairo: formatCairoTime(st.last_activity_time, true),
+      last_action: st.last_action,
+      last_activity_action: st.last_action,
+      last_productive_activity_time: st.last_productive_activity_time,
+      last_productive_action: st.last_productive_action,
+      last_order_code: st.last_order_code,
+      last_account: st.last_account || '—',
+      phone_number: st.last_phone || '—',
+      live_status: isHistorical ? 'HISTORICAL' : (st.real_actions > 0 ? 'ACTIVE' : 'NO_ACTIVITY')
+    });
+  }
+
+  // Also include inactive CS employees if they are active in master, but with 0 window actions
+  if (!options.activeOnly) {
+    for (const emp of csEmployees) {
+      if (!seenEmpNames.has(emp.name.toLowerCase())) {
+        employeesResult.push({
+          employee_id: emp.id,
+          name: emp.name,
+          employee_name: emp.name,
+          department: emp.department,
+          team_membership: emp.team_membership,
+          orders_worked: 0,
+          orders_worked_today: 0,
+          confirmed_orders: 0,
+          confirmation_rate: 0.0,
+          real_actions: 0,
+          actions: 0,
+          printed: 0,
+          printed_orders: 0,
+          pending: 0,
+          pending_backlog: 0,
+          cancelled: 0,
+          cancelled_orders: 0,
+          processing: 0,
+          processing_orders: 0,
+          alt: 0,
+          alt_phones: 0,
+          performance_score: 0,
+          last_activity_time: null,
+          last_activity_time_cairo: '—',
+          last_action: null,
+          last_activity_action: null,
+          last_productive_activity_time: null,
+          last_productive_action: null,
+          last_order_code: null,
+          last_account: '—',
+          phone_number: '—',
+          live_status: isHistorical ? 'HISTORICAL' : 'NO_ACTIVITY'
+        });
+      }
+    }
+  }
+
+  // Sort employees by confirmed orders DESC, then real actions DESC
+  employeesResult.sort((a, b) => {
+    if (b.confirmed_orders !== a.confirmed_orders) {
+      return b.confirmed_orders - a.confirmed_orders;
+    }
+    return b.real_actions - a.real_actions;
+  });
+
+  employeesResult.forEach((e, idx) => {
+    e.rank = idx + 1;
+  });
+
+  const topConfirmedEmployees = employeesResult.filter(e => e.confirmed_orders > 0).slice(0, 10);
+
+  return {
+    success: true,
+    exists: totalRealActions > 0 || totalOrdersWorked > 0,
+    filter_type: 'EVENT_TIME_WINDOW',
+    is_time_window_active: !isAllDay,
+    time_window: {
+      is_active: !isAllDay,
+      from: fromTime || '00:00',
+      to: toTime || '24:00',
+      label: isAllDay ? 'All Day' : `${fromTime} → ${toTime}`
+    },
+    business_date: targetDate,
+    work_date: targetDate,
+    date: targetDate,
+    from_time: fromTime || null,
+    to_time: toTime || null,
+    time_window_label: isAllDay ? 'All Day' : `${fromTime} → ${toTime}`,
+    is_historical: isHistorical,
+    kpis: {
+      total_orders_worked: totalOrdersWorked,
+      confirmed_orders: totalConfirmedOrders,
+      unconfirmed_orders: totalUnconfirmedOrders,
+      confirmation_rate: confirmationRate,
+      real_actions: totalRealActions,
+      active_employees: empWindowStats.size,
+      top_confirmed_employees: topConfirmedEmployees
+    },
+    summary: {
+      total_orders_worked: totalOrdersWorked,
+      confirmed_orders: totalConfirmedOrders,
+      unconfirmed_orders: totalUnconfirmedOrders,
+      confirmation_rate: confirmationRate,
+      real_actions: totalRealActions,
+      active_employees: empWindowStats.size,
+      printed_count: printedCount,
+      pending_count: pendingCount,
+      cancelled_count: cancelledCount,
+      processing_count: processingCount,
+      alt_count: altCount
+    },
+    hr: {
+      days: 1,
+      tot_new: totalOrdersWorked,
+      tot_printed: totalConfirmedOrders,
+      tot_cancel: cancelledCount,
+      tot_add: 0
+    },
+    log_totals: {
+      actions: totalRealActions,
+      printed: printedCount,
+      pending: pendingCount,
+      processing: processingCount,
+      cancelled: cancelledCount,
+      alt: altCount
+    },
+    status_totals: {
+      Printed: printedCount,
+      Pending: pendingCount,
+      Processing: processingCount,
+      Cancelled: cancelledCount
+    },
+    team_cancel_rate: totalRealActions > 0 ? Number(((cancelledCount / totalRealActions) * 100).toFixed(1)) : 0.0,
+    team_pending_rate: totalRealActions > 0 ? Number(((pendingCount / totalRealActions) * 100).toFixed(1)) : 0.0,
+    top_confirmed_orders: topConfirmedEmployees.map(e => ({
+      name: e.name,
+      confirmed_orders: e.confirmed_orders,
+      orders_worked: e.orders_worked,
+      confirmation_rate: e.confirmation_rate,
+      actions: e.real_actions
+    })),
+    rankings: {
+      printed: [...employeesResult].sort((a, b) => b.printed - a.printed).slice(0, 10).map(e => ({ name: e.name, value: e.printed })),
+      pending: [...employeesResult].sort((a, b) => b.pending - a.pending).slice(0, 10).map(e => ({ name: e.name, value: e.pending })),
+      cancelled: [...employeesResult].sort((a, b) => b.cancelled - a.cancelled).slice(0, 10).map(e => ({ name: e.name, value: e.cancelled }))
+    },
+    cancel_rate_rank: [...employeesResult].sort((a, b) => (b.cancelled / Math.max(1, b.actions)) - (a.cancelled / Math.max(1, a.actions))).map(e => ({
+      name: e.name,
+      value: e.actions > 0 ? Number(((e.cancelled / e.actions) * 100).toFixed(1)) : 0
+    })),
+    employees: employeesResult,
+    order_events: deduplicatedEvents,
+    dedup: { removed: 0, removed_pct: 0 }
+  };
+}
+
+/**
  * PHASE 59: OPERATIONAL DASHBOARD DATA ENGINE
  * Directly queries SQLite for the selected Business Date.
  * Reconciles Orders Universe, Deduplicated Logs, and Employee Rankings.
  * Strictly guarantees KPI data-scope consistency.
  */
-export function getOperationalDashboardData(workDate) {
+export function getOperationalDashboardData(workDate, options = {}) {
   const targetDate = workDate || getCairoBusinessDate();
+  const fromTime = options.fromTime || options.from || options.start_time || options.from_time || null;
+  const toTime = options.toTime || options.to || options.end_time || options.to_time || null;
 
-  // 1. Check daily_metrics_snapshots first
+  // If a time window is specified, execute true event time window filter
+  if (fromTime || toTime) {
+    return getHourlyTimeWindowEventData(targetDate, fromTime, toTime, options);
+  }
+
+  // 1. Check daily_metrics_snapshots first for full day
   const snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(targetDate);
   if (snap && snap.metrics_json) {
     try {
@@ -2077,6 +2726,8 @@ export function getOperationalDashboardData(workDate) {
         exists: parsed.exists ?? (emps.length > 0 || log_totals.actions > 0),
         date: targetDate,
         work_date: targetDate,
+        time_window: { is_active: false },
+        is_time_window_active: false,
         ...parsed,
         employees: emps,
         top10Performers: [...emps].sort((a, b) => (b.performance_score || 0) - (a.performance_score || 0)).slice(0, 10),
@@ -2089,15 +2740,11 @@ export function getOperationalDashboardData(workDate) {
         addedOrders,
         log_totals,
         status_totals,
-        rankings,
-        cancel_rate_rank,
         hr,
         daily,
-        addedOrders,
         dedup,
         team_cancel_rate,
-        team_pending_rate,
-        employees: emps
+        team_pending_rate
       };
     } catch (e) {}
   }
@@ -2268,7 +2915,8 @@ export function getOperationalDashboardData(workDate) {
       topCSContributors: [],
       allCSContributors: []
     },
-    dedup: { removed: 0, removed_pct: 0 }
+    dedup: { removed: 0, removed_pct: 0 },
+    time_window: { is_active: false }
   };
 }
 
@@ -2790,10 +3438,11 @@ export function cancelOrder(workDate, orderCode, employeeId = null, reason = 'Or
 export function getEmployeeLiveRealtime(workDate, options = {}) {
   const inactiveThreshold = options.inactiveThreshold || 900; // 15 mins (seconds)
   const criticalThreshold = options.criticalThreshold || 2700; // 45 mins (seconds)
-  const currentCDate = options.currentTime ? getCairoBusinessDate(options.currentTime) : getCairoBusinessDate();
+  const timeParam = options.currentTime || options.reference_time || options.referenceTime || null;
+  const currentCDate = timeParam ? getCairoBusinessDate(timeParam) : getCairoBusinessDate();
   const isHistorical = workDate < currentCDate;
-  const refTime = options.currentTime 
-    ? new Date(options.currentTime).getTime() 
+  const refTime = timeParam 
+    ? (parseCairoTimestamp(timeParam) || new Date(timeParam)).getTime() 
     : (isHistorical ? new Date(`${workDate}T23:59:59.999Z`).getTime() : Date.now());
 
   // 1. Strict CS Department Only (Non-CS employees never appear as operational CS workers)
@@ -2858,27 +3507,11 @@ export function getEmployeeLiveRealtime(workDate, options = {}) {
     else if (state === 'COMPLETED') st.completed++;
   }
 
-  // 4. Employee activity log records (Phase 3 + Raw Log Records + Vendoor Logs)
-  const activityLogs = db.prepare(`
-    SELECT id, employee_id, action, timestamp, details, tracking_code, order_code, account
-    FROM employee_activity_log
-    WHERE work_date = ?
-    ORDER BY timestamp ASC, id ASC
-  `).all(workDate);
-
-  const empActivities = new Map();
-  for (const act of activityLogs) {
-    if (!empActivities.has(act.employee_id)) {
-      empActivities.set(act.employee_id, []);
-    }
-    empActivities.get(act.employee_id).push(act);
-  }
-
-  // Also ingest raw_log_records for rich, second-by-second activity timestamps
+  // 4. Employee activity log records (Merged Canonical Stream: Raw Log Records + Vendoor Logs + Employee Activity Log)
   const nameToEmpId = new Map();
   allEmployees.forEach(e => nameToEmpId.set((e.name || '').toLowerCase().trim(), e.id));
 
-  // Build quick order-to-account map for fast account resolution
+  // Build quick order-to-account map across opening inventory and canonical order universe
   const orderAccountMap = new Map();
   try {
     const cwoRows = db.prepare('SELECT order_code, account FROM current_work_orders WHERE work_date = ?').all(workDate);
@@ -2886,7 +3519,47 @@ export function getEmployeeLiveRealtime(workDate, options = {}) {
       if (r.order_code && r.account) orderAccountMap.set(r.order_code, r.account);
     }
   } catch (_) {}
+  try {
+    const allCwos = db.prepare('SELECT order_code, account FROM current_work_orders').all();
+    for (const r of allCwos) {
+      if (r.order_code && r.account && !orderAccountMap.has(r.order_code)) orderAccountMap.set(r.order_code, r.account);
+    }
+  } catch (_) {}
+  try {
+    const allVos = db.prepare('SELECT order_code, account FROM vendoor_orders').all();
+    for (const r of allVos) {
+      if (r.order_code && r.account && !orderAccountMap.has(r.order_code)) orderAccountMap.set(r.order_code, r.account);
+    }
+  } catch (_) {}
 
+  const empActivities = new Map();
+  const seenEventKeys = new Set();
+
+  function addLiveAction(empId, orderCode, action, status, rawTs, source, details = null) {
+    if (!rawTs || !empId) return;
+    const normTs = String(rawTs).trim();
+    const normOrder = String(orderCode || '').trim();
+    const dedupKey = `${empId}|${normOrder}|${normTs.replace('T', ' ').slice(0, 19)}`;
+    if (seenEventKeys.has(dedupKey)) return;
+    seenEventKeys.add(dedupKey);
+
+    if (!empActivities.has(empId)) empActivities.set(empId, []);
+    const acc = orderAccountMap.get(normOrder) || null;
+    empActivities.get(empId).push({
+      id: `${source}_${empId}_${normOrder}_${normTs}`,
+      employee_id: empId,
+      action: action,
+      status: status || extractCanonicalStatus(action),
+      timestamp: normTs,
+      details: details || action,
+      tracking_code: null,
+      order_code: normOrder,
+      account: acc,
+      source: source
+    });
+  }
+
+  // 1. raw_log_records
   try {
     const rawLogs = db.prepare(`
       SELECT employee_name, action, status, event_datetime, order_code
@@ -2894,52 +3567,42 @@ export function getEmployeeLiveRealtime(workDate, options = {}) {
       WHERE work_date = ?
       ORDER BY event_datetime ASC, id ASC
     `).all(workDate);
-
-    if (rawLogs.length > 0) {
-      for (const r of rawLogs) {
-        const empId = nameToEmpId.get((r.employee_name || '').toLowerCase().trim());
-        if (empId) {
-          if (!empActivities.has(empId)) empActivities.set(empId, []);
-          const acc = orderAccountMap.get(r.order_code) || null;
-          empActivities.get(empId).push({
-            id: `raw_${r.order_code}_${r.event_datetime}`,
-            employee_id: empId,
-            action: r.action,
-            status: r.status || extractCanonicalStatus(r.action),
-            timestamp: r.event_datetime,
-            details: r.action,
-            tracking_code: null,
-            order_code: r.order_code,
-            account: acc
-          });
-        }
+    for (const r of rawLogs) {
+      const empId = nameToEmpId.get((r.employee_name || '').toLowerCase().trim());
+      if (empId) {
+        addLiveAction(empId, r.order_code, r.action, r.status, r.event_datetime, 'raw_log_records');
       }
-    } else {
-      // Fallback to vendoor_logs ONLY if raw_log_records has no entries for this date
-      const vLogs = db.prepare(`
-        SELECT employee_name, matched_employee_id, action, action_classification, timestamp_str, order_code
-        FROM vendoor_logs
-        WHERE work_date = ?
-        ORDER BY timestamp_str ASC, id ASC
-      `).all(workDate);
+    }
+  } catch (_) {}
 
-      for (const vl of vLogs) {
-        const empId = vl.matched_employee_id || nameToEmpId.get((vl.employee_name || '').toLowerCase().trim());
-        if (empId) {
-          if (!empActivities.has(empId)) empActivities.set(empId, []);
-          const acc = orderAccountMap.get(vl.order_code) || null;
-          empActivities.get(empId).push({
-            id: `vl_${vl.order_code}_${vl.timestamp_str}`,
-            employee_id: empId,
-            action: vl.action,
-            status: vl.action_classification || extractCanonicalStatus(vl.action),
-            timestamp: vl.timestamp_str,
-            details: vl.action,
-            tracking_code: null,
-            order_code: vl.order_code,
-            account: acc
-          });
-        }
+  // 2. vendoor_logs
+  try {
+    const vLogs = db.prepare(`
+      SELECT employee_name, matched_employee_id, action, action_classification, timestamp_str, order_code
+      FROM vendoor_logs
+      WHERE work_date = ?
+      ORDER BY timestamp_str ASC, id ASC
+    `).all(workDate);
+    for (const vl of vLogs) {
+      const empId = vl.matched_employee_id || nameToEmpId.get((vl.employee_name || '').toLowerCase().trim());
+      if (empId) {
+        addLiveAction(empId, vl.order_code, vl.action, vl.action_classification, vl.timestamp_str, 'vendoor_logs');
+      }
+    }
+  } catch (_) {}
+
+  // 3. employee_activity_log
+  try {
+    const actLogs = db.prepare(`
+      SELECT employee_id, employee_name_snapshot, action, timestamp, order_code, details
+      FROM employee_activity_log
+      WHERE work_date = ?
+      ORDER BY timestamp ASC, id ASC
+    `).all(workDate);
+    for (const al of actLogs) {
+      const empId = al.employee_id || nameToEmpId.get((al.employee_name_snapshot || '').toLowerCase().trim());
+      if (empId) {
+        addLiveAction(empId, al.order_code, al.action, null, al.timestamp, 'employee_activity_log', al.details);
       }
     }
   } catch (_) {}
@@ -3068,6 +3731,35 @@ export function getEmployeeLiveRealtime(workDate, options = {}) {
 
     const statusRealActions = printedCount + pendingCount + cancelledCount + processingCount;
 
+    if (isWorkingToday) {
+      try {
+        db.prepare(`
+          UPDATE daily_working_team SET
+            last_activity_at = ?,
+            last_productive_activity_at = ?,
+            last_action = ?,
+            last_productive_action = ?,
+            last_order_code = ?,
+            last_account = ?,
+            live_status = ?,
+            idle_seconds = ?,
+            updated_at = datetime('now')
+          WHERE work_date = ? AND employee_id = ?
+        `).run(
+          lastActivityTime,
+          lastProductiveActivityTime,
+          lastAction,
+          lastProductiveAction,
+          lastOrderCode,
+          lastAccount || 'ORDER UNMATCHED / ACCOUNT UNRESOLVED',
+          liveStatus,
+          idleSeconds,
+          workDate,
+          emp.id
+        );
+      } catch (_) {}
+    }
+
     return {
       employee_id: emp.id,
       employee_name: emp.name,
@@ -3090,11 +3782,18 @@ export function getEmployeeLiveRealtime(workDate, options = {}) {
       processing_orders: processingCount,
       historical_orders_worked: historicalOrdersWorked,
       last_activity_time: lastActivityTime,
+      last_activity_time_cairo: formatCairoTime(lastActivityTime, true),
+      last_activity_time_ago: formatTimeAgo(lastActivityTime, refTime, isHistorical),
       last_activity_action: lastAction,
+      last_action: lastAction,
       last_activity_order_code: lastOrderCode,
-      last_activity_account: lastAccount,
+      last_order_code: lastOrderCode,
+      last_activity_account: lastAccount || 'ORDER UNMATCHED / ACCOUNT UNRESOLVED',
+      last_account: lastAccount || 'ORDER UNMATCHED / ACCOUNT UNRESOLVED',
       last_activity_details: lastDetails,
       last_productive_activity_time: lastProductiveActivityTime,
+      last_productive_activity_time_cairo: formatCairoTime(lastProductiveActivityTime, true),
+      last_productive_activity_time_ago: formatTimeAgo(lastProductiveActivityTime, refTime, isHistorical),
       last_productive_action: lastProductiveAction,
       idle_seconds: idleSeconds,
       idle_duration_formatted: idleFormatted,

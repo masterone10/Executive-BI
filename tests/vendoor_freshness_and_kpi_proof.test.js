@@ -101,6 +101,8 @@ test('PROOF 2: Universal KPI Mathematical Invariant Proof across Vendoor -> SQL 
   db.prepare("DELETE FROM daily_metrics_snapshots WHERE work_date = ?").run(testDate);
   db.prepare("DELETE FROM performance_snapshots WHERE date = ?").run(testDate);
   db.prepare("DELETE FROM uploaded_files WHERE business_date = ?").run(testDate);
+  db.prepare("INSERT OR REPLACE INTO employees (id, name, department, active, status) VALUES (9001, 'Ahmed CS', 'CS', 1, 'ACTIVE')").run();
+  db.prepare("INSERT OR REPLACE INTO employees (id, name, department, active, status) VALUES (9002, 'Sara CS', 'CS', 1, 'ACTIVE')").run();
 
   /**
    * Deterministic Source Dataset from Vendoor with all operational cases:

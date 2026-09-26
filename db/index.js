@@ -130,6 +130,36 @@ export function runMigrations(database = db) {
     console.warn('Migration for employee_lifecycle_audit & order_review_queue:', e.message);
   }
 
+  // Safe table migration: Ensure daily_working_team has real-time tracking fields
+  try {
+    const cols = database.prepare("PRAGMA table_info(daily_working_team)").all();
+    if (cols.length > 0) {
+      if (!cols.some(c => c.name === 'last_productive_activity_at')) {
+        database.exec("ALTER TABLE daily_working_team ADD COLUMN last_productive_activity_at TEXT");
+      }
+      if (!cols.some(c => c.name === 'last_action')) {
+        database.exec("ALTER TABLE daily_working_team ADD COLUMN last_action TEXT");
+      }
+      if (!cols.some(c => c.name === 'last_productive_action')) {
+        database.exec("ALTER TABLE daily_working_team ADD COLUMN last_productive_action TEXT");
+      }
+      if (!cols.some(c => c.name === 'last_order_code')) {
+        database.exec("ALTER TABLE daily_working_team ADD COLUMN last_order_code TEXT");
+      }
+      if (!cols.some(c => c.name === 'last_account')) {
+        database.exec("ALTER TABLE daily_working_team ADD COLUMN last_account TEXT");
+      }
+      if (!cols.some(c => c.name === 'live_status')) {
+        database.exec("ALTER TABLE daily_working_team ADD COLUMN live_status TEXT");
+      }
+      if (!cols.some(c => c.name === 'idle_seconds')) {
+        database.exec("ALTER TABLE daily_working_team ADD COLUMN idle_seconds INTEGER");
+      }
+    }
+  } catch (e) {
+    console.warn('Migration for daily_working_team live tracking columns:', e.message);
+  }
+
   // Safe table migration: Ensure preparation_batches exists
   try {
     database.exec(`
@@ -863,6 +893,173 @@ export function runMigrations(database = db) {
     `);
   } catch (e) {
     console.warn('Migration for report_history:', e.message);
+  }
+
+  // Safe table migration: Enterprise Allocation Engine (Sections 125-133A)
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS allocation_configuration_versions (
+        version INTEGER PRIMARY KEY AUTOINCREMENT,
+        published_at TEXT NOT NULL DEFAULT (datetime('now')),
+        published_by TEXT NOT NULL DEFAULT 'Supervisor',
+        config_json TEXT NOT NULL,
+        diff_summary_json TEXT,
+        accounts_changed INTEGER DEFAULT 0,
+        employees_changed INTEGER DEFAULT 0,
+        settings_changed INTEGER DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1
+      );
+
+      CREATE TABLE IF NOT EXISTS account_schedules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        account TEXT NOT NULL UNIQUE,
+        new_start_time TEXT,
+        new_end_time TEXT,
+        pending_start_time TEXT,
+        pending_end_time TEXT,
+        config_version INTEGER DEFAULT 1,
+        updated_at TEXT DEFAULT (datetime('now')),
+        updated_by TEXT DEFAULT 'Supervisor'
+      );
+      CREATE INDEX IF NOT EXISTS idx_acc_sched_acc ON account_schedules(account);
+
+      CREATE TABLE IF NOT EXISTS employee_capacities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_id INTEGER NOT NULL UNIQUE REFERENCES employees(id) ON DELETE CASCADE,
+        max_orders INTEGER NOT NULL DEFAULT 40,
+        config_version INTEGER DEFAULT 1,
+        updated_at TEXT DEFAULT (datetime('now')),
+        updated_by TEXT DEFAULT 'Supervisor'
+      );
+      CREATE INDEX IF NOT EXISTS idx_emp_cap_emp ON employee_capacities(employee_id);
+
+      CREATE TABLE IF NOT EXISTS allocation_global_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        description TEXT,
+        config_version INTEGER DEFAULT 1,
+        updated_at TEXT DEFAULT (datetime('now')),
+        updated_by TEXT DEFAULT 'Supervisor'
+      );
+
+      CREATE TABLE IF NOT EXISTS employee_daily_allocation_states (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        work_date TEXT NOT NULL,
+        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        pending_sequence INTEGER NOT NULL DEFAULT 0,
+        new_event_consumed INTEGER NOT NULL DEFAULT 0,
+        daily_mode TEXT NOT NULL DEFAULT 'NORMAL',
+        rescue_state TEXT NOT NULL DEFAULT 'NONE',
+        last_allocation_run_id TEXT,
+        last_allocation_at TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(work_date, employee_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_emp_daily_state_date ON employee_daily_allocation_states(work_date);
+      CREATE INDEX IF NOT EXISTS idx_emp_daily_state_emp ON employee_daily_allocation_states(employee_id);
+
+      CREATE TABLE IF NOT EXISTS enterprise_allocation_runs (
+        run_id TEXT PRIMARY KEY,
+        work_date TEXT NOT NULL,
+        trigger TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        allocation_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        block_type TEXT,
+        block_reason TEXT,
+        rescue_state TEXT DEFAULT 'NONE',
+        configuration_version INTEGER,
+        context_hash TEXT NOT NULL,
+        fingerprint TEXT,
+        total_orders_input INTEGER DEFAULT 0,
+        assigned_count INTEGER DEFAULT 0,
+        unassigned_count INTEGER DEFAULT 0,
+        eligible_candidates_json TEXT,
+        excluded_candidates_json TEXT,
+        proposal_json TEXT,
+        decision_trace_json TEXT,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_ent_alloc_date ON enterprise_allocation_runs(work_date);
+      CREATE INDEX IF NOT EXISTS idx_ent_alloc_status ON enterprise_allocation_runs(status);
+
+      CREATE TABLE IF NOT EXISTS distribution_fingerprints (
+        fingerprint TEXT PRIMARY KEY,
+        work_date TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        allocation_type TEXT,
+        distribution_metadata_json TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_dist_fp_date ON distribution_fingerprints(work_date);
+
+      CREATE TABLE IF NOT EXISTS allocation_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        work_date TEXT NOT NULL,
+        configuration_version INTEGER,
+        context_hash TEXT NOT NULL,
+        snapshot_data_json TEXT NOT NULL,
+        captured_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_alloc_snap_run ON allocation_snapshots(run_id);
+      CREATE INDEX IF NOT EXISTS idx_alloc_snap_date ON allocation_snapshots(work_date);
+
+      CREATE TABLE IF NOT EXISTS allocation_decision_audits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        work_date TEXT NOT NULL,
+        configuration_version INTEGER,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        reason_code TEXT NOT NULL,
+        reason_details TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_alloc_audit_run ON allocation_decision_audits(run_id);
+      CREATE INDEX IF NOT EXISTS idx_alloc_audit_date ON allocation_decision_audits(work_date);
+
+      CREATE TABLE IF NOT EXISTS allocation_operational_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        work_date TEXT NOT NULL,
+        alert_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        details_json TEXT,
+        status TEXT DEFAULT 'ACTIVE',
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(work_date, alert_type, entity_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_alloc_alerts_date ON allocation_operational_alerts(work_date);
+    `);
+
+    // Seed default global settings if not present
+    database.prepare(`
+      INSERT OR IGNORE INTO allocation_global_settings (key, value, description)
+      VALUES ('allocation_mode', 'ACTIVE', 'Controlled mode for allocation engine: OFF, SHADOW, PREVIEW, ACTIVE')
+    `).run();
+    database.prepare(`
+      INSERT OR IGNORE INTO allocation_global_settings (key, value, description)
+      VALUES ('activity_lookback_minutes', '15', 'Recent activity window threshold in minutes for CS eligibility')
+    `).run();
+    database.prepare(`
+      INSERT OR IGNORE INTO allocation_global_settings (key, value, description)
+      VALUES ('low_remaining_threshold', '3', 'Remaining orders threshold triggering replenishment evaluation/alert')
+    `).run();
+    database.prepare(`
+      INSERT OR IGNORE INTO allocation_global_settings (key, value, description)
+      VALUES ('pending_rescue_threshold', '20', 'Pending pressure threshold in orders triggering daily PENDING rescue')
+    `).run();
+    database.prepare(`
+      INSERT OR IGNORE INTO allocation_global_settings (key, value, description)
+      VALUES ('large_load_threshold', '1000', 'Operational alert threshold for high-volume order days')
+    `).run();
+
+  } catch (e) {
+    console.warn('Migration for Enterprise Allocation Engine tables:', e.message);
   }
 }
 

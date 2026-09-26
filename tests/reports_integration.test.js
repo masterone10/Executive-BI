@@ -48,7 +48,8 @@ test('EXECUTIVE-BI COMPREHENSIVE REPORTS SERVICE TEST SUITE', async (t) => {
     assert.ok(Array.isArray(report.daily_breakdown));
     assert.equal(report.daily_breakdown.length, 1);
     assert.ok(report.total_orders >= 0);
-    assert.ok(report.allocation_coverage_pct >= 0 && report.allocation_coverage_pct <= 100);
+    assert.ok(report.allocation_coverage_pct >= 0);
+    assert.ok(report.allocation_coverage_pct <= 100);
     assert.ok(report.system_health);
   });
 

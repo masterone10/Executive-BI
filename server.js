@@ -52,7 +52,19 @@ import {
   reassignAccountOwner,
   getAccountReassignmentLogs,
   generateRoundBasedAllocation,
-  reallocateWorkOrders
+  reallocateWorkOrders,
+  getEnterpriseAllocationConfig,
+  validateEnterpriseAllocationConfig,
+  saveEnterpriseAllocationConfig,
+  getEnterpriseConfigurationHistory,
+  evaluateAccountTimeStatus,
+  evaluateEmployeeAllocationEligibility,
+  evaluatePendingRescueOperation,
+  planEnterpriseAllocation,
+  executeEnterpriseAllocation,
+  checkEnterpriseOperationalAlerts,
+  getEnterpriseAllocationRunDetails,
+  getEnterpriseAllocationHistory
 } from './services/allocation.js';
 import {
   inspectExcelSchema,
@@ -68,6 +80,7 @@ import {
   getAccountsDirectory,
   getAccountDetailedData,
   getOperationalDashboardData,
+  getHourlyTimeWindowEventData,
   getEmployeeLiveRealtime,
   getTeamLiveStatusSummary,
   logEmployeeActivity,
@@ -1069,23 +1082,197 @@ app.get('/api/work/available-orders', (req, res) => {
 });
 
 /**
+ * ============================================================
+ * ENTERPRISE ALLOCATION ENGINE ENDPOINTS (Sections 125-141, 133A)
+ * ============================================================
+ */
+
+// 1. GET Centralized Allocation Configuration
+app.get('/api/allocation/configuration', (req, res) => {
+  try {
+    const config = getEnterpriseAllocationConfig();
+    res.json({ success: true, ...config });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 2. POST Validate Configuration Draft
+app.post('/api/allocation/configuration/validate', (req, res) => {
+  try {
+    const result = validateEnterpriseAllocationConfig(req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ valid: false, errors: [{ section: 'general', reason: err.message }] });
+  }
+});
+
+// 3. POST Save All Configuration (Atomic, Versioned)
+app.post('/api/allocation/configuration/save', (req, res) => {
+  try {
+    const operator = req.body.operator || req.headers['x-user'] || 'Supervisor';
+    const expectedVersion = req.body.expected_version !== undefined ? req.body.expected_version : null;
+    const result = saveEnterpriseAllocationConfig(req.body, operator, expectedVersion);
+    res.json(result);
+  } catch (err) {
+    const status = err.code === 'CONFIGURATION_CONFLICT' ? 409 : 400;
+    res.status(status).json({ success: false, error: err.message, code: err.code, validation_errors: err.validation_errors });
+  }
+});
+
+// 4. GET Configuration Version History
+app.get('/api/allocation/configuration/history', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const history = getEnterpriseConfigurationHistory(limit);
+    res.json({ success: true, count: history.length, history });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. GET Account + Status Schedule Evaluation
+app.get('/api/allocation/schedule/status', (req, res) => {
+  try {
+    const { account, work_type, time } = req.query;
+    if (!account) return res.status(400).json({ error: 'account is required' });
+    const status = evaluateAccountTimeStatus(account, work_type || 'NEW', time || null);
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 6. GET Employee Eligibility & State
+app.get('/api/allocation/employee/eligibility', (req, res) => {
+  try {
+    const employeeId = parseInt(req.query.employee_id, 10);
+    const workDate = req.query.date || getCairoBusinessDate();
+    if (!employeeId) return res.status(400).json({ error: 'employee_id is required' });
+    const result = evaluateEmployeeAllocationEligibility(employeeId, workDate, req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 7. GET Rescue Evaluation
+app.get('/api/allocation/rescue/status', (req, res) => {
+  try {
+    const workDate = req.query.date || getCairoBusinessDate();
+    const result = evaluatePendingRescueOperation(workDate);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 8. POST Allocation Preview Plan
+app.post(['/api/allocation/preview', '/api/allocations/:date/preview'], (req, res) => {
+  const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
+  try {
+    const plan = planEnterpriseAllocation(date, 'PREVIEW', req.body || {});
+    res.json(plan);
+  } catch (err) {
+    console.error('Error generating preview:', err);
+    res.status(400).json({ error: err.message, code: err.code });
+  }
+});
+
+// 9. POST Execute Allocation (Atomic Production Write)
+app.post(['/api/allocation/execute', '/api/allocations/:date/execute'], (req, res) => {
+  const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
+  try {
+    const result = executeEnterpriseAllocation(req.body?.plan || date, { mode: 'ACTIVE', ...req.body });
+    res.json(result);
+  } catch (err) {
+    console.error('Error executing enterprise allocation:', err);
+    res.status(400).json({ error: err.message, code: err.code });
+  }
+});
+
+// 10. GET Enterprise Allocation History
+app.get('/api/allocation/enterprise/history', (req, res) => {
+  try {
+    const workDate = req.query.date || null;
+    const limit = parseInt(req.query.limit, 10) || 50;
+    const history = getEnterpriseAllocationHistory(workDate, limit);
+    res.json({ success: true, count: history.length, history });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 11. GET Enterprise Allocation Run Details (Audit & Snapshot)
+app.get('/api/allocation/enterprise/run/:runId', (req, res) => {
+  try {
+    const details = getEnterpriseAllocationRunDetails(req.params.runId);
+    if (!details) return res.status(404).json({ success: false, error: 'Run not found' });
+    res.json({ success: true, run: details });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 12. GET Operational Alerts
+app.get(['/api/allocation/alerts', '/api/allocations/:date/alerts'], (req, res) => {
+  const date = req.params.date || req.query.date || getCairoBusinessDate();
+  try {
+    const alerts = checkEnterpriseOperationalAlerts(date);
+    res.json({ success: true, count: alerts.length, alerts });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * GENERATE ORDER-LEVEL ALLOCATION (Automatic Engine)
  */
 app.post(['/api/allocations/:date/generate', '/api/allocations/generate', '/api/allocation/generate'], (req, res) => {
   const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
-  const { method, account_specific_rules, regenerate, round_based, round_number, max_capacity_per_employee, max_capacity } = req.body || {};
+  const { method, account_specific_rules, regenerate, round_based, round_number, max_capacity_per_employee, max_capacity, enterprise, use_enterprise } = req.body || {};
+  
+  // Boundary diagnostic context
+  let orderCount = 0;
+  let teamCount = 0;
   try {
-    const result = generateRoundBasedAllocation(date, {
-      method: method || 'fair_random',
-      account_specific_rules,
-      regenerate: regenerate === true,
-      round_number: round_number || 1,
-      max_capacity_per_employee: max_capacity_per_employee || max_capacity || 40,
-      ...req.body
-    });
+    const ordRow = db.prepare('SELECT COUNT(*) as c FROM current_work_orders WHERE work_date = ?').get(date);
+    orderCount = ordRow ? ordRow.c : 0;
+    const teamRow = db.prepare('SELECT COUNT(*) as c FROM daily_working_team WHERE work_date = ? AND is_working = 1').get(date);
+    teamCount = teamRow ? teamRow.c : 0;
+  } catch (_) {}
+
+  const config = getEnterpriseAllocationConfig();
+  const mode = config.global_settings?.allocation_mode || 'ACTIVE';
+  console.log(`[ALLOCATION BOUNDARY] Generating allocation: date=${date}, mode=${mode}, method=${method || 'fair_random'}, orders=${orderCount}, team=${teamCount}`);
+
+  try {
+    let result;
+    if (mode === 'ACTIVE' || enterprise === true || use_enterprise === true) {
+      result = executeEnterpriseAllocation(date, { mode: 'ACTIVE', ...req.body });
+    } else {
+      result = generateRoundBasedAllocation(date, {
+        method: method || 'fair_random',
+        account_specific_rules,
+        regenerate: regenerate === true,
+        round_number: round_number || 1,
+        max_capacity_per_employee: max_capacity_per_employee || max_capacity || 40,
+        ...req.body
+      });
+
+      if (mode === 'SHADOW') {
+        try {
+          executeEnterpriseAllocation(date, { mode: 'SHADOW', trigger: 'SHADOW_POST_GENERATE' });
+        } catch (e) {
+          console.warn('[SHADOW] Enterprise shadow plan warning:', e.message);
+        }
+      }
+    }
+
+    console.log(`[ALLOCATION BOUNDARY] Allocation generated: date=${date}, status=${result.status || 'OK'}, assigned=${result.assigned_orders ?? result.assigned_count ?? 0}, unassigned=${result.unassigned_orders ?? result.unassigned_count ?? 0}`);
     res.json(result);
   } catch (err) {
-    console.error('Error generating allocation:', err);
+    console.error(`[ALLOCATION BOUNDARY] Allocation generation failed: date=${date}, error=${err.message}`);
     res.status(400).json({ error: err.message });
   }
 });
@@ -1115,12 +1302,16 @@ app.post(['/api/allocations/:date/reallocate', '/api/allocations/reallocate', '/
  */
 app.post('/api/allocations/:date/save-order-level', (req, res) => {
   const { date } = req.params;
-  const { allocations, notes, generated_by } = req.body || {};
+  const { notes, generated_by } = req.body || {};
+  const payloadSummary = req.body ? (Array.isArray(req.body) ? `Array(${req.body.length})` : `Object(keys: ${Object.keys(req.body).join(',')})`) : 'empty';
+  console.log(`[ALLOCATION BOUNDARY] Saving order level allocation: date=${date}, payload=${payloadSummary}`);
+
   try {
     const result = saveFinalOrderLevelAllocation(date, req.body, notes, generated_by);
+    console.log(`[ALLOCATION BOUNDARY] Order level allocation saved: date=${date}, version=${result.version_number || result.version}, total=${result.total_orders}, assigned=${result.assigned_orders}`);
     res.json(result);
   } catch (err) {
-    console.error('Error saving order level allocation:', err);
+    console.error(`[ALLOCATION BOUNDARY] Error saving order level allocation: date=${date}, payload=${payloadSummary}, error=${err.message}`);
     res.status(400).json({ error: err.message });
   }
 });
@@ -1893,6 +2084,28 @@ app.get('/api/tracking/:date/audit', (req, res) => {
   }
 });
 
+// GET /api/tracking/time-window & /api/tracking/:date/time-window (True Hourly Event Time Window Filter)
+app.get(['/api/tracking/time-window', '/api/tracking/:date/time-window'], (req, res) => {
+  const date = req.params.date || req.query.date || req.query.workDate || getCairoBusinessDate();
+  const fromTime = req.query.fromTime || req.query.from || req.query.from_time || null;
+  const toTime = req.query.toTime || req.query.to || req.query.to_time || null;
+  const statusFilter = req.query.status || req.query.statusFilter || 'ALL';
+  const employeeFilter = req.query.employee || req.query.employee_name || 'ALL';
+  const limit = req.query.limit ? parseInt(req.query.limit, 10) : 500;
+
+  try {
+    const data = getHourlyTimeWindowEventData(date, fromTime, toTime, {
+      statusFilter,
+      employeeFilter,
+      limit
+    });
+    res.json(data);
+  } catch (err) {
+    console.error('Time window filter error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // GET /api/tracking/:date (Overview dashboard & audit)
 app.get('/api/tracking/:date', (req, res) => {
   const { date } = req.params;
@@ -2304,14 +2517,16 @@ function reconstructPayloadFromSnapshots(date, rows) {
 // -------------------------------------------------------------
 app.get('/api/data', (req, res) => {
   const reqDate = req.query.date || getEffectiveWorkDate();
-  const cacheKey = `data_${reqDate}`;
+  const fromTime = req.query.fromTime || req.query.from || null;
+  const toTime = req.query.toTime || req.query.to || null;
+  const cacheKey = fromTime || toTime ? `data_${reqDate}_${fromTime}_${toTime}` : `data_${reqDate}`;
   const cached = getCachedApiResponse(cacheKey);
   if (cached) {
     return res.json(cached);
   }
 
   try {
-    const dashboardData = getOperationalDashboardData(reqDate);
+    const dashboardData = getOperationalDashboardData(reqDate, { fromTime, toTime });
     setCachedApiResponse(cacheKey, dashboardData);
     return res.json(dashboardData);
   } catch (err) {

@@ -1,9 +1,47 @@
 import { db } from '../db/index.js';
-import { parseSpecificOrdersBuffer, parseAnyUploadedBuffer, detectWorkbookDateAndType, normalizeDateToISO, isCsEmployee } from './parser.js';
+import { parseSpecificOrdersBuffer, parseAnyUploadedBuffer, detectWorkbookDateAndType, normalizeDateToISO, isCsEmployee, isCsDept } from './parser.js';
 import { computePerformanceFromRecords, savePerformanceSnapshotToDB, getEmployeePerformanceProfiles, calculateSmartAllocationScore } from './performance.js';
 import { persistDailyLogRecords, generateTrackingId, recordOrderLifecycleEvent, logEmployeeActivity } from './tracking.js';
 import { syncAndRestoreObservedTeam } from './working_team_ops.js';
 import { getCapacityConfig, getEmployeeEffectiveCapacity } from './capacity_config.js';
+import {
+  getEnterpriseAllocationConfig,
+  validateEnterpriseAllocationConfig,
+  saveEnterpriseAllocationConfig,
+  getEnterpriseConfigurationHistory,
+  evaluateAccountTimeStatus,
+  evaluateEmployeeAllocationEligibility,
+  evaluatePendingRescueOperation,
+  computeDistributionFingerprint,
+  checkDistributionUniqueness,
+  planEnterpriseAllocation,
+  executeEnterpriseAllocation,
+  checkEnterpriseOperationalAlerts,
+  getEnterpriseAllocationRunDetails,
+  getEnterpriseAllocationHistory,
+  ALLOCATION_MODES,
+  ALLOCATION_ERROR_CODES
+} from './enterprise_allocation.js';
+
+export {
+  getEnterpriseAllocationConfig,
+  validateEnterpriseAllocationConfig,
+  saveEnterpriseAllocationConfig,
+  getEnterpriseConfigurationHistory,
+  evaluateAccountTimeStatus,
+  evaluateEmployeeAllocationEligibility,
+  evaluatePendingRescueOperation,
+  computeDistributionFingerprint,
+  checkDistributionUniqueness,
+  planEnterpriseAllocation,
+  executeEnterpriseAllocation,
+  checkEnterpriseOperationalAlerts,
+  getEnterpriseAllocationRunDetails,
+  getEnterpriseAllocationHistory,
+  ALLOCATION_MODES,
+  ALLOCATION_ERROR_CODES
+};
+
 
 /**
  * Universal Auto-Detected Upload Processor
@@ -1568,6 +1606,9 @@ export function getAccountReassignmentLogs(workDate) {
 }
 
 export function isCSDepartment(dept, name = '') {
+  if (dept && !name) {
+    return isCsDept(dept);
+  }
   return isCsEmployee({ name: name || '', department: dept || '' });
 }
 
@@ -1676,6 +1717,9 @@ export function reassignAccountOwner(workDate, account, newEmployeeId, reason = 
 }
 
 export function generateOrderLevelAllocation(workDate, options = {}) {
+  if (options.use_enterprise === true || options.enterprise === true) {
+    return executeEnterpriseAllocation(workDate, options);
+  }
   if (options.round_based === true || options.is_reallocation === true || options.round_number !== undefined) {
     return generateRoundBasedAllocation(workDate, options);
   }
@@ -2334,13 +2378,101 @@ function _legacy_generateOrderLevelAllocation(workDate, options = {}) {
 }
 
 /**
+ * Defensive Contract Validation for Allocation Payloads
+ * Distinguishes between:
+ * 1. Valid non-empty allocation (records array with >= 1 valid records)
+ * 2. Valid empty allocation (records array with 0 items, e.g. 0 allocatable orders)
+ * 3. Invalid allocation payload (null, undefined, missing array, malformed records)
+ */
+export function validateAllocationPayload(workDate, allocationPayload) {
+  if (!allocationPayload || typeof allocationPayload !== 'object') {
+    const receivedType = allocationPayload === null ? 'null' : typeof allocationPayload;
+    throw new Error(
+      `[ALLOCATION CONTRACT VALIDATION ERROR] Invalid allocation payload for date "${workDate}": ` +
+      `Expected a non-null object or array, received "${receivedType}".`
+    );
+  }
+
+  let rawList = null;
+  let method = 'Fair Random';
+  let byEmployee = [];
+
+  if (Array.isArray(allocationPayload)) {
+    rawList = allocationPayload;
+  } else {
+    method = allocationPayload.method || 'Fair Random';
+    byEmployee = Array.isArray(allocationPayload.by_employee) ? allocationPayload.by_employee : [];
+
+    if (Array.isArray(allocationPayload.raw_allocations)) {
+      rawList = allocationPayload.raw_allocations;
+    } else if (Array.isArray(allocationPayload.allocations)) {
+      rawList = allocationPayload.allocations;
+    } else if (Array.isArray(allocationPayload.orderLevelAllocations)) {
+      rawList = allocationPayload.orderLevelAllocations;
+    } else if (Array.isArray(allocationPayload.assignments)) {
+      rawList = allocationPayload.assignments;
+    }
+  }
+
+  if (!rawList) {
+    const receivedKeys = Object.keys(allocationPayload).join(', ') || 'none';
+    throw new Error(
+      `[ALLOCATION CONTRACT VALIDATION ERROR] Invalid allocation payload for date "${workDate}": ` +
+      `Missing required allocation records array. Expected one of "raw_allocations", "allocations", "orderLevelAllocations", "assignments", or a root array. ` +
+      `Received object keys: [${receivedKeys}].`
+    );
+  }
+
+  // Valid empty allocation
+  if (rawList.length === 0) {
+    return {
+      isValid: true,
+      isEmpty: true,
+      records: [],
+      method,
+      byEmployee
+    };
+  }
+
+  // Validate non-empty records
+  for (let i = 0; i < rawList.length; i++) {
+    const item = rawList[i];
+    if (!item || typeof item !== 'object') {
+      throw new Error(
+        `[ALLOCATION CONTRACT VALIDATION ERROR] Malformed allocation record at index ${i} for date "${workDate}": ` +
+        `Expected an object record, received "${item === null ? 'null' : typeof item}".`
+      );
+    }
+    if (!item.order_code || typeof item.order_code !== 'string') {
+      throw new Error(
+        `[ALLOCATION CONTRACT VALIDATION ERROR] Malformed allocation record at index ${i} for date "${workDate}": ` +
+        `Missing or non-string "order_code". Received: ${JSON.stringify(item.order_code)}.`
+      );
+    }
+    if (!item.account || typeof item.account !== 'string') {
+      throw new Error(
+        `[ALLOCATION CONTRACT VALIDATION ERROR] Malformed allocation record at index ${i} for date "${workDate}": ` +
+        `Missing or non-string "account" for order "${item.order_code}". Received: ${JSON.stringify(item.account)}.`
+      );
+    }
+  }
+
+  return {
+    isValid: true,
+    isEmpty: false,
+    records: rawList,
+    method,
+    byEmployee
+  };
+}
+
+/**
  * Save final order-level allocation permanently by date and version
  */
 export function saveFinalOrderLevelAllocation(workDate, allocationPayload, notes = '', generatedBy = 'Supervisor') {
-  const { raw_allocations, method = 'Fair Random' } = allocationPayload;
-  if (!Array.isArray(raw_allocations) || raw_allocations.length === 0) {
-    throw new Error('Invalid or empty allocation payload');
-  }
+  // Defensive validation of input payload
+  const validation = validateAllocationPayload(workDate, allocationPayload);
+  const { records: raw_allocations, method = 'Fair Random', byEmployee = [] } = validation;
 
   // Determine next version number
   const lastVerRow = db.prepare(`
@@ -2349,6 +2481,33 @@ export function saveFinalOrderLevelAllocation(workDate, allocationPayload, notes
     WHERE allocation_date = ?
   `).get(workDate);
   const versionNumber = (lastVerRow && lastVerRow.max_ver) ? lastVerRow.max_ver + 1 : 1;
+
+  // Handle Valid Empty Allocation (legitimately zero orders to allocate)
+  if (validation.isEmpty) {
+    db.prepare(`
+      INSERT INTO allocation_versions (
+        allocation_date, version_number, generated_at, generated_by, method,
+        rule_summary, total_orders, assigned_orders, unassigned_orders, allocation_json, is_final
+      ) VALUES (?, ?, datetime('now'), ?, ?, ?, 0, 0, 0, '[]', 1)
+    `).run(
+      workDate,
+      versionNumber,
+      generatedBy,
+      method,
+      notes || `Empty Order-Level Allocation v${versionNumber}`
+    );
+
+    return {
+      success: true,
+      work_date: workDate,
+      version: versionNumber,
+      version_number: versionNumber,
+      total_orders: 0,
+      assigned_orders: 0,
+      unassigned_orders: 0,
+      is_empty: true
+    };
+  }
 
   const insertOrdAlloc = db.prepare(`
     INSERT INTO order_level_allocations (
@@ -2392,7 +2551,7 @@ export function saveFinalOrderLevelAllocation(workDate, allocationPayload, notes
       raw_allocations.length,
       assignedCount,
       unassignedCount,
-      JSON.stringify(allocationPayload.by_employee || [])
+      JSON.stringify(byEmployee || allocationPayload.by_employee || [])
     );
 
     // 3. Sync to legacy allocation_headers and allocation_items for backwards compatibility & Copy text

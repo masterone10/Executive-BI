@@ -32,6 +32,13 @@ CREATE TABLE IF NOT EXISTS daily_working_team (
   source TEXT NOT NULL DEFAULT 'MANUAL', -- 'MANUAL', 'VENDOOR_OBSERVED'
   observed_at TEXT,
   last_activity_at TEXT,
+  last_productive_activity_at TEXT,
+  last_action TEXT,
+  last_productive_action TEXT,
+  last_order_code TEXT,
+  last_account TEXT,
+  live_status TEXT,
+  idle_seconds INTEGER,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')),
   UNIQUE(work_date, employee_id)
@@ -635,3 +642,144 @@ CREATE INDEX IF NOT EXISTS idx_vendoor_orders_srcdate ON vendoor_orders(source_d
 CREATE INDEX IF NOT EXISTS idx_cwo_date_acc ON current_work_orders(work_date, account);
 CREATE INDEX IF NOT EXISTS idx_ord_alloc_date_ver ON order_level_allocations(allocation_date, allocation_version, employee_id);
 CREATE INDEX IF NOT EXISTS idx_raw_logs_date_emp_dt ON raw_log_records(work_date, employee_name, event_datetime);
+
+-- ============================================================
+-- ENTERPRISE ALLOCATION ENGINE SCHEMA (Sections 125-133A)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS allocation_configuration_versions (
+  version INTEGER PRIMARY KEY AUTOINCREMENT,
+  published_at TEXT NOT NULL DEFAULT (datetime('now')),
+  published_by TEXT NOT NULL DEFAULT 'Supervisor',
+  config_json TEXT NOT NULL,
+  diff_summary_json TEXT,
+  accounts_changed INTEGER DEFAULT 0,
+  employees_changed INTEGER DEFAULT 0,
+  settings_changed INTEGER DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS account_schedules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account TEXT NOT NULL UNIQUE,
+  new_start_time TEXT,
+  new_end_time TEXT,
+  pending_start_time TEXT,
+  pending_end_time TEXT,
+  config_version INTEGER DEFAULT 1,
+  updated_at TEXT DEFAULT (datetime('now')),
+  updated_by TEXT DEFAULT 'Supervisor'
+);
+CREATE INDEX IF NOT EXISTS idx_acc_sched_acc ON account_schedules(account);
+
+CREATE TABLE IF NOT EXISTS employee_capacities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER NOT NULL UNIQUE REFERENCES employees(id) ON DELETE CASCADE,
+  max_orders INTEGER NOT NULL DEFAULT 40,
+  config_version INTEGER DEFAULT 1,
+  updated_at TEXT DEFAULT (datetime('now')),
+  updated_by TEXT DEFAULT 'Supervisor'
+);
+CREATE INDEX IF NOT EXISTS idx_emp_cap_emp ON employee_capacities(employee_id);
+
+CREATE TABLE IF NOT EXISTS allocation_global_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  description TEXT,
+  config_version INTEGER DEFAULT 1,
+  updated_at TEXT DEFAULT (datetime('now')),
+  updated_by TEXT DEFAULT 'Supervisor'
+);
+
+CREATE TABLE IF NOT EXISTS employee_daily_allocation_states (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_date TEXT NOT NULL,
+  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  pending_sequence INTEGER NOT NULL DEFAULT 0,
+  new_event_consumed INTEGER NOT NULL DEFAULT 0,
+  daily_mode TEXT NOT NULL DEFAULT 'NORMAL', -- 'NORMAL', 'PENDING_RESCUE'
+  rescue_state TEXT NOT NULL DEFAULT 'NONE',   -- 'NONE', 'ACTIVE'
+  last_allocation_run_id TEXT,
+  last_allocation_at TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(work_date, employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_emp_daily_state_date ON employee_daily_allocation_states(work_date);
+CREATE INDEX IF NOT EXISTS idx_emp_daily_state_emp ON employee_daily_allocation_states(employee_id);
+
+CREATE TABLE IF NOT EXISTS enterprise_allocation_runs (
+  run_id TEXT PRIMARY KEY,
+  work_date TEXT NOT NULL,
+  trigger TEXT NOT NULL, -- 'MANUAL', 'AUTOMATIC', 'LOW_REMAINING_EVALUATION', 'RESCUE_EVALUATION', 'PREVIEW', 'SHADOW'
+  mode TEXT NOT NULL,    -- 'OFF', 'SHADOW', 'PREVIEW', 'ACTIVE'
+  allocation_type TEXT NOT NULL, -- 'PENDING_EVENT', 'NEW_EVENT', 'PENDING_RESCUE_SUPPORT', 'MIXED_BATCH'
+  status TEXT NOT NULL,  -- 'COMMITTED', 'PREVIEW_GENERATED', 'BLOCKED', 'ROLLED_BACK'
+  block_type TEXT,       -- 'BUSINESS_RULE', 'SYSTEM_SAFETY', NULL
+  block_reason TEXT,
+  rescue_state TEXT DEFAULT 'NONE',
+  configuration_version INTEGER,
+  context_hash TEXT NOT NULL,
+  fingerprint TEXT,
+  total_orders_input INTEGER DEFAULT 0,
+  assigned_count INTEGER DEFAULT 0,
+  unassigned_count INTEGER DEFAULT 0,
+  eligible_candidates_json TEXT,
+  excluded_candidates_json TEXT,
+  proposal_json TEXT,
+  decision_trace_json TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ent_alloc_date ON enterprise_allocation_runs(work_date);
+CREATE INDEX IF NOT EXISTS idx_ent_alloc_status ON enterprise_allocation_runs(status);
+
+CREATE TABLE IF NOT EXISTS distribution_fingerprints (
+  fingerprint TEXT PRIMARY KEY,
+  work_date TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  allocation_type TEXT,
+  distribution_metadata_json TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_dist_fp_date ON distribution_fingerprints(work_date);
+
+CREATE TABLE IF NOT EXISTS allocation_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  work_date TEXT NOT NULL,
+  configuration_version INTEGER,
+  context_hash TEXT NOT NULL,
+  snapshot_data_json TEXT NOT NULL,
+  captured_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_alloc_snap_run ON allocation_snapshots(run_id);
+CREATE INDEX IF NOT EXISTS idx_alloc_snap_date ON allocation_snapshots(work_date);
+
+CREATE TABLE IF NOT EXISTS allocation_decision_audits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  work_date TEXT NOT NULL,
+  configuration_version INTEGER,
+  entity_type TEXT NOT NULL, -- 'EMPLOYEE', 'ACCOUNT', 'ORDER', 'RESCUE', 'RUN'
+  entity_id TEXT NOT NULL,
+  decision TEXT NOT NULL,    -- 'ELIGIBLE', 'EXCLUDED', 'ASSIGNED', 'BLOCKED', 'WAITING'
+  reason_code TEXT NOT NULL,
+  reason_details TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_alloc_audit_run ON allocation_decision_audits(run_id);
+CREATE INDEX IF NOT EXISTS idx_alloc_audit_date ON allocation_decision_audits(work_date);
+
+CREATE TABLE IF NOT EXISTS allocation_operational_alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_date TEXT NOT NULL,
+  alert_type TEXT NOT NULL, -- 'LOW_REMAINING', 'ACCOUNT_OPENING_SOON', 'RESCUE_PRESSURE', 'BLOCK_ALERT'
+  entity_id TEXT NOT NULL,
+  details_json TEXT,
+  status TEXT DEFAULT 'ACTIVE',
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(work_date, alert_type, entity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_alloc_alerts_date ON allocation_operational_alerts(work_date);

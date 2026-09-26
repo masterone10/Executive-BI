@@ -43,10 +43,10 @@ describe('Comprehensive 22-Point Validation: Round-Based Allocation, Tracking, &
         status = 'ACTIVE'
     `);
 
-    upsertEmp.run(101, 'Sara CS Both', 'Customer Service', 'Both');
-    upsertEmp.run(102, 'Nour CS New', 'Customer Service', 'New');
-    upsertEmp.run(103, 'Mona CS Pending', 'Customer Service', 'Pending');
-    upsertEmp.run(104, 'Ahmed CS Both', 'Customer Service', 'Both');
+    upsertEmp.run(101, 'Sara CS Both', 'CS', 'Both');
+    upsertEmp.run(102, 'Nour CS New', 'CS', 'New');
+    upsertEmp.run(103, 'Mona CS Pending', 'CS', 'Pending');
+    upsertEmp.run(104, 'Ahmed CS Both', 'CS', 'Both');
     upsertEmp.run(105, 'Tariq Marketing', 'Marketing', 'Both');
 
     // Setup working team for TEST_DATE
