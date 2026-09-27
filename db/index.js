@@ -15,7 +15,7 @@ const isTestDetected = Boolean(
 const isTest = isTestDetected && !isExplicitProd;
 export const DB_PATH = process.env.TEST_DB 
   ? path.resolve(ROOT_DIR, process.env.TEST_DB) 
-  : (isTest ? path.join(ROOT_DIR, 'data.test.db') : (process.env.DATABASE_PATH ? path.resolve(ROOT_DIR, process.env.DATABASE_PATH) : path.join(ROOT_DIR, 'data.db')));
+  : (isTest ? path.join(ROOT_DIR, 'data.test.db') : (process.env.DATABASE_PATH && process.env.DATABASE_PATH !== 'false' ? path.resolve(ROOT_DIR, process.env.DATABASE_PATH) : path.join(ROOT_DIR, 'data.db')));
 const SCHEMA_PATH = path.join(ROOT_DIR, 'db', 'schema.sql');
 
 export const db = new Database(DB_PATH);

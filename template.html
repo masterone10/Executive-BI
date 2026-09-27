@@ -1524,6 +1524,7 @@ async function changeAllocDate(newDate) {
  */
 async function runAutoFairAllocation(regenerate = false) {
   try {
+    showToast('⏳ Distributing Work...', 'Evaluating account ownership, capacity, and delayed NEW priorities...');
     const res = await apiFetch(`/api/allocations/${currentWorkDate}/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1566,9 +1567,41 @@ async function runAutoFairAllocation(regenerate = false) {
         }).catch(console.warn);
       }
 
+      const totalEligible = res.total_orders || rawAllocs.length;
       const assignedCount = res.assigned_orders !== undefined ? res.assigned_orders : (res.assigned_count !== undefined ? res.assigned_count : rawAllocs.filter(a => a.employee_id !== null).length);
-      const presMsg = (res.preserved_orders_count || 0) > 0 ? ` (${res.preserved_orders_count} previously assigned orders preserved)` : '';
-      showToast('✓ Fair Allocation Complete!', `${assignedCount} orders distributed across ${byEmp.length} agents${presMsg}.`);
+      const preservedCount = res.preserved_orders || res.preserved_orders_count || 0;
+      const unassignedCount = res.unassigned_orders !== undefined ? res.unassigned_orders : Math.max(0, totalEligible - assignedCount - preservedCount);
+      const versionNum = res.version_number || res.version || 1;
+
+      // Compute account distribution statistics
+      const accMap = new Map();
+      rawAllocs.forEach(a => {
+        if (!a.account) return;
+        const k = a.account.toLowerCase();
+        if (!accMap.has(k)) accMap.set(k, new Set());
+        if (a.employee_id) accMap.get(k).add(a.employee_id);
+      });
+      let unifiedCount = 0, twoEmpCount = 0, threePlusCount = 0;
+      accMap.forEach((emps) => {
+        if (emps.size <= 1) unifiedCount++;
+        else if (emps.size === 2) twoEmpCount++;
+        else threePlusCount++;
+      });
+
+      const delayedNewCount = rawAllocs.filter(a => a.is_delayed || (a.priority === 'FAST_TRACK')).length;
+      const normalNewCount = rawAllocs.filter(a => !a.is_delayed && a.priority !== 'FAST_TRACK' && !(a.status || '').toLowerCase().includes('pending')).length;
+      const pendingCount = rawAllocs.filter(a => (a.status || '').toLowerCase().includes('pending')).length;
+
+      const summaryText = `
+        <div style="font-size:12.5px;line-height:1.6">
+          <b>Eligible Orders:</b> ${totalEligible} (Preserved: ${preservedCount}, Newly Assigned: ${assignedCount}, Unassigned: ${unassignedCount})<br>
+          <b>Accounts:</b> ${accMap.size} Total (${unifiedCount} Unified, ${twoEmpCount} 2-CS Split, ${threePlusCount} 3+ Split)<br>
+          <b>Priorities:</b> ${delayedNewCount} Delayed NEW · ${normalNewCount} Normal NEW · ${pendingCount} PENDING<br>
+          <span style="color:#15803D;font-weight:700">✓ Version #${versionNum} Saved Automatically</span>
+        </div>
+      `;
+
+      showToast('✓ Allocation Complete', summaryText, 8000);
       
       const overview = await apiFetch(`/api/work/current?date=${currentWorkDate}`).catch(() => null);
       renderWorkAllocationUI(overview);

@@ -185,15 +185,17 @@ export function getCompletedOrdersForDate(workDate) {
     ORDER BY timestamp_str ASC
   `).all(workDate);
 
-  const rawLogs = db.prepare(`
-    SELECT 
-      order_code, employee_name, action, event_datetime as event_time
-    FROM raw_log_records
-    WHERE work_date = ?
-    ORDER BY event_datetime ASC
-  `).all(workDate);
-
-  const allLogs = [...vendoorLogs, ...rawLogs];
+  let allLogs = vendoorLogs;
+  if (allLogs.length === 0) {
+    const rawLogs = db.prepare(`
+      SELECT 
+        order_code, employee_name, action, event_datetime as event_time
+      FROM raw_log_records
+      WHERE work_date = ?
+      ORDER BY event_datetime ASC
+    `).all(workDate);
+    allLogs = rawLogs;
+  }
 
   const completedOrderCodes = new Set();
   const completedByEmployee = new Map(); // employee_id -> Set of order_codes
@@ -237,7 +239,7 @@ export function getCompletedOrdersForDate(workDate) {
     if (!classification.is_completed) continue;
 
     // Resolve employee identity
-    const resolved = resolveEmployeeIdentity(log.employee_name);
+    const resolved = resolveEmployeeIdentity(log.employee_name, { persistIdentity: false });
     if (resolved.status === MATCH_STATUS.UNMATCHED || !resolved.employee_id) {
       // Ambiguous / unmatched identity cannot reliably attribute completion
       continue;

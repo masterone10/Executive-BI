@@ -73,7 +73,7 @@ export async function vendoorFetch(endpointPath, options = {}) {
   const headers = buildVendoorHeaders(options.headers || {});
   const method = options.method || 'GET';
   const timeoutMs = options.timeoutMs || cfg.timeoutMs;
-  const maxRetries = options.retries !== undefined ? options.retries : 1;
+  const maxRetries = options.retries !== undefined ? options.retries : (method === 'GET' ? 2 : 1);
 
   let attempt = 0;
   let lastError = null;
@@ -151,8 +151,9 @@ export async function vendoorFetch(endpointPath, options = {}) {
 
       if (!response.ok && status >= 500) {
         if (attempt <= maxRetries) {
-          console.warn(`[Vendoor] Server returned HTTP ${status}, retrying in 1s (attempt ${attempt}/${maxRetries})...`);
-          await new Promise(r => setTimeout(r, 1000));
+          const backoffMs = Math.min(attempt * 1000, 3000);
+          console.log(`[Vendoor] Server returned HTTP ${status}, retrying in ${backoffMs}ms (attempt ${attempt}/${maxRetries})...`);
+          await new Promise(r => setTimeout(r, backoffMs));
           continue;
         }
         throw new VendoorClientError(
@@ -217,12 +218,14 @@ export async function vendoorFetch(endpointPath, options = {}) {
       const isIdempotentEndpoint = endpointPath.includes('/export/check/order') || 
                                     endpointPath.includes('/export/excute') || 
                                     endpointPath.includes('/login') ||
+                                    endpointPath.includes('/dashboard/orders') ||
                                     options.retryable === true;
       const canRetryMethod = method === 'GET' || isIdempotentEndpoint;
 
       if (attempt <= maxRetries && canRetryMethod) {
-        console.warn(`[Vendoor] Network error on ${method} ${endpointPath}: ${err.message}, retrying in 1s (attempt ${attempt}/${maxRetries})...`);
-        await new Promise(r => setTimeout(r, 1000));
+        const backoffMs = Math.min(attempt * 1000, 3000);
+        console.log(`[Vendoor] Network notice on ${method} ${endpointPath}: ${err.message}, retrying in ${backoffMs}ms (attempt ${attempt}/${maxRetries})...`);
+        await new Promise(r => setTimeout(r, backoffMs));
         continue;
       }
 

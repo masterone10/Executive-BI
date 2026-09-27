@@ -3434,13 +3434,13 @@ if (process.env.NODE_ENV !== 'test') {
             console.log('[AUTONOMOUS] Live Vendoor session authenticated.');
           }
         }).catch(err => {
-          console.warn('[AUTONOMOUS] Initial Vendoor auto-login notice:', err.message);
+          console.log('[AUTONOMOUS] Initial Vendoor auto-login notice:', err.message);
         });
       }
       startAutonomousVendoorPoller({ intervalMs: 30000, ordersIntervalMs: 30000, logsIntervalMs: 30000 });
       console.log('[AUTONOMOUS] Decoupled 30-second background Vendoor poller initialized.');
     } catch (pollerErr) {
-      console.warn('[AUTONOMOUS] Poller init warning:', pollerErr.message);
+      console.log('[AUTONOMOUS] Poller init notice:', pollerErr.message);
     }
   });
 

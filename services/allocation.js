@@ -1561,11 +1561,14 @@ export function saveWorkingTeam(workDate, teamList) {
       .map(item => item.employee_id || item.id)
   );
 
+  const defaultActivity = `${workDate}T12:00:00Z`;
+
   const insertWorking = db.prepare(`
-    INSERT INTO daily_working_team (work_date, employee_id, is_working, source, created_at, updated_at)
-    VALUES (?, ?, ?, 'MANUAL', datetime('now'), datetime('now'))
+    INSERT INTO daily_working_team (work_date, employee_id, is_working, last_activity_at, source, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'MANUAL', datetime('now'), datetime('now'))
     ON CONFLICT(work_date, employee_id) DO UPDATE SET
       is_working = excluded.is_working,
+      last_activity_at = COALESCE(daily_working_team.last_activity_at, excluded.last_activity_at),
       source = 'MANUAL',
       updated_at = datetime('now')
   `);
@@ -1573,7 +1576,7 @@ export function saveWorkingTeam(workDate, teamList) {
   const tx = db.transaction(() => {
     for (const emp of allEmployees) {
       const isWorking = activeIdsSet.has(emp.id) ? 1 : 0;
-      insertWorking.run(workDate, emp.id, isWorking);
+      insertWorking.run(workDate, emp.id, isWorking, defaultActivity);
     }
   });
 
@@ -1903,14 +1906,41 @@ function _legacy_generateOrderLevelAllocation(workDate, options = {}) {
     else if (ord.status === 'Pending') accData.pendingCount++;
   }
 
+  // Tracking employee workloads:
+  const employeeStatsMap = new Map();
+  for (const emp of workingTeam) {
+    employeeStatsMap.set(emp.employee_id, {
+      employee_id: emp.employee_id,
+      employee_name: emp.name,
+      department: emp.department,
+      team_membership: emp.permanent_team_membership,
+      allowed_new: Boolean(emp.allowed_new),
+      allowed_pending: Boolean(emp.allowed_pending),
+      assigned_stream: null, // 'NEW' | 'PENDING' | null
+      accountsCount: 0,
+      ordersCount: 0,
+      accountsMap: new Map(), // accountName -> { account, total_orders, new_orders, pending_orders }
+      orders: []
+    });
+  }
+
   // Helper: resolve eligibility for an entire Account
   function resolveAccountEligibility(accountName, hasNew, hasPending) {
     let eligible = workingTeam.filter(emp => {
+      const empStat = employeeStatsMap.get(emp.employee_id);
       if (hasNew && hasPending) {
         return Boolean(emp.allowed_new && emp.allowed_pending);
       }
-      if (hasNew) return Boolean(emp.allowed_new);
-      if (hasPending) return Boolean(emp.allowed_pending);
+      if (hasNew) {
+        if (!emp.allowed_new) return false;
+        if (empStat && empStat.assigned_stream === 'PENDING') return false;
+        return true;
+      }
+      if (hasPending) {
+        if (!emp.allowed_pending) return false;
+        if (empStat && empStat.assigned_stream === 'NEW') return false;
+        return true;
+      }
       return true;
     });
 
@@ -1945,21 +1975,6 @@ function _legacy_generateOrderLevelAllocation(workDate, options = {}) {
     }
 
     return { eligible, ruleNote };
-  }
-
-  // Tracking employee workloads:
-  const employeeStatsMap = new Map();
-  for (const emp of workingTeam) {
-    employeeStatsMap.set(emp.employee_id, {
-      employee_id: emp.employee_id,
-      employee_name: emp.name,
-      department: emp.department,
-      team_membership: emp.permanent_team_membership,
-      accountsCount: 0,
-      ordersCount: 0,
-      accountsMap: new Map(), // accountName -> { account, total_orders, new_orders, pending_orders }
-      orders: []
-    });
   }
 
   const finalAccountOwners = new Map(); // accountKey -> { account, employee_id, employee_name, method, rule_note, is_override }
@@ -2036,6 +2051,17 @@ function _legacy_generateOrderLevelAllocation(workDate, options = {}) {
       const hasPending = accData.pendingCount > 0;
       const { eligible, ruleNote } = resolveAccountEligibility(accData.accountName, hasNew, hasPending);
 
+      const delayedCount = accData.orders.filter(o => {
+        const isPend = (o.status || '').toLowerCase().includes('pending');
+        return !isPend && (
+          (o.priority || '').toUpperCase() === 'FAST_TRACK' ||
+          (o.priority || '').toUpperCase() === 'DELAYED' ||
+          (o.order_date && o.order_date < workDate)
+        );
+      }).length;
+      const normalNewCount = accData.newCount - delayedCount;
+      const accountPriority = delayedCount > 0 ? 1 : (normalNewCount > 0 ? 2 : 3);
+
       accountsToAllocate.push({
         accKey,
         accountName: accData.accountName,
@@ -2043,6 +2069,9 @@ function _legacy_generateOrderLevelAllocation(workDate, options = {}) {
         totalOrders: accData.orders.length,
         newCount: accData.newCount,
         pendingCount: accData.pendingCount,
+        delayedCount,
+        normalNewCount,
+        accountPriority,
         eligible,
         ruleNote
       });
@@ -2050,13 +2079,25 @@ function _legacy_generateOrderLevelAllocation(workDate, options = {}) {
   }
 
   // Sort unassigned accounts:
-  // 1. Fewest eligible candidates first (Restricted Accounts priority! Section 10)
-  // 2. Largest order count first
+  // 1. Priority Class: Delayed NEW (1) -> Normal NEW (2) -> PENDING (3)
+  // 2. Delayed NEW count DESC
+  // 3. Fewest eligible candidates first (Restricted Accounts priority)
+  // 4. Largest order count first
+  // 5. Alphabetical tie-breaker
   accountsToAllocate.sort((a, b) => {
+    if (a.accountPriority !== b.accountPriority) {
+      return a.accountPriority - b.accountPriority;
+    }
+    if (b.delayedCount !== a.delayedCount) {
+      return b.delayedCount - a.delayedCount;
+    }
     if (a.eligible.length !== b.eligible.length) {
       return a.eligible.length - b.eligible.length;
     }
-    return b.totalOrders - a.totalOrders;
+    if (b.totalOrders !== a.totalOrders) {
+      return b.totalOrders - a.totalOrders;
+    }
+    return a.accountName.localeCompare(b.accountName);
   });
 
   // Step 3: Fair Account Owner Selection Algorithm (Section 4, 9, 27, 28)
@@ -2093,11 +2134,11 @@ function _legacy_generateOrderLevelAllocation(workDate, options = {}) {
       continue;
     }
 
-    // Smart Split Decision (Sections 8, 9, 10, 19, 22, 23 of spec):
-    // Evaluate candidate capacity and score first to answer the central question:
+    // Smart Split Decision:
+    // Evaluate candidate capacity and score first to answer:
     // "Can one eligible employee reasonably handle the entire Account based on their current remaining capacity?"
-    // If YES: KEEP TOGETHER (regardless of whether the account has 40, 60, 80, 100, 120 orders!)
-    // If NO: evaluate Smart Split.
+    // If YES: KEEP TOGETHER (1 Account = 1 Employee).
+    // If NO: Minimum necessary splitting (Max 2 employees preferred).
     const candidateAssessments = eligible.map(emp => {
       const stat = employeeStatsMap.get(emp.employee_id) || { accountsCount: 0, ordersCount: 0 };
       const prof = performanceProfiles.get(emp.employee_id);
@@ -2119,17 +2160,11 @@ function _legacy_generateOrderLevelAllocation(workDate, options = {}) {
     const hasSingleCapableOwner = capableCandidates.length > 0;
 
     const isSmartSplitEnabled = options.enable_smart_split === true || options.smart_split === true || options.split_policy === 'smart';
-    // SMART SPLIT TRIGGERS ONLY WHEN:
-    // 1. Multiple eligible candidates exist
-    // 2. NO single eligible candidate has sufficient remaining capacity for the full account
-    // 3. Smart split is enabled (or requested)
     const shouldSmartSplit = isSmartSplitEnabled && !hasSingleCapableOwner && eligible.length > 1;
 
     if (shouldSmartSplit) {
-      // SMART SPLIT: Distribute proportionally based on performance & capacity
-      const candidateCapacities = [...candidateAssessments];
-
-      // Sort by remaining capacity & score
+      // MINIMUM SPLITTING: Prefer at most 2 employees when capacity requires
+      const candidateCapacities = [...candidateAssessments].filter(c => c.remainingCapacity > 0);
       candidateCapacities.sort((a, b) => {
         if (b.remainingCapacity !== a.remainingCapacity) {
           return b.remainingCapacity - a.remainingCapacity;
@@ -2137,40 +2172,74 @@ function _legacy_generateOrderLevelAllocation(workDate, options = {}) {
         return b.compositeScore - a.compositeScore;
       });
 
-      // Distribute totalOrders proportionally across candidates
-      const totalAvailableCap = candidateCapacities.reduce((sum, c) => sum + c.remainingCapacity, 0);
       let remainingToAssign = totalOrders;
       const splitAllocations = [];
 
-      for (let i = 0; i < candidateCapacities.length; i++) {
-        const cand = candidateCapacities[i];
-        if (remainingToAssign <= 0) break;
-
-        let allocOrdersCount = 0;
-        if (i === candidateCapacities.length - 1 || totalAvailableCap === 0) {
-          allocOrdersCount = remainingToAssign;
-        } else {
-          const propRatio = cand.remainingCapacity / totalAvailableCap;
-          allocOrdersCount = Math.min(remainingToAssign, Math.max(1, Math.round(totalOrders * propRatio)));
-        }
-        remainingToAssign -= allocOrdersCount;
+      // Check if top 2 candidates can absorb totalOrders
+      if (candidateCapacities.length >= 2 && (candidateCapacities[0].remainingCapacity + candidateCapacities[1].remainingCapacity >= totalOrders)) {
+        const c1 = candidateCapacities[0];
+        const c2 = candidateCapacities[1];
+        const alloc1 = Math.min(c1.remainingCapacity, totalOrders - 1);
+        const alloc2 = totalOrders - alloc1;
 
         splitAllocations.push({
-          employee_id: cand.emp.employee_id,
-          employee_name: cand.emp.name,
-          orders_count: allocOrdersCount,
-          capacity: cand.remainingCapacity,
-          score: cand.compositeScore
+          employee_id: c1.emp.employee_id,
+          employee_name: c1.emp.name,
+          orders_count: alloc1,
+          capacity: c1.remainingCapacity,
+          score: c1.compositeScore
         });
+        const s1 = employeeStatsMap.get(c1.emp.employee_id);
+        if (s1) { s1.accountsCount++; s1.ordersCount += alloc1; }
 
-        const empStat = employeeStatsMap.get(cand.emp.employee_id);
-        if (empStat) {
-          empStat.accountsCount++;
-          empStat.ordersCount += allocOrdersCount;
+        splitAllocations.push({
+          employee_id: c2.emp.employee_id,
+          employee_name: c2.emp.name,
+          orders_count: alloc2,
+          capacity: c2.remainingCapacity,
+          score: c2.compositeScore
+        });
+        const s2 = employeeStatsMap.get(c2.emp.employee_id);
+        if (s2) { s2.accountsCount++; s2.ordersCount += alloc2; }
+      } else {
+        // Fallback to proportional distribution if 3+ employees needed
+        const totalAvailableCap = candidateCapacities.reduce((sum, c) => sum + c.remainingCapacity, 0);
+        for (let i = 0; i < candidateCapacities.length; i++) {
+          const cand = candidateCapacities[i];
+          if (remainingToAssign <= 0) break;
+
+          let allocOrdersCount = 0;
+          if (i === candidateCapacities.length - 1 || totalAvailableCap === 0) {
+            allocOrdersCount = remainingToAssign;
+          } else {
+            const propRatio = cand.remainingCapacity / totalAvailableCap;
+            allocOrdersCount = Math.min(remainingToAssign, Math.max(1, Math.round(totalOrders * propRatio)));
+          }
+          remainingToAssign -= allocOrdersCount;
+
+          splitAllocations.push({
+            employee_id: cand.emp.employee_id,
+            employee_name: cand.emp.name,
+            orders_count: allocOrdersCount,
+            capacity: cand.remainingCapacity,
+            score: cand.compositeScore
+          });
+
+          const empStat = employeeStatsMap.get(cand.emp.employee_id);
+          if (empStat) {
+            empStat.accountsCount++;
+            empStat.ordersCount += allocOrdersCount;
+          }
         }
       }
 
-      // Map orders to the split employees
+      // Map orders to the split employees (Delayed NEW first, Normal NEW second, PENDING third)
+      accOrders.sort((a, b) => {
+        const isPendA = (a.status || '').toLowerCase().includes('pending') ? 1 : 0;
+        const isPendB = (b.status || '').toLowerCase().includes('pending') ? 1 : 0;
+        return isPendA - isPendB;
+      });
+
       let orderIndex = 0;
       for (const sa of splitAllocations) {
         for (let j = 0; j < sa.orders_count && orderIndex < accOrders.length; j++) {
@@ -2178,8 +2247,8 @@ function _legacy_generateOrderLevelAllocation(workDate, options = {}) {
           splitOrdersAllocMap.set(ord.order_code, {
             employee_id: sa.employee_id,
             employee_name: sa.employee_name,
-            method: 'Smart Split',
-            rule_note: `Smart Split: ${sa.orders_count} orders to ${sa.employee_name} (Capacity: ${sa.capacity}, Score: ${sa.score})`
+            method: 'Controlled Split',
+            rule_note: `Controlled Split: ${sa.orders_count} orders to ${sa.employee_name} (Capacity: ${sa.capacity}, Score: ${sa.score})`
           });
         }
       }
@@ -2188,9 +2257,9 @@ function _legacy_generateOrderLevelAllocation(workDate, options = {}) {
       finalAccountOwners.set(accKey, {
         account: accountName,
         employee_id: splitAllocations[0].employee_id,
-        employee_name: `SMART SPLIT (${splitAllocations.map(s => s.employee_name).join(', ')})`,
-        method: 'Smart Split',
-        rule_note: `Smart Split: Workload of ${totalOrders} orders split across ${splitAllocations.length} employees [${splitEmpNames}] based on capacity & performance`,
+        employee_name: `CONTROLLED SPLIT (${splitAllocations.map(s => s.employee_name).join(', ')})`,
+        method: 'Controlled Split',
+        rule_note: `Controlled Split: Workload of ${totalOrders} orders split across ${splitAllocations.length} employees [${splitEmpNames}] based on capacity & performance`,
         is_override: 0,
         is_split: 1,
         split_details: splitAllocations
@@ -2247,6 +2316,8 @@ function _legacy_generateOrderLevelAllocation(workDate, options = {}) {
     if (empStat) {
       empStat.accountsCount++;
       empStat.ordersCount += totalOrders;
+      if (hasNew) empStat.assigned_stream = 'NEW';
+      else if (hasPending) empStat.assigned_stream = 'PENDING';
       empStat.accountsMap.set(accountName, {
         account: accountName,
         total_orders: totalOrders,
@@ -2951,7 +3022,7 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
         historicalScore = totalScore / snapRows.length;
         const latestGrade = snapRows[0].grade || '';
 
-        isHighEfficiency = latestGrade === 'A' || latestGrade === 'B' || historicalScore >= 75 || snapRows[0].efficiency_score >= 75;
+        isHighEfficiency = latestGrade.startsWith('A') || latestGrade.startsWith('B') || historicalScore >= 75 || snapRows[0].efficiency_score >= 75;
         // Verified sustainable capacity requires proven throughput (actions or completed volume >= standardCap or average >= 35)
         hasSustainableCapacity = avgHistoricalActions >= 35 || snapRows.some(r => (r.real_actions || 0) >= standardCap);
       }
@@ -2964,8 +3035,14 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
       hasSustainableCapacity = Boolean(elig.has_sustainable_capacity);
     }
 
+    let empStandardCap = standardCap;
+    try {
+      const capRow = db.prepare('SELECT max_orders FROM employee_capacities WHERE employee_id = ?').get(emp.employee_id);
+      if (capRow && capRow.max_orders > 0) empStandardCap = capRow.max_orders;
+    } catch (_) {}
+
     const canOverflow = allowOverflow && isHighEfficiency && hasSustainableCapacity;
-    const allowedCapacity = canOverflow ? Math.min(absoluteCeiling, standardCap + maxOverflow) : standardCap;
+    const allowedCapacity = canOverflow ? Math.min(absoluteCeiling, empStandardCap + maxOverflow) : empStandardCap;
 
     employeeStateMap.set(emp.employee_id, {
       employee_id: emp.employee_id,
@@ -3007,6 +3084,7 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
         tracking_id: ord.tracking_id,
         work_state: ord.work_state,
         priority: ord.priority || 'REGULAR',
+        order_date: ord.order_date,
         round_number: ord.round_number || 1,
         is_preserved: true
       });
@@ -3038,6 +3116,7 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
           tracking_id: ord.tracking_id,
           work_state: ord.work_state,
           priority: ord.priority || 'REGULAR',
+          order_date: ord.order_date,
           round_number: ord.round_number || 1,
           is_preserved: true
         }]
@@ -3106,34 +3185,55 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
         account: ord.account,
         stream,
         has_fast_track: false,
+        has_delayed: false,
+        delayed_count: 0,
         orders: []
       };
       accGroupMap.set(groupKey, grp);
       workGroups.push(grp);
     }
     const targetGrp = accGroupMap.get(groupKey);
+    const isDelayed = !isPending && (
+      (ord.priority === 'FAST_TRACK') ||
+      (ord.priority === 'DELAYED') ||
+      (ord.priority === 'DELAYED_NEW') ||
+      (ord.priority === 'OVERDUE') ||
+      (ord.order_date && ord.order_date < workDate)
+    );
     if (ord.priority === 'FAST_TRACK') {
       targetGrp.has_fast_track = true;
+    }
+    if (isDelayed) {
+      targetGrp.has_delayed = true;
+      targetGrp.delayed_count = (targetGrp.delayed_count || 0) + 1;
     }
     targetGrp.orders.push(ord);
   }
 
-  // Inside each group, sort so Fast Track orders come first for execution priority
+  // Inside each group, sort so Fast Track and Delayed orders come first for execution priority
   for (const grp of workGroups) {
     grp.orders.sort((a, b) => {
-      const prioA = (a.priority === 'FAST_TRACK') ? 0 : 1;
-      const prioB = (b.priority === 'FAST_TRACK') ? 0 : 1;
+      const prioA = (a.priority === 'FAST_TRACK') ? 0 : ((a.priority === 'DELAYED') ? 1 : 2);
+      const prioB = (b.priority === 'FAST_TRACK') ? 0 : ((b.priority === 'DELAYED') ? 1 : 2);
       return prioA - prioB;
     });
   }
 
   // Prioritize workGroups:
-  // 1. Groups containing Fast Track orders first
-  // 2. Large groups first (Decreasing size) to eliminate unnecessary fragmentation
-  // 3. Alphabetical tie-breaker
+  // 1. Delayed NEW groups first (Stream = NEW with delayed / fast track orders)
+  // 2. Normal NEW groups second (Stream = NEW)
+  // 3. Fast-track PENDING groups third
+  // 4. Normal PENDING groups fourth
+  // Within same priority class:
+  // - Delayed count DESC
+  // - Large groups first (Decreasing size) to eliminate unnecessary fragmentation
+  // - Alphabetical tie-breaker
   workGroups.sort((a, b) => {
-    if (a.has_fast_track !== b.has_fast_track) {
-      return a.has_fast_track ? -1 : 1;
+    const rankA = (a.stream === 'NEW') ? (a.has_delayed || a.has_fast_track ? 1 : 2) : (a.has_fast_track ? 3 : 4);
+    const rankB = (b.stream === 'NEW') ? (b.has_delayed || b.has_fast_track ? 1 : 2) : (b.has_fast_track ? 3 : 4);
+    if (rankA !== rankB) return rankA - rankB;
+    if ((b.delayed_count || 0) !== (a.delayed_count || 0)) {
+      return (b.delayed_count || 0) - (a.delayed_count || 0);
     }
     if (b.orders.length !== a.orders.length) {
       return b.orders.length - a.orders.length;
@@ -3149,11 +3249,19 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
     if (stream === 'NEW' && !candidate.allowed_new) return false;
     if (stream === 'PENDING' && !candidate.allowed_pending) return false;
 
-    // 3. Round stream lock:
-    // If locked to NEW, CANNOT take PENDING.
-    // If locked to PENDING, CANNOT take NEW.
-    if (stream === 'NEW' && candidate.round_stream_lock === 'PENDING') return false;
-    if (stream === 'PENDING' && candidate.round_stream_lock === 'NEW') return false;
+    // 3. Round stream lock & Cross-Stream Protection:
+    // If locked to NEW or already has NEW orders in this round, CANNOT take PENDING.
+    // If locked to PENDING or already has PENDING orders in this round, CANNOT take NEW.
+    if (stream === 'NEW') {
+      if (candidate.round_stream_lock === 'PENDING') return false;
+      const hasPendingInRound = candidate.assigned_orders.some(o => (o.round_number === targetRound || !o.is_preserved) && ((o.status || '').toLowerCase().includes('pending') || o.source_type === 'PENDING'));
+      if (hasPendingInRound) return false;
+    }
+    if (stream === 'PENDING') {
+      if (candidate.round_stream_lock === 'NEW') return false;
+      const hasNewInRound = candidate.assigned_orders.some(o => (o.round_number === targetRound || !o.is_preserved) && (!(o.status || '').toLowerCase().includes('pending') && o.source_type !== 'PENDING'));
+      if (hasNewInRound) return false;
+    }
 
     // 4. Capacity limit: candidate must have remaining capacity
     if (candidate.current_load >= candidate.allowed_capacity) return false;
@@ -3191,14 +3299,34 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
   // 9. Allocate each workGroup with MINIMUM FRAGMENTATION
   const unassignedOrders = [];
 
-  for (const grp of workGroups) {
+  for (let gIdx = 0; gIdx < workGroups.length; gIdx++) {
+    const grp = workGroups[gIdx];
     let remainingOrders = [...grp.orders];
 
     while (remainingOrders.length > 0) {
       // Find all eligible candidates with available capacity
-      const eligibleCandidates = Array.from(employeeStateMap.values()).filter(c => 
+      const allEligible = Array.from(employeeStateMap.values()).filter(c => 
         isCandidateEligible(c, grp.account, grp.stream) && (c.allowed_capacity - c.current_load > 0)
       );
+
+      // Prioritize candidates already locked to this stream
+      const lockedEligible = allEligible.filter(c => c.round_stream_lock === grp.stream);
+      const lockedRemainingCap = lockedEligible.reduce((s, c) => s + (c.allowed_capacity - c.current_load), 0);
+
+      let remainingStreamDemand = 0;
+      for (let i = gIdx; i < workGroups.length; i++) {
+        if (workGroups[i].stream === grp.stream) remainingStreamDemand += workGroups[i].orders.length;
+      }
+
+      let eligibleCandidates = [];
+      if (lockedEligible.length > 0) {
+        eligibleCandidates = [...lockedEligible];
+        if (lockedRemainingCap < remainingStreamDemand || !lockedEligible.some(c => (c.allowed_capacity - c.current_load) >= remainingOrders.length)) {
+          eligibleCandidates.push(...allEligible.filter(c => !c.round_stream_lock));
+        }
+      } else {
+        eligibleCandidates = allEligible;
+      }
 
       if (eligibleCandidates.length === 0) {
         // No more candidates can take orders from this group -> unassigned
@@ -3210,6 +3338,7 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
             tracking_id: rem.tracking_id,
             work_state: 'UNASSIGNED',
             priority: rem.priority || 'REGULAR',
+            order_date: rem.order_date,
             round_number: targetRound,
             unassigned_reason: 'No eligible candidate available within capacity or stream lock rules'
           });
@@ -3224,6 +3353,32 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
       // STEP 1 (PRIMARY COMMERCIAL GOAL): Check if ANY eligible employee can keep the ENTIRE remaining orders intact!
       // This ensures 28 stays with 1 employee, 42 stays with 1 qualified employee, etc. (Zero unnecessary split).
       const singleCandidates = eligibleCandidates.filter(c => (c.allowed_capacity - c.current_load) >= remainingOrders.length);
+
+      // Fragmentation Protection: If an account <= standardCap cannot fit into any single candidate,
+      // check if a smaller account from the same stream CAN fit cleanly into an available candidate.
+      // This preserves account unity and prevents chopping 9-15 order accounts into micro-scraps.
+      if (singleCandidates.length === 0 && remainingOrders.length <= standardCap && remainingOrders.length === grp.orders.length) {
+        let foundSwapIdx = -1;
+        for (let nextIdx = gIdx + 1; nextIdx < workGroups.length; nextIdx++) {
+          const nextGrp = workGroups[nextIdx];
+          if (nextGrp.stream === grp.stream && nextGrp.orders.length <= standardCap) {
+            const canFitNext = eligibleCandidates.some(c => 
+              (c.allowed_capacity - c.current_load) >= nextGrp.orders.length && 
+              isCandidateEligible(c, nextGrp.account, nextGrp.stream)
+            );
+            if (canFitNext) {
+              foundSwapIdx = nextIdx;
+              break;
+            }
+          }
+        }
+        if (foundSwapIdx !== -1) {
+          const [fittingGrp] = workGroups.splice(foundSwapIdx, 1);
+          workGroups.splice(gIdx, 0, fittingGrp);
+          gIdx--; // re-process at this position with the fitting group
+          break;
+        }
+      }
 
       let chosenCandidate = null;
 
@@ -3240,18 +3395,29 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
           const bLocked = (b.round_stream_lock === grp.stream) ? 0 : 1;
           if (aLocked !== bLocked) return aLocked - bLocked;
 
-          // 3. Prefer standard capacity without overflow over needing overflow
+          // 3. Permanent membership match
+          const aPref = (a.team_membership.toLowerCase() === grp.stream.toLowerCase()) ? 0 : 1;
+          const bPref = (b.team_membership.toLowerCase() === grp.stream.toLowerCase()) ? 0 : 1;
+          if (aPref !== bPref) return aPref - bPref;
+
+          // 4. Prefer standard capacity without overflow over needing overflow
           const aWithinStd = (a.current_load + remainingOrders.length <= a.standard_capacity) ? 0 : 1;
           const bWithinStd = (b.current_load + remainingOrders.length <= b.standard_capacity) ? 0 : 1;
           if (aWithinStd !== bWithinStd) return aWithinStd - bWithinStd;
 
-          // 4. Higher sustainable capacity / performance
+          // 5. Best Fit: Smallest available capacity that still comfortably fits the entire group
+          // This preserves large blocks of capacity on other agents for larger accounts and avoids scrap fragmentation
+          const aAvail = a.allowed_capacity - a.current_load;
+          const bAvail = b.allowed_capacity - b.current_load;
+          if (aAvail !== bAvail) return aAvail - bAvail;
+
+          // 6. Higher sustainable capacity / performance
           if (b.historical_score !== a.historical_score) return b.historical_score - a.historical_score;
 
-          // 5. Workload balance (lowest current load)
+          // 7. Workload balance (lowest current load)
           if (a.current_load !== b.current_load) return a.current_load - b.current_load;
 
-          // 6. Deterministic tie-breaker
+          // 8. Deterministic tie-breaker
           return String(a.employee_id).localeCompare(String(b.employee_id));
         });
 
@@ -3260,20 +3426,21 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
         // STEP 2: No single employee can take all orders intact.
         // Split using the MINIMUM feasible number of employees by taking maximum feasible chunks.
         eligibleCandidates.sort((a, b) => {
-          // 1. Sticky owner
+          const aAvail = a.allowed_capacity - a.current_load;
+          const bAvail = b.allowed_capacity - b.current_load;
+
+          // 1. Highest available capacity (to minimize the number of employees required by taking maximum feasible chunks!)
+          if (bAvail !== aAvail) return bAvail - aAvail;
+
+          // 2. Sticky owner
           const aIsOwner = (savedOwnerId && a.employee_id === savedOwnerId) ? 0 : 1;
           const bIsOwner = (savedOwnerId && b.employee_id === savedOwnerId) ? 0 : 1;
           if (aIsOwner !== bIsOwner) return aIsOwner - bIsOwner;
 
-          // 2. Stream lock continuity
+          // 3. Stream lock continuity
           const aLocked = (a.round_stream_lock === grp.stream) ? 0 : 1;
           const bLocked = (b.round_stream_lock === grp.stream) ? 0 : 1;
           if (aLocked !== bLocked) return aLocked - bLocked;
-
-          // 3. Highest available capacity (to minimize the number of employees required!)
-          const aAvail = a.allowed_capacity - a.current_load;
-          const bAvail = b.allowed_capacity - b.current_load;
-          if (bAvail !== aAvail) return bAvail - aAvail;
 
           // 4. Higher performance score
           if (b.historical_score !== a.historical_score) return b.historical_score - a.historical_score;
@@ -3305,6 +3472,7 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
           tracking_id: ord.tracking_id,
           work_state: 'ASSIGNED',
           priority: ord.priority || 'REGULAR',
+          order_date: ord.order_date,
           round_number: targetRound,
           is_preserved: false,
           previous_employee_id: ord.assigned_employee_id || null,
@@ -3363,6 +3531,7 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
         tracking_id: ord.tracking_id,
         work_state: ord.work_state || 'ASSIGNED',
         priority: ord.priority || 'REGULAR',
+        order_date: ord.order_date,
         round_number: ord.round_number || targetRound,
         is_preserved: ord.is_preserved || false,
         method,
@@ -3380,6 +3549,7 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
       tracking_id: u.tracking_id,
       work_state: 'UNASSIGNED',
       priority: u.priority || 'REGULAR',
+      order_date: u.order_date,
       round_number: targetRound,
       is_preserved: false,
       method,

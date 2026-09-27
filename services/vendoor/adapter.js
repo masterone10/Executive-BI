@@ -73,7 +73,7 @@ export class LiveVendoorDataSource extends VendoorDataSource {
           orders_sample: exportRes.orders.slice(0, 10)
         };
       } catch (err) {
-        console.warn('[LiveVendoorDataSource] Export flow warning, falling back to paginated orders:', err.message);
+        console.log('[LiveVendoorDataSource] Export flow notice, falling back to paginated orders:', err.message);
       }
     }
 

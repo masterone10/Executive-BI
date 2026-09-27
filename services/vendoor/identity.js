@@ -30,6 +30,14 @@ const BASE_ALIASES = new Map([
   // Normalized alias -> Normalized canonical master name
 ]);
 
+// In-memory resolution cache to make large-scale log analysis instant
+const identityResolutionCache = new Map();
+const RESOLUTION_CACHE_TTL_MS = 30000;
+
+export function invalidateIdentityResolutionCache() {
+  identityResolutionCache.clear();
+}
+
 /**
  * Resolve a Vendoor source employee name against Employee Master
  *
@@ -65,6 +73,13 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
     };
   }
 
+  // Check in-memory resolution cache
+  const cached = identityResolutionCache.get(raw);
+  const now = Date.now();
+  if (cached && (now - cached.timestamp < RESOLUTION_CACHE_TTL_MS) && !persistIdentity) {
+    return cached.result;
+  }
+
   // 1. Check Explicit Persistent Mapping in DB
   try {
     const mapping = db.prepare(`
@@ -78,7 +93,7 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
       if (persistIdentity) {
         touchIdentityRecord(raw, norm, mapping.employee_id, MATCH_STATUS.EXPLICIT_MAPPING, 'EXPLICIT_DB_MAPPING', 1.0);
       }
-      return {
+      const res = {
         source_name: raw,
         normalized_name: norm,
         status: MATCH_STATUS.EXPLICIT_MAPPING,
@@ -88,8 +103,10 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
         department: mapping.department,
         confidence: 1.0
       };
+      identityResolutionCache.set(raw, { timestamp: Date.now(), result: res });
+      return res;
     } else if (mapping && mapping.status === 'IGNORED') {
-      return {
+      const res = {
         source_name: raw,
         normalized_name: norm,
         status: MATCH_STATUS.UNMATCHED,
@@ -99,6 +116,8 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
         department: null,
         confidence: 0
       };
+      identityResolutionCache.set(raw, { timestamp: Date.now(), result: res });
+      return res;
     }
   } catch (err) {
     // Database table might not be created yet during initial run
@@ -113,7 +132,7 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
     if (persistIdentity) {
       touchIdentityRecord(raw, norm, matched.id, MATCH_STATUS.EXACT_MATCH, 'EXACT_NORMALIZED_NAME', 1.0);
     }
-    return {
+    const res = {
       source_name: raw,
       normalized_name: norm,
       status: MATCH_STATUS.EXACT_MATCH,
@@ -123,12 +142,14 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
       department: matched.department,
       confidence: 1.0
     };
+    identityResolutionCache.set(raw, { timestamp: Date.now(), result: res });
+    return res;
   } else if (exactMatches.length > 1) {
     // Ambiguous exact matches! Do not pick arbitrarily
     if (persistIdentity) {
       touchIdentityRecord(raw, norm, null, MATCH_STATUS.NEEDS_REVIEW, 'AMBIGUOUS_MULTIPLE_EXACT_MATCHES', 0.5);
     }
-    return {
+    const res = {
       source_name: raw,
       normalized_name: norm,
       status: MATCH_STATUS.NEEDS_REVIEW,
@@ -138,6 +159,8 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
       department: null,
       confidence: 0.5
     };
+    identityResolutionCache.set(raw, { timestamp: Date.now(), result: res });
+    return res;
   }
 
   // 3. Known Aliases Check
@@ -149,7 +172,7 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
       if (persistIdentity) {
         touchIdentityRecord(raw, norm, matched.id, MATCH_STATUS.ALIAS_MATCH, 'BASE_ALIAS_MATCH', 0.95);
       }
-      return {
+      const res = {
         source_name: raw,
         normalized_name: norm,
         status: MATCH_STATUS.ALIAS_MATCH,
@@ -159,11 +182,13 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
         department: matched.department,
         confidence: 0.95
       };
+      identityResolutionCache.set(raw, { timestamp: Date.now(), result: res });
+      return res;
     } else if (aliasMatches.length > 1) {
       if (persistIdentity) {
         touchIdentityRecord(raw, norm, null, MATCH_STATUS.NEEDS_REVIEW, 'AMBIGUOUS_MULTIPLE_ALIAS_MATCHES', 0.5);
       }
-      return {
+      const res = {
         source_name: raw,
         normalized_name: norm,
         status: MATCH_STATUS.NEEDS_REVIEW,
@@ -173,6 +198,8 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
         department: null,
         confidence: 0.5
       };
+      identityResolutionCache.set(raw, { timestamp: Date.now(), result: res });
+      return res;
     }
   }
 
@@ -180,7 +207,7 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
   if (persistIdentity) {
     touchIdentityRecord(raw, norm, null, MATCH_STATUS.UNMATCHED, 'NO_MATCH', 0.0);
   }
-  return {
+  const fallbackRes = {
     source_name: raw,
     normalized_name: norm,
     status: MATCH_STATUS.UNMATCHED,
@@ -190,6 +217,8 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
     department: null,
     confidence: 0.0
   };
+  identityResolutionCache.set(raw, { timestamp: Date.now(), result: fallbackRes });
+  return fallbackRes;
 }
 
 /**
@@ -262,6 +291,7 @@ export function saveExplicitIdentityMapping(vendoorName, employeeId, notes = '')
   `);
 
   stmt.run(vendoorName.trim(), norm, emp.id, notes || 'Manually mapped by Supervisor');
+  invalidateIdentityResolutionCache();
 
   return {
     success: true,
@@ -288,6 +318,7 @@ export function getUnmatchedEmployeesQueue() {
  */
 export function deleteExplicitIdentityMapping(mappingId) {
   const res = db.prepare('DELETE FROM vendoor_identity_mappings WHERE id = ?').run(mappingId);
+  invalidateIdentityResolutionCache();
   return { success: res.changes > 0, id: mappingId };
 }
 

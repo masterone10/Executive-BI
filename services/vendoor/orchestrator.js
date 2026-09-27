@@ -1006,7 +1006,7 @@ async function executeAutonomousOrdersCycle(forceMode) {
     pollerState.orders.status = 'ERROR';
     pollerState.orders.consecutiveErrors++;
     pollerState.orders.lastError = err.message;
-    console.warn('[Autonomous Vendoor Poller] Orders cycle warning:', err.message);
+    console.log('[Autonomous Vendoor Poller] Orders cycle status:', err.message);
   } finally {
     pollerState.orders.isCycleActive = false;
   }
@@ -1046,7 +1046,7 @@ async function executeAutonomousLogsCycle(forceMode) {
     pollerState.logs.status = 'ERROR';
     pollerState.logs.consecutiveErrors++;
     pollerState.logs.lastError = err.message;
-    console.warn('[Autonomous Vendoor Poller] Logs cycle warning:', err.message);
+    console.log('[Autonomous Vendoor Poller] Logs cycle status:', err.message);
   } finally {
     pollerState.logs.isCycleActive = false;
   }
