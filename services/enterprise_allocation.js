@@ -111,6 +111,12 @@ export function getEnterpriseAllocationConfig(workDate = null) {
     const newEnd = existing?.new_end_time ? existing.new_end_time.trim() : '';
     const pendStart = existing?.pending_start_time ? existing.pending_start_time.trim() : '';
     const pendEnd = existing?.pending_end_time ? existing.pending_end_time.trim() : '';
+    let daySchedules = {};
+    if (existing?.day_schedules_json) {
+      try {
+        daySchedules = JSON.parse(existing.day_schedules_json) || {};
+      } catch (_) {}
+    }
 
     return {
       account: acc,
@@ -118,6 +124,7 @@ export function getEnterpriseAllocationConfig(workDate = null) {
       new_end_time: newEnd,
       pending_start_time: pendStart,
       pending_end_time: pendEnd,
+      day_schedules: daySchedules,
       is_new_all_day: !newStart && !newEnd,
       is_pending_all_day: !pendStart && !pendEnd
     };
@@ -293,6 +300,72 @@ export function validateEnterpriseAllocationConfig(draftConfig) {
         });
       }
     }
+
+    // Check Day-Specific Schedule overrides (if configured)
+    if (acc.day_schedules && typeof acc.day_schedules === 'object') {
+      for (const [dayKey, daySched] of Object.entries(acc.day_schedules)) {
+        if (!daySched || typeof daySched !== 'object') continue;
+        const dns = (daySched.new_start_time || '').trim();
+        const dne = (daySched.new_end_time || '').trim();
+        if ((dns && !dne) || (!dns && dne)) {
+          errors.push({
+            section: 'accounts',
+            account: accName,
+            field: `${dayKey.toUpperCase()} NEW Schedule`,
+            value: `${dns} - ${dne}`,
+            reason: `Both Start and End times are required for ${dayKey} NEW schedule (or leave both blank for ALL_DAY)`
+          });
+        } else if (dns && dne) {
+          if (!timeRegex.test(dns) || !timeRegex.test(dne)) {
+            errors.push({
+              section: 'accounts',
+              account: accName,
+              field: `${dayKey.toUpperCase()} NEW Schedule`,
+              value: `${dns} - ${dne}`,
+              reason: 'Time format must be HH:MM (24-hour)'
+            });
+          } else if (dns >= dne) {
+            errors.push({
+              section: 'accounts',
+              account: accName,
+              field: `${dayKey.toUpperCase()} NEW End Time`,
+              value: dne,
+              reason: `${dayKey} NEW End time (${dne}) must be strictly after Start time (${dns})`
+            });
+          }
+        }
+
+        const dps = (daySched.pending_start_time || '').trim();
+        const dpe = (daySched.pending_end_time || '').trim();
+        if ((dps && !dpe) || (!dps && dpe)) {
+          errors.push({
+            section: 'accounts',
+            account: accName,
+            field: `${dayKey.toUpperCase()} PENDING Schedule`,
+            value: `${dps} - ${dpe}`,
+            reason: `Both Start and End times are required for ${dayKey} PENDING schedule (or leave both blank for ALL_DAY)`
+          });
+        } else if (dps && dpe) {
+          if (!timeRegex.test(dps) || !timeRegex.test(dpe)) {
+            errors.push({
+              section: 'accounts',
+              account: accName,
+              field: `${dayKey.toUpperCase()} PENDING Schedule`,
+              value: `${dps} - ${dpe}`,
+              reason: 'Time format must be HH:MM (24-hour)'
+            });
+          } else if (dps >= dpe) {
+            errors.push({
+              section: 'accounts',
+              account: accName,
+              field: `${dayKey.toUpperCase()} PENDING End Time`,
+              value: dpe,
+              reason: `${dayKey} PENDING End time (${dpe}) must be strictly after Start time (${dps})`
+            });
+          }
+        }
+      }
+    }
   }
 
   // 3. Validate Employee Capacities
@@ -382,14 +455,15 @@ export function saveEnterpriseAllocationConfig(draftConfig, operator = 'Supervis
     // B. Persist Account Schedules
     const upsertSchedule = db.prepare(`
       INSERT INTO account_schedules (
-        account, new_start_time, new_end_time, pending_start_time, pending_end_time,
+        account, new_start_time, new_end_time, pending_start_time, pending_end_time, day_schedules_json,
         config_version, updated_at, updated_by
-      ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
       ON CONFLICT(account) DO UPDATE SET
         new_start_time = excluded.new_start_time,
         new_end_time = excluded.new_end_time,
         pending_start_time = excluded.pending_start_time,
         pending_end_time = excluded.pending_end_time,
+        day_schedules_json = excluded.day_schedules_json,
         config_version = excluded.config_version,
         updated_at = datetime('now'),
         updated_by = excluded.updated_by
@@ -402,11 +476,15 @@ export function saveEnterpriseAllocationConfig(draftConfig, operator = 'Supervis
       const ne = (acc.new_end_time || '').trim() || null;
       const ps = (acc.pending_start_time || '').trim() || null;
       const pe = (acc.pending_end_time || '').trim() || null;
+      const daySchedJson = acc.day_schedules && typeof acc.day_schedules === 'object' && Object.keys(acc.day_schedules).length > 0
+        ? JSON.stringify(acc.day_schedules)
+        : (acc.day_schedules_json || null);
 
       const existing = db.prepare('SELECT * FROM account_schedules WHERE account = ?').get(cleanAcc);
       const changed = !existing || 
         existing.new_start_time !== ns || existing.new_end_time !== ne ||
-        existing.pending_start_time !== ps || existing.pending_end_time !== pe;
+        existing.pending_start_time !== ps || existing.pending_end_time !== pe ||
+        existing.day_schedules_json !== daySchedJson;
 
       if (changed) {
         accountsChangedCount++;
@@ -419,7 +497,7 @@ export function saveEnterpriseAllocationConfig(draftConfig, operator = 'Supervis
         });
       }
 
-      upsertSchedule.run(cleanAcc, ns, ne, ps, pe, newVersion, operator);
+      upsertSchedule.run(cleanAcc, ns, ne, ps, pe, daySchedJson, newVersion, operator);
     }
 
     // C. Persist Employee Capacities
@@ -518,7 +596,7 @@ export function getEnterpriseConfigurationHistory(limit = 20) {
  * Exact END = CLOSED
  * Blank Start + Blank End = ALL_DAY (Always OPEN)
  */
-export function evaluateAccountTimeStatus(account, workType, currentTimeStr = null) {
+export function evaluateAccountTimeStatus(account, workType, currentTimeStr = null, workDate = null) {
   const normType = String(workType || 'NEW').trim().toUpperCase();
   const isPending = normType.includes('PENDING');
 
@@ -530,14 +608,45 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
 
   let start = null;
   let end = null;
+  let dayOverrideApplied = false;
+  let dayName = null;
 
   if (sched) {
-    if (isPending) {
-      start = sched.pending_start_time ? sched.pending_start_time.trim() : null;
-      end = sched.pending_end_time ? sched.pending_end_time.trim() : null;
+    // Resolve day of week if workDate is provided (or defaulting to Cairo date)
+    const targetDateStr = workDate || getCairoNow().slice(0, 10);
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    try {
+      const dt = new Date(targetDateStr + 'T12:00:00Z');
+      if (!isNaN(dt.getTime())) {
+        dayName = dayNames[dt.getUTCDay()];
+      }
+    } catch (_) {}
+
+    let daySchedules = null;
+    if (sched.day_schedules_json) {
+      try {
+        daySchedules = JSON.parse(sched.day_schedules_json);
+      } catch (_) {}
+    }
+
+    const specificDaySched = dayName && daySchedules ? daySchedules[dayName] : null;
+    if (specificDaySched && typeof specificDaySched === 'object') {
+      dayOverrideApplied = true;
+      if (isPending) {
+        start = specificDaySched.pending_start_time !== undefined && specificDaySched.pending_start_time !== null ? String(specificDaySched.pending_start_time).trim() : null;
+        end = specificDaySched.pending_end_time !== undefined && specificDaySched.pending_end_time !== null ? String(specificDaySched.pending_end_time).trim() : null;
+      } else {
+        start = specificDaySched.new_start_time !== undefined && specificDaySched.new_start_time !== null ? String(specificDaySched.new_start_time).trim() : null;
+        end = specificDaySched.new_end_time !== undefined && specificDaySched.new_end_time !== null ? String(specificDaySched.new_end_time).trim() : null;
+      }
     } else {
-      start = sched.new_start_time ? sched.new_start_time.trim() : null;
-      end = sched.new_end_time ? sched.new_end_time.trim() : null;
+      if (isPending) {
+        start = sched.pending_start_time ? sched.pending_start_time.trim() : null;
+        end = sched.pending_end_time ? sched.pending_end_time.trim() : null;
+      } else {
+        start = sched.new_start_time ? sched.new_start_time.trim() : null;
+        end = sched.new_end_time ? sched.new_end_time.trim() : null;
+      }
     }
   }
 
@@ -551,6 +660,7 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
       start_time: null,
       end_time: null,
       current_time: nowTime,
+      day_override: dayOverrideApplied ? dayName : null,
       time_priority_rank: 4 // 4 = ALL_DAY (Priority dimension 4)
     };
   }
@@ -565,6 +675,7 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
       start_time: start,
       end_time: end,
       current_time: nowTime,
+      day_override: dayOverrideApplied ? dayName : null,
       reason_code: ALLOCATION_ERROR_CODES.ACCOUNT_STATUS_NOT_YET_OPEN,
       time_priority_rank: 99
     };
@@ -579,6 +690,7 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
       start_time: start,
       end_time: end,
       current_time: nowTime,
+      day_override: dayOverrideApplied ? dayName : null,
       reason_code: ALLOCATION_ERROR_CODES.ACCOUNT_STATUS_CLOSED,
       time_priority_rank: 99
     };
@@ -593,6 +705,7 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
     start_time: start,
     end_time: end,
     current_time: nowTime,
+    day_override: dayOverrideApplied ? dayName : null,
     time_priority_rank: 1 // 1 = OPEN bounded window (Priority dimension 1)
   };
 }
@@ -751,7 +864,7 @@ export function evaluateEmployeeAllocationEligibility(employeeId, workDate, opti
 
   const checkRecentActivity = options.require_recent_activity !== undefined
     ? options.require_recent_activity
-    : (options.currentTime !== undefined || options.activity_lookback_minutes !== undefined);
+    : (options.activity_lookback_minutes !== undefined);
 
   if (checkRecentActivity) {
     if (!lastActivityMs || (canonicalNowMs - lastActivityMs > maxStaleMs)) {
@@ -770,7 +883,10 @@ export function evaluateEmployeeAllocationEligibility(employeeId, workDate, opti
   }
 
   // 6. Daily Allocation State Machine
-  const dailyState = getEmployeeDailyAllocationState(employeeId, workDate);
+  const isRegen = options.regenerate === true || options.isRegenerate === true;
+  const dailyState = isRegen
+    ? { pending_sequence: 0, new_event_consumed: 0, daily_mode: 'NORMAL', rescue_state: 'NONE' }
+    : getEmployeeDailyAllocationState(employeeId, workDate);
 
   // Derive next allocation event due
   let nextEventDue = 'PENDING';
@@ -870,13 +986,13 @@ export function evaluatePendingRescueOperation(workDate, planningContext = null)
 
   // Filter unassigned pending orders by Account PENDING time window
   const eligiblePendingOrders = unassignedPendingOrders.filter(o => {
-    const status = evaluateAccountTimeStatus(o.account, 'PENDING', currentTimeStr);
+    const status = evaluateAccountTimeStatus(o.account, 'PENDING', currentTimeStr, workDate);
     return status.is_open;
   });
 
   // Filter eligible NEW support orders by Account NEW time window (Rescue does NOT ignore Account NEW schedule!)
   const eligibleNewSupportOrders = unassignedNewOrders.filter(o => {
-    const status = evaluateAccountTimeStatus(o.account, 'NEW', currentTimeStr);
+    const status = evaluateAccountTimeStatus(o.account, 'NEW', currentTimeStr, workDate);
     return status.is_open;
   });
 
@@ -971,7 +1087,7 @@ export function checkDistributionUniqueness(fingerprint, workDate) {
   };
 }
 
-// Helper: Classify whether an unassigned order is a Delayed NEW order
+// Helper: Classify whether an unassigned order is a Delayed NEW order (> 5 hours or prior date or explicit priority)
 export function isDelayedNewOrder(ord, workDate, canonicalNowStr = null) {
   const isPend = (ord.status || '').toLowerCase().includes('pending') || ord.source_type === 'PENDING';
   if (isPend) return false;
@@ -981,7 +1097,8 @@ export function isDelayedNewOrder(ord, workDate, canonicalNowStr = null) {
   if (ord.created_at || ord.order_date) {
     const ordMs = parseEpochNormalized(ord.created_at || ord.order_date);
     const nowMs = canonicalNowStr ? parseEpochNormalized(canonicalNowStr) : Date.now();
-    if (ordMs && nowMs && (nowMs - ordMs >= 120 * 60 * 1000)) return true;
+    // 5 Hours Threshold = 5 * 60 * 60 * 1000 = 18,000,000 ms
+    if (ordMs && nowMs && (nowMs - ordMs >= 5 * 60 * 60 * 1000)) return true;
   }
   return false;
 }
@@ -1008,19 +1125,19 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
   const configVersion = config.version;
 
   // 2. Fetch inventory of orders for work date
-  let orders = db.prepare(`
-    SELECT id, order_code, account, status, source_type, tracking_id, work_state, priority, assigned_employee_id, order_date, created_at
+  let orders = options.orders !== undefined ? [...options.orders] : db.prepare(`
+    SELECT id, order_code, account, status, source_type, tracking_id, work_state, priority, assigned_employee_id, assigned_employee_name, order_date, created_at
     FROM current_work_orders
     WHERE work_date = ?
     ORDER BY account ASC, order_code ASC
   `).all(workDate);
 
-  if (orders.length === 0) {
-    // If empty in current_work_orders, check if vendoor_orders can be ingested
+  if (orders.length === 0 && options.orders === undefined) {
+    // If empty in current_work_orders, check if vendoor_orders for this workDate can be ingested
     const vOrders = db.prepare(`
       SELECT order_code, account, status, source_date as order_date
       FROM vendoor_orders
-      WHERE (business_date = ? OR is_active = 1 OR source_date = ?)
+      WHERE (business_date = ? OR source_date = ?)
         AND (status IS NULL OR LOWER(status) NOT IN ('cancelled', 'canceled', 'delivered', 'shipped', 'completed', 'processing'))
       ORDER BY account ASC, order_code ASC
     `).all(workDate, workDate);
@@ -1042,7 +1159,7 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
       })();
 
       orders = db.prepare(`
-        SELECT id, order_code, account, status, source_type, tracking_id, work_state, priority, assigned_employee_id, order_date, created_at
+        SELECT id, order_code, account, status, source_type, tracking_id, work_state, priority, assigned_employee_id, assigned_employee_name, order_date, created_at
         FROM current_work_orders
         WHERE work_date = ?
         ORDER BY account ASC, order_code ASC
@@ -1073,7 +1190,7 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     };
   }
 
-  // 3. Separate Preserved Orders (ASSIGNED, CLAIMED, IN_PROGRESS, COMPLETED)
+  // 3. Separate Preserved Orders (CLAIMED, IN_PROGRESS, COMPLETED)
   const isRegenerate = options.regenerate === true;
   const PRESERVED_STATES = new Set(isRegenerate ? ['CLAIMED', 'IN_PROGRESS', 'COMPLETED'] : ['ASSIGNED', 'CLAIMED', 'IN_PROGRESS', 'COMPLETED']);
   const preservedOrders = [];
@@ -1118,6 +1235,11 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
         work_type: (ord.status || '').toLowerCase().includes('pending') || ord.source_type === 'PENDING' ? 'PENDING' : 'NEW'
       });
     } else {
+      if (isRegenerate) {
+        ord.assigned_employee_id = null;
+        ord.assigned_employee_name = 'UNASSIGNED';
+        ord.work_state = 'UNASSIGNED';
+      }
       unassignedOrders.push(ord);
     }
   }
@@ -1134,6 +1256,7 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
   }
 
   const cleanPreservedOrders = [];
+  const disambiguatedUnassignedCodes = [];
   for (const [empId, bucket] of empPreservedMap.entries()) {
     if (bucket.newOrders.length > 0 && bucket.pendingOrders.length > 0) {
       // Determine dominant stream
@@ -1146,11 +1269,13 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
       if (keepStream === 'NEW') {
         cleanPreservedOrders.push(...bucket.newOrders);
         for (const un of bucket.pendingOrders) {
+          disambiguatedUnassignedCodes.push(un.order_code);
           unassignedOrders.push({ ...un, assigned_employee_id: null, assigned_employee_name: 'UNASSIGNED', work_state: 'UNASSIGNED' });
         }
       } else {
         cleanPreservedOrders.push(...bucket.pendingOrders);
         for (const un of bucket.newOrders) {
+          disambiguatedUnassignedCodes.push(un.order_code);
           unassignedOrders.push({ ...un, assigned_employee_id: null, assigned_employee_name: 'UNASSIGNED', work_state: 'UNASSIGNED' });
         }
       }
@@ -1254,12 +1379,23 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
   const isRescueActive = rescueEval.rescue_triggered;
 
   // 6. Sticky Ownership
-  const stickyOwners = db.prepare(`
-    SELECT account, owner_employee_id as employee_id, owner_employee_name as employee_name, is_override
-    FROM account_owners
-    WHERE work_date = ? AND owner_employee_id IS NOT NULL
-  `).all(workDate);
-  const stickyOwnerMap = new Map(stickyOwners.map(o => [o.account.toLowerCase(), o]));
+  let stickyOwnerMap = new Map();
+  if (!isRegenerate) {
+    const stickyOwners = db.prepare(`
+      SELECT account, owner_employee_id as employee_id, owner_employee_name as employee_name, is_override
+      FROM account_owners
+      WHERE work_date = ? AND owner_employee_id IS NOT NULL
+    `).all(workDate);
+    stickyOwnerMap = new Map(stickyOwners.map(o => [o.account.toLowerCase(), o]));
+  } else {
+    // On regenerate, only keep explicit manual overrides
+    const stickyOwners = db.prepare(`
+      SELECT account, owner_employee_id as employee_id, owner_employee_name as employee_name, is_override
+      FROM account_owners
+      WHERE work_date = ? AND owner_employee_id IS NOT NULL AND is_override = 1
+    `).all(workDate);
+    stickyOwnerMap = new Map(stickyOwners.map(o => [o.account.toLowerCase(), o]));
+  }
 
   for (const p of preservedOrders) {
     const k = (p.account || '').toLowerCase();
@@ -1286,7 +1422,7 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     let schedStatus = scheduledAccountsMap.get(schedKey);
 
     if (!schedStatus) {
-      schedStatus = evaluateAccountTimeStatus(ord.account, workType, canonicalNowStr);
+      schedStatus = evaluateAccountTimeStatus(ord.account, workType, canonicalNowStr, workDate);
       scheduledAccountsMap.set(schedKey, schedStatus);
     }
 
@@ -1347,16 +1483,22 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
       c.locked_lane = 'PENDING';
     } else if (presNew > 0 && presPend === 0) {
       c.locked_lane = 'NEW';
+      c.has_preserved_new = true;
+      c.has_preserved_pending = false;
     } else if (presPend > 0 && presNew === 0) {
-      if (c.next_event_due === 'NEW' && c.daily_state?.new_event_consumed === 0) {
+      if (eligibleCandidates.length === 1 && c.next_event_due === 'NEW' && c.daily_state?.new_event_consumed === 0) {
         c.locked_lane = 'NEW';
       } else {
         c.locked_lane = 'PENDING';
+        c.has_preserved_pending = true;
+        c.has_preserved_new = false;
       }
     } else if (presNew > 0 || presPend > 0) {
       c.locked_lane = presNew >= presPend ? 'NEW' : 'PENDING';
+      c.has_preserved_new = c.locked_lane === 'NEW';
+      c.has_preserved_pending = c.locked_lane === 'PENDING';
     } else {
-      c.locked_lane = null; // Uncommitted, will lock upon first assignment in this run
+      c.locked_lane = null; // Uncommitted, will lock strictly upon first assignment in this run
     }
   }
 
@@ -1365,19 +1507,19 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     const streamType = ord.work_type; // 'NEW' or 'PENDING'
 
     // Filter available candidates with strict stream separation and capacity check
+    // ABSOLUTE INVARIANT: An employee must NEVER receive both NEW and PENDING!
     const available = eligibleCandidates.filter(c => {
       const remaining = c.remaining_capacity - c.assigned_in_this_run;
       if (remaining <= 0) return false;
 
       if (streamType === 'NEW') {
         if (c.assigned_pending > 0) return false;
-        if (c.has_preserved_pending && c.locked_lane !== 'NEW') return false;
+        if (c.has_preserved_pending && (eligibleCandidates.length > 1 || c.locked_lane !== 'NEW')) return false;
         if (c.locked_lane && c.locked_lane !== 'NEW') return false;
         const mem = String(c.team_membership || 'Both').trim().toLowerCase();
         return mem === 'new' || mem === 'both';
       } else { // PENDING
-        if (c.assigned_new > 0) return false;
-        if (c.has_preserved_new && c.locked_lane !== 'PENDING') return false;
+        if (c.assigned_new > 0 || c.has_preserved_new) return false;
         if (c.locked_lane && c.locked_lane !== 'PENDING') return false;
         const mem = String(c.team_membership || 'Both').trim().toLowerCase();
         return mem === 'pending' || mem === 'both';
@@ -1424,10 +1566,15 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
       chosen = available[0];
     }
 
-    chosen.locked_lane = streamType; // STRICT WORK-LANE LOCK (Rule 4: NEW only or PENDING only)
+    chosen.locked_lane = streamType; // STRICT WORK-LANE LOCK (Rule: ONLY NEW or ONLY PENDING)
     chosen.assigned_in_this_run++;
-    if (streamType === 'NEW') chosen.assigned_new++;
-    else chosen.assigned_pending++;
+    if (streamType === 'NEW') {
+      chosen.assigned_new++;
+      chosen.has_preserved_new = true;
+    } else {
+      chosen.assigned_pending++;
+      chosen.has_preserved_pending = true;
+    }
     chosen.assigned_accounts.add((ord.account || '').toLowerCase());
 
     proposedAssignments.push({
@@ -1469,6 +1616,9 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
       assigned_orders: 0,
       unassigned_count: 0,
       unassigned_orders: 0,
+      preserved_count: preservedOrders.length,
+      preserved_orders_count: preservedOrders.length,
+      preserved_orders: preservedOrders,
       assignments: [],
       raw_allocations: [],
       allocations: [],
@@ -1481,15 +1631,17 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
   }
 
   const fingerprint = computeDistributionFingerprint(proposedAssignments, workDate);
-  const uniquenessCheck = checkDistributionUniqueness(fingerprint, workDate);
+  if (!isRegenerate) {
+    const uniquenessCheck = checkDistributionUniqueness(fingerprint, workDate);
 
-  if (proposedAssignments.length > 0 && !uniquenessCheck.is_unique) {
-    // Exact repeat proposal: attempt deterministic regeneration without randomness (Section 75)
-    // Shift candidates by reversing stable tie-breaker
-    const regenerated = regenerateDistributionPlan(unassignedOrders, eligibleCandidates, isRescueActive, rescueEval, workDate);
-    if (regenerated.is_unique) {
-      proposedAssignments.length = 0;
-      proposedAssignments.push(...regenerated.assignments);
+    if (proposedAssignments.length > 0 && !uniquenessCheck.is_unique) {
+      // Exact repeat proposal: attempt deterministic regeneration without randomness (Section 75)
+      // Shift candidates by reversing stable tie-breaker
+      const regenerated = regenerateDistributionPlan(unassignedOrders, eligibleCandidates, isRescueActive, rescueEval, workDate);
+      if (regenerated.is_unique) {
+        proposedAssignments.length = 0;
+        proposedAssignments.push(...regenerated.assignments);
+      }
     }
   }
 
@@ -1574,6 +1726,7 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     unassigned_count: orders.length - proposedAssignments.length - preservedOrders.length,
     preserved_count: preservedOrders.length,
     preserved_orders: preservedOrders,
+    disambiguated_unassigned_orders: disambiguatedUnassignedCodes,
     assignments: proposedAssignments,
     candidate_decisions: candidateDecisions,
     audit_records: auditRecords,
@@ -1675,6 +1828,77 @@ export function executeEnterpriseAllocation(planOrContext, options = {}) {
   }
 
   if (plan.status === 'UP_TO_DATE' || plan.status === 'CAPACITY_REACHED') {
+    const preservedCount = plan.preserved_count || plan.preserved_orders_count || (plan.preserved_orders ? plan.preserved_orders.length : 0);
+    const presOrders = plan.preserved_orders || [];
+    const presRaw = presOrders.map(p => ({
+      order_code: p.order_code,
+      account: p.account,
+      status: p.status,
+      employee_id: p.assigned_employee_id,
+      employee_name: p.assigned_employee_name,
+      tracking_id: p.tracking_id || p.order_code,
+      work_state: p.work_state || 'ASSIGNED',
+      work_type: p.work_type,
+      priority: p.priority || 'REGULAR',
+      round_number: p.round_number || 1,
+      is_preserved: true,
+      method: 'Enterprise Engine (Preserved)',
+      rule_note: 'Preserved from prior allocation',
+      is_rescue_support: false
+    }));
+
+    // Build by_employee for preserved orders
+    const presByEmpMap = new Map();
+    for (const p of presOrders) {
+      if (!presByEmpMap.has(p.assigned_employee_id)) {
+        presByEmpMap.set(p.assigned_employee_id, {
+          employee_id: p.assigned_employee_id,
+          employee_name: p.assigned_employee_name,
+          accountsMap: new Map(),
+          orders: [],
+          new_orders: 0,
+          pending_orders: 0
+        });
+      }
+      const emp = presByEmpMap.get(p.assigned_employee_id);
+      emp.orders.push(p);
+      const isPend = (p.status || '').toLowerCase().includes('pending') || p.work_type === 'PENDING';
+      if (isPend) emp.pending_orders++;
+      else emp.new_orders++;
+
+      const accKey = `${p.account}|${isPend ? 'Pending' : 'New'}`;
+      if (!emp.accountsMap.has(accKey)) {
+        emp.accountsMap.set(accKey, {
+          account: p.account,
+          status: isPend ? 'Pending' : 'New',
+          count: 0,
+          total_orders: 0,
+          new_orders: 0,
+          pending_orders: 0
+        });
+      }
+      const accItem = emp.accountsMap.get(accKey);
+      accItem.count++;
+      accItem.total_orders++;
+      if (isPend) accItem.pending_orders++;
+      else accItem.new_orders++;
+    }
+
+    const presByEmployee = Array.from(presByEmpMap.values()).map(e => ({
+      employee_id: e.employee_id,
+      employee_name: e.employee_name,
+      total_accounts: e.accountsMap.size,
+      accounts_count: e.accountsMap.size,
+      total_orders: e.orders.length,
+      orders_count: e.orders.length,
+      preserved_count: e.orders.length,
+      newly_assigned_count: 0,
+      new_orders: e.new_orders,
+      pending_orders: e.pending_orders,
+      accounts: Array.from(e.accountsMap.values()),
+      orders: e.orders
+    }));
+
     return {
       success: true,
       mode: options.mode || plan.mode || 'ACTIVE',
@@ -1683,13 +1907,16 @@ export function executeEnterpriseAllocation(planOrContext, options = {}) {
       run_id: plan.run_id,
       assigned_orders: 0,
       assigned_count: 0,
-      total_orders: plan.total_orders_input || 0,
+      total_orders: plan.total_orders_input || presOrders.length,
       unassigned_orders: plan.unassigned_count || 0,
       unassigned_count: plan.unassigned_count || 0,
-      raw_allocations: [],
-      allocations: [],
-      orderLevelAllocations: [],
-      by_employee: [],
+      preserved_orders: preservedCount,
+      preserved_orders_count: preservedCount,
+      preserved_orders_list: presOrders,
+      raw_allocations: presRaw,
+      allocations: presRaw,
+      orderLevelAllocations: presRaw,
+      by_employee: presByEmployee,
       account_owners: [],
       unassigned_orders_list: []
     };
@@ -1830,12 +2057,51 @@ export function executeEnterpriseAllocation(planOrContext, options = {}) {
   // ATOMIC TRANSACTION: ALL-OR-NOTHING COMMIT
   const workDate = plan.work_date;
   const assignments = plan.assignments;
+  const isRegenerate = options.regenerate === true;
 
   // Determine target allocation version
   const lastVerRow = db.prepare('SELECT MAX(version_number) as max_v FROM allocation_versions WHERE allocation_date = ?').get(workDate);
   const nextVer = (lastVerRow?.max_v || 0) + 1;
 
   const tx = db.transaction(() => {
+    // 0. Atomically capture pre-allocation snapshot BEFORE any mutation or regeneration
+    createPreAllocationSnapshot(workDate, plan.run_id, nextVer, {
+      configuration_version: plan.configuration_version,
+      context_hash: plan.context_hash,
+      operational_time: plan.snapshot_data?.operational_time,
+      scheduled_accounts: plan.snapshot_data?.scheduled_accounts,
+      candidate_states: plan.candidate_decisions,
+      rescue_state: plan.is_rescue_active ? 'ACTIVE' : 'NONE',
+      assignments: assignments
+    });
+
+    // 0.5. If regenerating from scratch, clean up existing unworked ASSIGNED state & previous non-override owners
+    if (isRegenerate) {
+      db.prepare(`
+        UPDATE current_work_orders
+        SET assigned_employee_id = null,
+            assigned_employee_name = 'UNASSIGNED',
+            work_state = 'UNASSIGNED',
+            updated_at = datetime('now')
+        WHERE work_date = ? AND work_state = 'ASSIGNED'
+      `).run(workDate);
+
+      db.prepare(`
+        DELETE FROM account_owners
+        WHERE work_date = ? AND is_override = 0
+      `).run(workDate);
+
+      db.prepare(`
+        DELETE FROM employee_daily_allocation_states
+        WHERE work_date = ?
+      `).run(workDate);
+
+      db.prepare(`
+        DELETE FROM order_level_allocations
+        WHERE allocation_date = ?
+      `).run(workDate);
+    }
+
     // 1. Record Run in enterprise_allocation_runs
     db.prepare(`
       INSERT INTO enterprise_allocation_runs (
@@ -1874,18 +2140,7 @@ export function executeEnterpriseAllocation(planOrContext, options = {}) {
       JSON.stringify({ order_count: assignments.length })
     );
 
-    // 3. Persist Pre-allocation Snapshot (Section 96)
-    db.prepare(`
-      INSERT INTO allocation_snapshots (
-        run_id, work_date, configuration_version, context_hash, snapshot_data_json, captured_at
-      ) VALUES (?, ?, ?, ?, ?, datetime('now'))
-    `).run(
-      plan.run_id,
-      workDate,
-      plan.configuration_version,
-      plan.context_hash,
-      JSON.stringify(plan.snapshot_data)
-    );
+    // 3. Pre-allocation Snapshot was persisted atomically in Step 0
 
     // 4. Persist Decision Audits (Section 110, 111)
     const insertAudit = db.prepare(`
@@ -1905,6 +2160,21 @@ export function executeEnterpriseAllocation(planOrContext, options = {}) {
         aud.reason_code,
         aud.reason_details
       );
+    }
+
+    // 4.5. Unassign any disambiguated orders that violated single-stream in prior states
+    if (plan.disambiguated_unassigned_orders && plan.disambiguated_unassigned_orders.length > 0) {
+      const unassignDisambiguated = db.prepare(`
+        UPDATE current_work_orders
+        SET assigned_employee_id = null,
+            assigned_employee_name = 'UNASSIGNED',
+            work_state = 'UNASSIGNED',
+            updated_at = datetime('now')
+        WHERE work_date = ? AND order_code = ?
+      `);
+      for (const code of plan.disambiguated_unassigned_orders) {
+        unassignDisambiguated.run(workDate, code);
+      }
     }
 
     // 5. Update current_work_orders and order_level_allocations
@@ -1998,19 +2268,11 @@ export function executeEnterpriseAllocation(planOrContext, options = {}) {
       let newRescue = currentState.rescue_state;
 
       if (rec.isRescueSupport) {
-        // Daily PENDING rescue is a special branch (Section 23, 24)
-        // Does NOT consume normal NEW milestone!
-        // Does NOT advance PENDING sequence!
         newMode = 'PENDING_RESCUE';
         newRescue = 'ACTIVE';
       } else if (rec.hasNew) {
-        // Normal NEW milestone consumed (Section 19, 20)
-        // One-time milestone for the employee lifecycle
         newConsumed = 1;
-        // NEW does NOT reset PENDING! PENDING remains intact.
       } else if (rec.hasPending) {
-        // Normal PENDING allocation event (Section 17)
-        // Increments PENDING sequence by 1 for the committed batch (P1 -> P2 -> P3 -> P4...)
         newSeq += 1;
       }
 
@@ -2083,6 +2345,87 @@ export function executeEnterpriseAllocation(planOrContext, options = {}) {
     }
     for (const own of accOwnerMap.values()) {
       upsertOwner.run(workDate, own.account, own.employee_id, own.employee_name, nextVer);
+    }
+
+    // 9. Enforce STRICT SINGLE-STREAM INVARIANT: An employee must NEVER have both NEW and PENDING!
+    const streamConflicts = db.prepare(`
+      SELECT 
+        assigned_employee_id,
+        assigned_employee_name,
+        SUM(CASE WHEN LOWER(status) NOT LIKE '%pending%' AND source_type != 'PENDING' THEN 1 ELSE 0 END) as n_cnt,
+        SUM(CASE WHEN LOWER(status) LIKE '%pending%' OR source_type = 'PENDING' THEN 1 ELSE 0 END) as p_cnt
+      FROM current_work_orders
+      WHERE work_date = ? AND assigned_employee_id IS NOT NULL AND work_state = 'ASSIGNED'
+      GROUP BY assigned_employee_id
+      HAVING n_cnt > 0 AND p_cnt > 0
+    `).all(workDate);
+
+    for (const conf of streamConflicts) {
+      const empMem = db.prepare('SELECT team_membership FROM employees WHERE id = ?').get(conf.assigned_employee_id)?.team_membership || 'Both';
+      let dominant = 'NEW';
+      if (empMem.toLowerCase() === 'pending') dominant = 'PENDING';
+      else if (empMem.toLowerCase() === 'new') dominant = 'NEW';
+      else dominant = conf.n_cnt >= conf.p_cnt ? 'NEW' : 'PENDING';
+
+      const minorityCondition = dominant === 'NEW'
+        ? "(LOWER(status) LIKE '%pending%' OR source_type = 'PENDING')"
+        : "(LOWER(status) NOT LIKE '%pending%' AND source_type != 'PENDING')";
+
+      // Fetch the order codes that will be unassigned
+      const minorityOrders = db.prepare(`
+        SELECT order_code FROM current_work_orders
+        WHERE work_date = ? AND assigned_employee_id = ? AND ${minorityCondition}
+      `).all(workDate, conf.assigned_employee_id);
+
+      db.prepare(`
+        UPDATE current_work_orders
+        SET assigned_employee_id = null,
+            assigned_employee_name = 'UNASSIGNED',
+            work_state = 'UNASSIGNED',
+            updated_at = datetime('now')
+        WHERE work_date = ? AND assigned_employee_id = ? AND ${minorityCondition}
+      `).run(workDate, conf.assigned_employee_id);
+
+      // Clean up order_level_allocations for those unassigned orders
+      if (minorityOrders.length > 0) {
+        const delAllocStmt = db.prepare(`
+          DELETE FROM order_level_allocations
+          WHERE allocation_date = ? AND order_code = ?
+        `);
+        for (const mo of minorityOrders) {
+          delAllocStmt.run(workDate, mo.order_code);
+        }
+      }
+    }
+
+    // 10. Sync legacy allocation_headers and allocation_items for backwards compatibility & UI
+    const insertHeader = db.prepare(`
+      INSERT INTO allocation_headers (allocation_date, notes, updated_at)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(allocation_date) DO UPDATE SET
+        notes = excluded.notes,
+        updated_at = datetime('now')
+    `);
+    insertHeader.run(workDate, `Enterprise Engine ${plan.run_id}`);
+    const hdr = db.prepare('SELECT id FROM allocation_headers WHERE allocation_date = ?').get(workDate);
+    if (hdr) {
+      db.prepare('DELETE FROM allocation_items WHERE allocation_header_id = ?').run(hdr.id);
+      const insertItem = db.prepare(`
+        INSERT INTO allocation_items (
+          allocation_header_id, employee_id, account, status, available_orders_at_assignment, created_at
+        ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+      `);
+
+      const groupedOrders = db.prepare(`
+        SELECT assigned_employee_id as employee_id, account, status, COUNT(*) as c
+        FROM current_work_orders
+        WHERE work_date = ? AND assigned_employee_id IS NOT NULL AND work_state = 'ASSIGNED'
+        GROUP BY assigned_employee_id, account, status
+      `).all(workDate);
+
+      for (const grp of groupedOrders) {
+        insertItem.run(hdr.id, grp.employee_id, grp.account, grp.status, grp.c);
+      }
     }
   });
 
@@ -2410,4 +2753,558 @@ export function getEnterpriseAllocationHistory(workDate = null, limit = 50) {
     started_at: r.started_at,
     completed_at: r.completed_at
   }));
+}
+
+/**
+ * Creates an authoritative atomic pre-allocation snapshot of the full system state
+ * BEFORE any allocation mutation occurs.
+ */
+export function createPreAllocationSnapshot(workDate, runId, versionNumber, meta = {}) {
+  const orders = db.prepare(`
+    SELECT 
+      order_code, account, status, order_date, source_file_slot, source_type,
+      merchant_code, file_name, batch_id, tracking_id, priority, work_state,
+      round_number, assigned_employee_id, assigned_employee_name, claimed_at, completed_at
+    FROM current_work_orders
+    WHERE work_date = ?
+  `).all(workDate);
+
+  const accountOwners = db.prepare(`
+    SELECT account, owner_employee_id, owner_employee_name, allocation_version, allocation_method, is_override, notes
+    FROM account_owners
+    WHERE work_date = ?
+  `).all(workDate);
+
+  const empStates = db.prepare(`
+    SELECT employee_id, pending_sequence, new_event_consumed, daily_mode, rescue_state, last_allocation_run_id, last_allocation_at
+    FROM employee_daily_allocation_states
+    WHERE work_date = ?
+  `).all(workDate);
+
+  const header = db.prepare(`SELECT id, notes FROM allocation_headers WHERE allocation_date = ?`).get(workDate);
+  const items = header ? db.prepare(`
+    SELECT employee_id, account, status, available_orders_at_assignment
+    FROM allocation_items
+    WHERE allocation_header_id = ?
+  `).all(header.id) : [];
+
+  const snapshotPayload = {
+    work_date: workDate,
+    run_id: runId,
+    allocation_version: versionNumber,
+    configuration_version: meta.configuration_version || 1,
+    context_hash: meta.context_hash || '',
+    created_at: new Date().toISOString(),
+    operational_time: meta.operational_time || new Date().toISOString(),
+    total_orders_before: orders.length,
+    assigned_orders_before: orders.filter(o => o.assigned_employee_id !== null).length,
+    unassigned_orders_before: orders.filter(o => o.assigned_employee_id === null).length,
+    new_orders_count: orders.filter(o => !(o.status || '').toLowerCase().includes('pending') && o.source_type !== 'PENDING').length,
+    pending_orders_count: orders.filter(o => (o.status || '').toLowerCase().includes('pending') || o.source_type === 'PENDING').length,
+    scheduled_accounts: meta.scheduled_accounts || [],
+    candidate_states: meta.candidate_states || [],
+    rescue_state: meta.rescue_state || 'NONE',
+    orders: orders.map(o => ({
+      order_code: o.order_code,
+      account: o.account,
+      status: o.status,
+      assigned_employee_id: o.assigned_employee_id,
+      assigned_employee_name: o.assigned_employee_name || (o.assigned_employee_id ? null : 'UNASSIGNED'),
+      work_state: o.work_state || (o.assigned_employee_id ? 'ASSIGNED' : 'UNASSIGNED'),
+      allocation_source: o.source_type || 'NEW',
+      allocation_mode: o.priority || 'REGULAR',
+      allocation_round: o.round_number || 1,
+      tracking_id: o.tracking_id || o.order_code,
+      priority: o.priority || 'REGULAR',
+      claimed_at: o.claimed_at,
+      completed_at: o.completed_at
+    })),
+    account_owners: accountOwners,
+    employee_daily_states: empStates,
+    allocation_header: header ? { notes: header.notes, items } : null,
+    assigned_in_this_run: meta.assignments || []
+  };
+
+  const cHash = meta.context_hash || crypto.createHash('sha256').update(JSON.stringify(snapshotPayload)).digest('hex');
+  snapshotPayload.context_hash = cHash;
+
+  db.prepare(`
+    INSERT INTO allocation_snapshots (
+      run_id, work_date, allocation_version, configuration_version, context_hash, snapshot_data_json, captured_at
+    ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+  `).run(
+    runId,
+    workDate,
+    versionNumber,
+    meta.configuration_version || 1,
+    cHash,
+    JSON.stringify(snapshotPayload)
+  );
+
+  return snapshotPayload;
+}
+
+/**
+ * Returns the latest undoable (committed and not yet undone) allocation run for a given date
+ */
+export function getLatestUndoableAllocationRun(workDate) {
+  const run = db.prepare(`
+    SELECT run_id, work_date, status, trigger, mode, allocation_type,
+           total_orders_input, assigned_count, unassigned_count, started_at, completed_at
+    FROM enterprise_allocation_runs
+    WHERE work_date = ? AND status = 'COMMITTED'
+    ORDER BY started_at DESC, created_at DESC, rowid DESC
+    LIMIT 1
+  `).get(workDate);
+  return run || null;
+}
+
+/**
+ * Atomically undoes the latest committed allocation run for a date.
+ * Restores all unworked orders to their exact pre-allocation snapshot state.
+ * Strictly protects orders modified after allocation (CLAIMED, IN_PROGRESS, PRINTED, COMPLETED, manual overrides, Vendoor changes).
+ */
+export function undoLastAllocation(workDate, options = {}) {
+  const operator = options.operator || options.generated_by || 'Supervisor';
+  const reason = options.reason || 'Supervisor rejected distribution';
+  const targetRunId = options.allocation_run_id || null;
+
+  // Run the entire rollback inside an ATOMIC SQLite TRANSACTION (Rule 9)
+  const tx = db.transaction(() => {
+    // 1. Identify and defensively validate target run
+    let targetRun;
+    if (targetRunId) {
+      targetRun = db.prepare('SELECT * FROM enterprise_allocation_runs WHERE run_id = ?').get(targetRunId);
+      if (!targetRun) {
+        throw new Error(`Allocation run "${targetRunId}" not found.`);
+      }
+      if (targetRun.work_date !== workDate) {
+        throw new Error(`Allocation run "${targetRunId}" belongs to date ${targetRun.work_date}, not requested date ${workDate}.`);
+      }
+      if (targetRun.status === 'PREVIEW_GENERATED' || targetRun.mode === 'PREVIEW' || targetRun.trigger === 'PREVIEW') {
+        throw new Error(`Allocation run "${targetRunId}" is a PREVIEW and was never committed. PREVIEW runs cannot be undone.`);
+      }
+      if (targetRun.status === 'UNDONE' || targetRun.status === 'ROLLED_BACK') {
+        throw new Error(`Allocation run "${targetRunId}" has already been undone.`);
+      }
+      if (targetRun.status !== 'COMMITTED') {
+        throw new Error(`Allocation run "${targetRunId}" is not in COMMITTED state (current status: ${targetRun.status}).`);
+      }
+
+      // Rule 7 & 13.10: Undo is only allowed for the latest undoable committed run!
+      const latestCommitted = db.prepare(`
+        SELECT run_id FROM enterprise_allocation_runs
+        WHERE work_date = ? AND status = 'COMMITTED'
+        ORDER BY started_at DESC, created_at DESC, rowid DESC
+        LIMIT 1
+      `).get(workDate);
+
+      if (latestCommitted && latestCommitted.run_id !== targetRun.run_id) {
+        throw new Error(`Cannot undo older run "${targetRunId}". Undo is only permitted for the most recent committed allocation run ("${latestCommitted.run_id}").`);
+      }
+    } else {
+      // Find latest committed run for workDate
+      targetRun = db.prepare(`
+        SELECT * FROM enterprise_allocation_runs
+        WHERE work_date = ? AND status = 'COMMITTED'
+        ORDER BY started_at DESC, created_at DESC, rowid DESC
+        LIMIT 1
+      `).get(workDate);
+
+      if (!targetRun) {
+        throw new Error(`No active committed allocation run found for date ${workDate} to undo.`);
+      }
+    }
+
+    const runId = targetRun.run_id;
+
+    // 2. Fetch Pre-allocation Snapshot
+    const snapRow = db.prepare(`
+      SELECT * FROM allocation_snapshots
+      WHERE run_id = ?
+      ORDER BY id DESC LIMIT 1
+    `).get(runId);
+
+    if (!snapRow || !snapRow.snapshot_data_json) {
+      throw new Error(`No pre-allocation snapshot found for run "${runId}". Atomic rollback cannot proceed safely.`);
+    }
+
+    let snapshot;
+    try {
+      snapshot = JSON.parse(snapRow.snapshot_data_json);
+    } catch (e) {
+      throw new Error(`Corrupted snapshot data for run "${runId}": ${e.message}`);
+    }
+
+    const preOrdersList = snapshot.orders || [];
+    const preOrdersMap = new Map();
+    for (const po of preOrdersList) {
+      preOrdersMap.set(po.order_code, po);
+    }
+
+    // Determine affected order codes in this run
+    const runAssignedCodes = new Set();
+    if (Array.isArray(snapshot.assigned_in_this_run)) {
+      snapshot.assigned_in_this_run.forEach(a => runAssignedCodes.add(a.order_code));
+    }
+    if (runAssignedCodes.size === 0 && targetRun.proposal_json) {
+      try {
+        const prop = JSON.parse(targetRun.proposal_json);
+        if (Array.isArray(prop)) {
+          prop.forEach(p => runAssignedCodes.add(p.order_code));
+        }
+      } catch (_) {}
+    }
+
+    // Also look up order_level_allocations for this date and configuration/run version
+    const ordAllocs = db.prepare(`
+      SELECT order_code, employee_id, employee_name, work_state, priority, round_number
+      FROM order_level_allocations
+      WHERE allocation_date = ? AND (rule_note LIKE '%' || ? || '%' OR allocation_version = ?)
+    `).all(workDate, runId, snapRow.allocation_version || targetRun.configuration_version || 0);
+
+    ordAllocs.forEach(oa => runAssignedCodes.add(oa.order_code));
+
+    // Also check any orders in current_work_orders whose current assignment differs from preOrdersMap
+    const currentOrders = db.prepare(`
+      SELECT * FROM current_work_orders WHERE work_date = ?
+    `).all(workDate);
+
+    for (const co of currentOrders) {
+      const po = preOrdersMap.get(co.order_code);
+      if (po && (co.assigned_employee_id !== po.assigned_employee_id || co.work_state !== po.work_state)) {
+        runAssignedCodes.add(co.order_code);
+      }
+    }
+
+    let restoredCount = 0;
+    let protectedCount = 0;
+    let skippedChangedCount = 0;
+
+    const restoreOrderStmt = db.prepare(`
+      UPDATE current_work_orders
+      SET assigned_employee_id = ?,
+          assigned_employee_name = ?,
+          work_state = ?,
+          round_number = ?,
+          updated_at = datetime('now')
+      WHERE work_date = ? AND order_code = ?
+    `);
+
+    const syncTrackingStmt = db.prepare(`
+      UPDATE order_tracking
+      SET assigned_to = ?,
+          work_state = ?,
+          updated_at = datetime('now')
+      WHERE work_date = ? AND order_code = ?
+    `);
+
+    const insertDecisionAudit = db.prepare(`
+      INSERT INTO allocation_decision_audits (
+        run_id, work_date, configuration_version, entity_type, entity_id, decision, reason_code, reason_details, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `);
+
+    // 3. Process each affected order with STRICT INTERLEAVING PROTECTION (Rules 5, 6, 8)
+    for (const orderCode of runAssignedCodes) {
+      const curr = db.prepare(`SELECT * FROM current_work_orders WHERE work_date = ? AND order_code = ?`).get(workDate, orderCode);
+      if (!curr) continue;
+
+      const pre = preOrdersMap.get(orderCode);
+      if (!pre) continue;
+
+      let isProtected = false;
+      let protectReason = '';
+
+      const currState = (curr.work_state || '').toUpperCase();
+      const preState = (pre.work_state || '').toUpperCase();
+      const currStatus = (curr.status || '').toUpperCase();
+      const preStatus = (pre.status || '').toUpperCase();
+
+      // Rule 6, 8, 13.3-13.6: Protected states (CLAIMED, IN_PROGRESS, PRINTED, COMPLETED, CANCELLED)
+      if (['CLAIMED', 'IN_PROGRESS', 'COMPLETED'].includes(currState) && currState !== preState) {
+        isProtected = true;
+        protectReason = `State progressed to ${currState} after allocation`;
+      } else if (['PRINTED', 'COMPLETED', 'CANCELLED', 'REFUNDED'].includes(currStatus) && currStatus !== preStatus) {
+        isProtected = true;
+        protectReason = `Status progressed to ${currStatus} after allocation`;
+      } else if (curr.claimed_at && !pre.claimed_at) {
+        isProtected = true;
+        protectReason = `Order was claimed at ${curr.claimed_at}`;
+      } else if (curr.completed_at && !pre.completed_at) {
+        isProtected = true;
+        protectReason = `Order was completed at ${curr.completed_at}`;
+      } else {
+        // Check if supervisor explicitly reassigned this account or order after run started
+        const hasManualReassign = db.prepare(`
+          SELECT 1 FROM account_reassignment_logs
+          WHERE work_date = ? AND account = ? AND created_at >= ?
+          LIMIT 1
+        `).get(workDate, curr.account, targetRun.started_at);
+
+        if (hasManualReassign) {
+          isProtected = true;
+          protectReason = `Account ${curr.account} was manually reassigned after allocation`;
+        } else {
+          // Check employee activity log for active work after run started
+          const act = db.prepare(`
+            SELECT action, timestamp FROM employee_activity_log
+            WHERE work_date = ? AND order_code = ? AND timestamp >= ? AND action IN ('CLAIMED', 'VIEWED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'HANDOFF')
+            LIMIT 1
+          `).get(workDate, orderCode, targetRun.started_at);
+
+          if (act) {
+            isProtected = true;
+            protectReason = `Operational activity recorded (${act.action} at ${act.timestamp})`;
+          } else {
+            // Check if assigned_employee_id was changed to someone other than what this run assigned
+            const assignedInRun = (snapshot.assigned_in_this_run || []).find(a => a.order_code === orderCode);
+            if (assignedInRun && curr.assigned_employee_id !== assignedInRun.employee_id && curr.assigned_employee_id !== pre.assigned_employee_id) {
+              isProtected = true;
+              protectReason = `Order assignment was modified after allocation run`;
+            }
+          }
+        }
+      }
+
+      if (isProtected) {
+        protectedCount++;
+        skippedChangedCount++;
+        insertDecisionAudit.run(
+          runId,
+          workDate,
+          snapRow.allocation_version || 1,
+          'ORDER',
+          orderCode,
+          'PROTECTED',
+          'CHANGED_AFTER_ALLOCATION',
+          protectReason
+        );
+      } else {
+        // Rule 5: Restore order to exact pre-allocation snapshot state (NOT unassigned unless it was unassigned)
+        restoreOrderStmt.run(
+          pre.assigned_employee_id || null,
+          pre.assigned_employee_name || 'UNASSIGNED',
+          pre.work_state || 'UNASSIGNED',
+          pre.round_number || null,
+          workDate,
+          orderCode
+        );
+
+        syncTrackingStmt.run(
+          pre.assigned_employee_name || 'UNASSIGNED',
+          pre.work_state || 'UNASSIGNED',
+          workDate,
+          orderCode
+        );
+
+        recordOrderLifecycleEvent({
+          tracking_id: pre.tracking_id || orderCode,
+          order_code: orderCode,
+          work_date: workDate,
+          stage: pre.status || 'New',
+          work_state: pre.work_state || 'UNASSIGNED',
+          employee_id: pre.assigned_employee_id || null,
+          employee_name: pre.assigned_employee_name || 'UNASSIGNED',
+          action: 'ALLOCATION_UNDONE',
+          reason: `Restored to pre-allocation state (Run ${runId} undone)`
+        });
+
+        restoredCount++;
+      }
+    }
+
+    // 4. Clean up records created specifically by this allocation run
+    const allocVer = snapRow.allocation_version || targetRun.configuration_version;
+    if (allocVer) {
+      db.prepare(`
+        DELETE FROM order_level_allocations
+        WHERE allocation_date = ? AND (allocation_version = ? OR rule_note LIKE '%' || ? || '%')
+      `).run(workDate, allocVer, runId);
+    } else {
+      db.prepare(`
+        DELETE FROM order_level_allocations
+        WHERE allocation_date = ? AND rule_note LIKE '%' || ? || '%'
+      `).run(workDate, runId);
+    }
+
+    // Remove distribution fingerprint
+    db.prepare(`
+      DELETE FROM distribution_fingerprints
+      WHERE run_id = ?
+    `).run(runId);
+
+    // Mark allocation_versions as undone
+    if (allocVer) {
+      db.prepare(`
+        UPDATE allocation_versions
+        SET is_final = 0,
+            rule_summary = '[UNDONE] ' || rule_summary
+        WHERE allocation_date = ? AND (version_number = ? OR rule_summary LIKE '%' || ? || '%')
+      `).run(workDate, allocVer, runId);
+    }
+
+    // Mark enterprise_allocation_runs as UNDONE
+    db.prepare(`
+      UPDATE enterprise_allocation_runs
+      SET status = 'UNDONE',
+          block_reason = ?
+      WHERE run_id = ?
+    `).run(`Undone by ${operator}: ${reason}`, runId);
+
+    // 5. Restore Account Owners
+    if (Array.isArray(snapshot.account_owners)) {
+      const affectedAccounts = new Set();
+      (snapshot.assigned_in_this_run || []).forEach(a => { if (a.account) affectedAccounts.add(a.account.toLowerCase()); });
+
+      const snapOwnersMap = new Map();
+      snapshot.account_owners.forEach(ao => {
+        if (ao.account) snapOwnersMap.set(ao.account.toLowerCase(), ao);
+      });
+
+      for (const accLower of affectedAccounts) {
+        const manualReassign = db.prepare(`
+          SELECT 1 FROM account_reassignment_logs
+          WHERE work_date = ? AND LOWER(account) = ? AND created_at >= ?
+          LIMIT 1
+        `).get(workDate, accLower, targetRun.started_at);
+
+        if (!manualReassign) {
+          const preOwner = snapOwnersMap.get(accLower);
+          if (preOwner) {
+            db.prepare(`
+              INSERT INTO account_owners (
+                work_date, account, owner_employee_id, owner_employee_name,
+                allocation_version, allocation_method, is_override, notes, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+              ON CONFLICT(work_date, account) DO UPDATE SET
+                owner_employee_id = excluded.owner_employee_id,
+                owner_employee_name = excluded.owner_employee_name,
+                allocation_version = excluded.allocation_version,
+                allocation_method = excluded.allocation_method,
+                is_override = excluded.is_override,
+                notes = excluded.notes,
+                updated_at = datetime('now')
+            `).run(
+              workDate,
+              preOwner.account,
+              preOwner.owner_employee_id,
+              preOwner.owner_employee_name,
+              preOwner.allocation_version || 1,
+              preOwner.allocation_method || 'Restored Pre-Allocation',
+              preOwner.is_override || 0,
+              preOwner.notes || 'Restored via Allocation Undo'
+            );
+          } else {
+            db.prepare(`
+              DELETE FROM account_owners
+              WHERE work_date = ? AND LOWER(account) = ? AND is_override = 0
+            `).run(workDate, accLower);
+          }
+        }
+      }
+    }
+
+    // 6. Restore Employee Daily Allocation States
+    if (Array.isArray(snapshot.employee_daily_states)) {
+      for (const es of snapshot.employee_daily_states) {
+        db.prepare(`
+          INSERT INTO employee_daily_allocation_states (
+            work_date, employee_id, pending_sequence, new_event_consumed,
+            daily_mode, rescue_state, last_allocation_run_id, last_allocation_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+          ON CONFLICT(work_date, employee_id) DO UPDATE SET
+            pending_sequence = excluded.pending_sequence,
+            new_event_consumed = excluded.new_event_consumed,
+            daily_mode = excluded.daily_mode,
+            rescue_state = excluded.rescue_state,
+            last_allocation_run_id = excluded.last_allocation_run_id,
+            last_allocation_at = excluded.last_allocation_at,
+            updated_at = datetime('now')
+        `).run(
+          workDate,
+          es.employee_id,
+          es.pending_sequence || 0,
+          es.new_event_consumed || 0,
+          es.daily_mode || 'NORMAL',
+          es.rescue_state || 'NONE',
+          es.last_allocation_run_id || null,
+          es.last_allocation_at || null
+        );
+      }
+    }
+
+    // 7. Sync allocation_headers and allocation_items from restored state
+    const hdr = db.prepare('SELECT id FROM allocation_headers WHERE allocation_date = ?').get(workDate);
+    if (hdr) {
+      db.prepare('DELETE FROM allocation_items WHERE allocation_header_id = ?').run(hdr.id);
+      const insertItem = db.prepare(`
+        INSERT INTO allocation_items (
+          allocation_header_id, employee_id, account, status, available_orders_at_assignment, created_at
+        ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+      `);
+
+      const groupedOrders = db.prepare(`
+        SELECT assigned_employee_id as employee_id, account, status, COUNT(*) as c
+        FROM current_work_orders
+        WHERE work_date = ? AND assigned_employee_id IS NOT NULL AND work_state = 'ASSIGNED'
+        GROUP BY assigned_employee_id, account, status
+      `).all(workDate);
+
+      for (const grp of groupedOrders) {
+        insertItem.run(hdr.id, grp.employee_id, grp.account, grp.status, grp.c);
+      }
+    }
+
+    // 8. Test hook for atomic transaction verification (Rule 9 & 13.12)
+    if (options.forceFailForTest === true) {
+      throw new Error('FORCED_FAILURE_FOR_TEST_ROLLBACK_VERIFICATION');
+    }
+
+    // 9. Persist Audit Trail record in allocation_undo_logs (Rule 10)
+    const auditInfo = db.prepare(`
+      INSERT INTO allocation_undo_logs (
+        work_date, allocation_run_id, allocation_version, generated_by,
+        restored_orders_count, skipped_orders_count, protected_orders_count,
+        reason, result, error, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', NULL, datetime('now'))
+    `).run(
+      workDate,
+      runId,
+      snapRow.allocation_version || targetRun.configuration_version || 1,
+      operator,
+      restoredCount,
+      skippedChangedCount,
+      protectedCount,
+      reason
+    );
+
+    const auditId = auditInfo.lastInsertRowid;
+
+    // Log in decision audits as well
+    insertDecisionAudit.run(
+      runId,
+      workDate,
+      snapRow.allocation_version || 1,
+      'RUN',
+      runId,
+      'UNDONE',
+      'ALLOCATION_UNDO',
+      `Restored ${restoredCount} orders, preserved ${protectedCount} protected orders. Operator: ${operator}. Reason: ${reason}`
+    );
+
+    return {
+      success: true,
+      work_date: workDate,
+      allocation_run_id: runId,
+      undone: true,
+      restored_orders_count: restoredCount,
+      protected_orders_count: protectedCount,
+      skipped_changed_orders_count: skippedChangedCount,
+      audit_id: auditId,
+      message: `Allocation run ${runId} successfully undone. Restored ${restoredCount} orders to pre-allocation state.`
+    };
+  });
+
+  return tx();
 }

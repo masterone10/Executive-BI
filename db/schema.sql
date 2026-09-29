@@ -429,12 +429,43 @@ CREATE TABLE IF NOT EXISTS vendoor_reconciliation_audit (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS merchants (
+  merchant_code TEXT PRIMARY KEY,
+  merchant_name TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS marketers (
+  affiliate_code TEXT PRIMARY KEY,
+  affiliate_name TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS merchant_account_mappings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  merchant_code TEXT NOT NULL,
+  account TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(merchant_code, account)
+);
+
 CREATE TABLE IF NOT EXISTS vendoor_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_code TEXT UNIQUE NOT NULL,
   status TEXT,
   account TEXT,
+  merchant_code TEXT,
+  merchant_name TEXT,
+  affiliate_code TEXT,
+  affiliate_name TEXT,
   source_date TEXT,
+  business_date TEXT,
+  active_status TEXT,
+  is_active INTEGER DEFAULT 1,
+  created_at_original TEXT,
+  last_synced_at TEXT,
   city TEXT,
   total_price REAL DEFAULT 0,
   raw_payload_json TEXT,
@@ -666,6 +697,7 @@ CREATE TABLE IF NOT EXISTS account_schedules (
   new_end_time TEXT,
   pending_start_time TEXT,
   pending_end_time TEXT,
+  day_schedules_json TEXT, -- JSON mapping of day-specific schedule overrides: { "friday": { "new_start_time": "", ... }, ... }
   config_version INTEGER DEFAULT 1,
   updated_at TEXT DEFAULT (datetime('now')),
   updated_by TEXT DEFAULT 'Supervisor'
@@ -749,6 +781,7 @@ CREATE TABLE IF NOT EXISTS allocation_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id TEXT NOT NULL,
   work_date TEXT NOT NULL,
+  allocation_version INTEGER,
   configuration_version INTEGER,
   context_hash TEXT NOT NULL,
   snapshot_data_json TEXT NOT NULL,
@@ -756,6 +789,23 @@ CREATE TABLE IF NOT EXISTS allocation_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_alloc_snap_run ON allocation_snapshots(run_id);
 CREATE INDEX IF NOT EXISTS idx_alloc_snap_date ON allocation_snapshots(work_date);
+
+CREATE TABLE IF NOT EXISTS allocation_undo_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_date TEXT NOT NULL,
+  allocation_run_id TEXT NOT NULL,
+  allocation_version INTEGER,
+  generated_by TEXT DEFAULT 'Supervisor',
+  restored_orders_count INTEGER DEFAULT 0,
+  skipped_orders_count INTEGER DEFAULT 0,
+  protected_orders_count INTEGER DEFAULT 0,
+  reason TEXT,
+  result TEXT NOT NULL DEFAULT 'SUCCESS', -- 'SUCCESS', 'FAILED'
+  error TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_alloc_undo_date ON allocation_undo_logs(work_date);
+CREATE INDEX IF NOT EXISTS idx_alloc_undo_run ON allocation_undo_logs(allocation_run_id);
 
 CREATE TABLE IF NOT EXISTS allocation_decision_audits (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

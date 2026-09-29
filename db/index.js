@@ -744,12 +744,21 @@ export function runMigrations(database = db) {
     console.warn('Migration for Vendoor Phase 2/3 tables:', e.message);
   }
 
-  // Safe table migration: Ensure vendoor_orders has merchant_code, business_date, active_status, is_active, last_synced_at, created_at_original
+  // Safe table migration: Ensure vendoor_orders has merchant_code, merchant_name, affiliate_code, affiliate_name, business_date, active_status, is_active, last_synced_at, created_at_original
   try {
     const vCols = database.prepare("PRAGMA table_info(vendoor_orders)").all();
     if (vCols.length > 0) {
       if (!vCols.some(c => c.name === 'merchant_code')) {
         database.exec("ALTER TABLE vendoor_orders ADD COLUMN merchant_code TEXT");
+      }
+      if (!vCols.some(c => c.name === 'merchant_name')) {
+        database.exec("ALTER TABLE vendoor_orders ADD COLUMN merchant_name TEXT");
+      }
+      if (!vCols.some(c => c.name === 'affiliate_code')) {
+        database.exec("ALTER TABLE vendoor_orders ADD COLUMN affiliate_code TEXT");
+      }
+      if (!vCols.some(c => c.name === 'affiliate_name')) {
+        database.exec("ALTER TABLE vendoor_orders ADD COLUMN affiliate_name TEXT");
       }
       if (!vCols.some(c => c.name === 'business_date')) {
         database.exec("ALTER TABLE vendoor_orders ADD COLUMN business_date TEXT");
@@ -769,10 +778,139 @@ export function runMigrations(database = db) {
       database.exec(`
         CREATE INDEX IF NOT EXISTS idx_vendoor_orders_bdate ON vendoor_orders(business_date);
         CREATE INDEX IF NOT EXISTS idx_vendoor_orders_active ON vendoor_orders(is_active);
+        CREATE INDEX IF NOT EXISTS idx_vo_merchant_code ON vendoor_orders(merchant_code);
+        CREATE INDEX IF NOT EXISTS idx_vo_merchant_name ON vendoor_orders(merchant_name);
+        CREATE INDEX IF NOT EXISTS idx_vo_affiliate_code ON vendoor_orders(affiliate_code);
       `);
     }
   } catch (e) {
     // Ignored
+  }
+
+  // Safe table migration: Ensure current_work_orders has merchant_name and affiliate_code
+  try {
+    const cwCols = database.prepare("PRAGMA table_info(current_work_orders)").all();
+    if (cwCols.length > 0) {
+      if (!cwCols.some(c => c.name === 'merchant_name')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN merchant_name TEXT");
+      }
+      if (!cwCols.some(c => c.name === 'affiliate_code')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN affiliate_code TEXT");
+      }
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_cwo_affiliate ON current_work_orders(affiliate_code);
+      `);
+    }
+  } catch (e) {
+    // Ignored
+  }
+
+  // Safe table migration: Create merchants, marketers, and merchant_account_mappings master tables
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS merchants (
+        merchant_code TEXT PRIMARY KEY,
+        merchant_name TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS marketers (
+        affiliate_code TEXT PRIMARY KEY,
+        affiliate_name TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS merchant_account_mappings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        merchant_code TEXT NOT NULL,
+        account TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(merchant_code, account)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_mam_merchant ON merchant_account_mappings(merchant_code);
+      CREATE INDEX IF NOT EXISTS idx_mam_account ON merchant_account_mappings(account);
+    `);
+
+    // Safe idempotent backfill of existing orders
+    const needsBackfill = database.prepare(`
+      SELECT count(*) as c FROM vendoor_orders 
+      WHERE (merchant_name IS NULL OR affiliate_code IS NULL) AND raw_payload_json IS NOT NULL
+    `).get()?.c || 0;
+
+    if (needsBackfill > 0) {
+      const ordersToBackfill = database.prepare(`
+        SELECT id, order_code, account, merchant_code, raw_payload_json 
+        FROM vendoor_orders 
+        WHERE (merchant_name IS NULL OR affiliate_code IS NULL) AND raw_payload_json IS NOT NULL
+      `).all();
+
+      const updateOrderStmt = database.prepare(`
+        UPDATE vendoor_orders
+        SET merchant_name = ?, merchant_code = ?, affiliate_code = ?, affiliate_name = ?
+        WHERE id = ?
+      `);
+      const updateCwoStmt = database.prepare(`
+        UPDATE current_work_orders
+        SET merchant_name = ?, merchant_code = ?, affiliate_code = ?
+        WHERE order_code = ?
+      `);
+      const upsertMerchantStmt = database.prepare(`
+        INSERT INTO merchants (merchant_code, merchant_name, updated_at)
+        VALUES (?, ?, datetime('now'))
+        ON CONFLICT(merchant_code) DO UPDATE SET
+          merchant_name = excluded.merchant_name,
+          updated_at = datetime('now')
+      `);
+      const upsertMarketerStmt = database.prepare(`
+        INSERT INTO marketers (affiliate_code, affiliate_name, updated_at)
+        VALUES (?, ?, datetime('now'))
+        ON CONFLICT(affiliate_code) DO UPDATE SET
+          affiliate_name = COALESCE(excluded.affiliate_name, marketers.affiliate_name),
+          updated_at = datetime('now')
+      `);
+      const upsertMappingStmt = database.prepare(`
+        INSERT OR IGNORE INTO merchant_account_mappings (merchant_code, account)
+        VALUES (?, ?)
+      `);
+
+      const tx = database.transaction(() => {
+        for (const o of ordersToBackfill) {
+          let mName = o.account || 'Unassigned';
+          let mCode = o.merchant_code || null;
+          let affCode = null;
+          let affName = null;
+
+          if (o.raw_payload_json) {
+            try {
+              const p = JSON.parse(o.raw_payload_json);
+              mName = p.merchant_name || o.account || 'Unassigned';
+              mCode = p.merchant_code || o.merchant_code || null;
+              affCode = p.affiliate_code ? String(p.affiliate_code).trim() : null;
+              affName = p.affiliate_name ? String(p.affiliate_name).trim() : null;
+            } catch (_) {}
+          }
+
+          updateOrderStmt.run(mName, mCode, affCode, affName, o.id);
+          try { updateCwoStmt.run(mName, mCode, affCode, o.order_code); } catch (_) {}
+
+          if (mCode) {
+            upsertMerchantStmt.run(mCode, mName);
+            if (o.account) {
+              upsertMappingStmt.run(mCode, o.account);
+            }
+          }
+          if (affCode) {
+            upsertMarketerStmt.run(affCode, affName);
+          }
+        }
+      });
+      tx();
+    }
+  } catch (e) {
+    console.warn('Migration for merchants, marketers, and backfill:', e.message);
   }
 
   // Seed centralized operational day cutoff if not present
@@ -917,6 +1055,7 @@ export function runMigrations(database = db) {
         new_end_time TEXT,
         pending_start_time TEXT,
         pending_end_time TEXT,
+        day_schedules_json TEXT,
         config_version INTEGER DEFAULT 1,
         updated_at TEXT DEFAULT (datetime('now')),
         updated_by TEXT DEFAULT 'Supervisor'
@@ -1000,6 +1139,7 @@ export function runMigrations(database = db) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         run_id TEXT NOT NULL,
         work_date TEXT NOT NULL,
+        allocation_version INTEGER,
         configuration_version INTEGER,
         context_hash TEXT NOT NULL,
         snapshot_data_json TEXT NOT NULL,
@@ -1007,6 +1147,23 @@ export function runMigrations(database = db) {
       );
       CREATE INDEX IF NOT EXISTS idx_alloc_snap_run ON allocation_snapshots(run_id);
       CREATE INDEX IF NOT EXISTS idx_alloc_snap_date ON allocation_snapshots(work_date);
+
+      CREATE TABLE IF NOT EXISTS allocation_undo_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        work_date TEXT NOT NULL,
+        allocation_run_id TEXT NOT NULL,
+        allocation_version INTEGER,
+        generated_by TEXT DEFAULT 'Supervisor',
+        restored_orders_count INTEGER DEFAULT 0,
+        skipped_orders_count INTEGER DEFAULT 0,
+        protected_orders_count INTEGER DEFAULT 0,
+        reason TEXT,
+        result TEXT NOT NULL DEFAULT 'SUCCESS',
+        error TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_alloc_undo_date ON allocation_undo_logs(work_date);
+      CREATE INDEX IF NOT EXISTS idx_alloc_undo_run ON allocation_undo_logs(allocation_run_id);
 
       CREATE TABLE IF NOT EXISTS allocation_decision_audits (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1035,6 +1192,22 @@ export function runMigrations(database = db) {
       );
       CREATE INDEX IF NOT EXISTS idx_alloc_alerts_date ON allocation_operational_alerts(work_date);
     `);
+
+    // Ensure allocation_snapshots has allocation_version column for older schemas
+    try {
+      const snapCols = database.prepare("PRAGMA table_info(allocation_snapshots)").all();
+      if (snapCols.length > 0 && !snapCols.some(c => c.name === 'allocation_version')) {
+        database.exec("ALTER TABLE allocation_snapshots ADD COLUMN allocation_version INTEGER");
+      }
+    } catch (_) {}
+
+    // Ensure account_schedules has day_schedules_json column
+    try {
+      const schedCols = database.prepare("PRAGMA table_info(account_schedules)").all();
+      if (schedCols.length > 0 && !schedCols.some(c => c.name === 'day_schedules_json')) {
+        database.exec("ALTER TABLE account_schedules ADD COLUMN day_schedules_json TEXT");
+      }
+    } catch (_) {}
 
     // Seed default global settings if not present
     database.prepare(`

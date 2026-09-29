@@ -246,7 +246,8 @@ export async function syncVendoorOrders(options = {}) {
   const operationalBusinessDate = options.businessDate || options.workDate || options.operationalDate || options.fromDate || new Date().toISOString().slice(0, 10);
 
   const pageSize = Math.min(300, Math.max(10, parseInt(options.pageSize, 10) || 300));
-  const maxPages = Math.min(100, Math.max(1, parseInt(options.maxPages, 10) || 50));
+  const maxPages = Math.min(1000, Math.max(1, parseInt(options.maxPages, 10) || 50));
+  const isHistoricalSync = options.isHistoricalSync === true;
 
   const isLive = ds.mode === 'LIVE';
   const statusesToFetch = options.statusFilter 
@@ -267,15 +268,19 @@ export async function syncVendoorOrders(options = {}) {
   try {
     const insertOrderStmt = db.prepare(`
       INSERT INTO vendoor_orders (
-        order_code, status, active_status, account, merchant_code, source_date,
+        order_code, status, active_status, account, merchant_code, merchant_name,
+        affiliate_code, affiliate_name, source_date,
         created_at_original, business_date, is_active, last_synced_at, city,
         total_price, raw_payload_json, sync_run_id, imported_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(order_code) DO UPDATE SET
         status = excluded.status,
         active_status = excluded.active_status,
         account = COALESCE(excluded.account, vendoor_orders.account),
         merchant_code = COALESCE(excluded.merchant_code, vendoor_orders.merchant_code),
+        merchant_name = COALESCE(excluded.merchant_name, vendoor_orders.merchant_name),
+        affiliate_code = COALESCE(excluded.affiliate_code, vendoor_orders.affiliate_code),
+        affiliate_name = COALESCE(excluded.affiliate_name, vendoor_orders.affiliate_name),
         source_date = COALESCE(vendoor_orders.source_date, excluded.source_date),
         created_at_original = COALESCE(vendoor_orders.created_at_original, excluded.created_at_original),
         business_date = excluded.business_date,
@@ -290,8 +295,9 @@ export async function syncVendoorOrders(options = {}) {
 
     const insertCwoStmt = db.prepare(`
       INSERT INTO current_work_orders (
-        work_date, order_code, account, status, order_date, source_file_slot, source_type, merchant_code
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        work_date, order_code, account, status, order_date, source_file_slot, source_type,
+        merchant_code, merchant_name, affiliate_code
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(work_date, order_code) DO UPDATE SET
         account = excluded.account,
         status = excluded.status,
@@ -299,7 +305,30 @@ export async function syncVendoorOrders(options = {}) {
         source_file_slot = excluded.source_file_slot,
         source_type = excluded.source_type,
         merchant_code = COALESCE(excluded.merchant_code, current_work_orders.merchant_code),
+        merchant_name = COALESCE(excluded.merchant_name, current_work_orders.merchant_name),
+        affiliate_code = COALESCE(excluded.affiliate_code, current_work_orders.affiliate_code),
         updated_at = datetime('now')
+    `);
+
+    const upsertMerchantStmt = db.prepare(`
+      INSERT INTO merchants (merchant_code, merchant_name, updated_at)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(merchant_code) DO UPDATE SET
+        merchant_name = excluded.merchant_name,
+        updated_at = datetime('now')
+    `);
+
+    const upsertMarketerStmt = db.prepare(`
+      INSERT INTO marketers (affiliate_code, affiliate_name, updated_at)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(affiliate_code) DO UPDATE SET
+        affiliate_name = COALESCE(excluded.affiliate_name, marketers.affiliate_name),
+        updated_at = datetime('now')
+    `);
+
+    const upsertMappingStmt = db.prepare(`
+      INSERT OR IGNORE INTO merchant_account_mappings (merchant_code, account)
+      VALUES (?, ?)
     `);
 
     const updateCwoStatusStmt = db.prepare(`
@@ -377,12 +406,20 @@ export async function syncVendoorOrders(options = {}) {
             const originalSourceDate = ord.source_date || ord.date || existing?.source_date || null;
             const originalCreatedAt = ord.created_at_original || ord.created_at || null;
 
+            const mCode = ord.merchant_code || null;
+            const mName = ord.merchant_name || ord.account || 'Unassigned';
+            const affCode = ord.affiliate_code || null;
+            const affName = ord.affiliate_name || null;
+
             insertOrderStmt.run(
               ord.order_code,
               normalizedActiveStatus,
               normalizedActiveStatus,
               ord.account || 'Unassigned',
-              ord.merchant_code || null,
+              mCode,
+              mName,
+              affCode,
+              affName,
               originalSourceDate,
               originalCreatedAt,
               operationalBusinessDate,
@@ -393,7 +430,17 @@ export async function syncVendoorOrders(options = {}) {
               syncRunId
             );
 
-            if (isOrderActive) {
+            if (mCode) {
+              try { upsertMerchantStmt.run(mCode, mName); } catch (_) {}
+              if (ord.account) {
+                try { upsertMappingStmt.run(mCode, ord.account); } catch (_) {}
+              }
+            }
+            if (affCode) {
+              try { upsertMarketerStmt.run(affCode, affName); } catch (_) {}
+            }
+
+            if (isOrderActive && !isHistoricalSync) {
               activeOrderCodes.add(ord.order_code);
               const slot = isPending ? 2 : 1;
               const sourceType = isPending ? 'PENDING' : 'NEW';
@@ -406,10 +453,12 @@ export async function syncVendoorOrders(options = {}) {
                   originalSourceDate || operationalBusinessDate,
                   slot,
                   sourceType,
-                  ord.merchant_code || null
+                  mCode,
+                  mName,
+                  affCode
                 );
               } catch (_) {}
-            } else {
+            } else if (!isHistoricalSync) {
               // Not active (e.g. Processing, Shipped, Delivered, Cancelled):
               // Remove from current active work pool for today if present
               try {
@@ -435,7 +484,7 @@ export async function syncVendoorOrders(options = {}) {
     // ACTIVE WORKLOAD RECONCILIATION & STALE PRUNING:
     // Any order in current_work_orders for operationalBusinessDate that is no longer in the active Vendoor set (New/Pending)
     // MUST NOT remain active. Prune from current_work_orders and set is_active = 0 in vendoor_orders.
-    if (isStatusDriven && activeOrderCodes.size > 0) {
+    if (isStatusDriven && !isHistoricalSync && activeOrderCodes.size > 0) {
       const existingCwo = db.prepare('SELECT order_code FROM current_work_orders WHERE work_date = ?').all(operationalBusinessDate);
       const toPrune = existingCwo.filter(row => !activeOrderCodes.has(row.order_code)).map(r => r.order_code);
       if (toPrune.length > 0) {
@@ -450,6 +499,44 @@ export async function syncVendoorOrders(options = {}) {
         pruneTx();
       }
     }
+
+    // POST-SYNC SINGLE-STREAM ENFORCEMENT:
+    // If any order status change caused an employee to have both NEW and PENDING orders,
+    // unassign the minority stream orders so that the employee NEVER has mixed statuses!
+    try {
+      const streamConflicts = db.prepare(`
+        SELECT 
+          assigned_employee_id,
+          assigned_employee_name,
+          SUM(CASE WHEN LOWER(status) NOT LIKE '%pending%' AND source_type != 'PENDING' THEN 1 ELSE 0 END) as n_cnt,
+          SUM(CASE WHEN LOWER(status) LIKE '%pending%' OR source_type = 'PENDING' THEN 1 ELSE 0 END) as p_cnt
+        FROM current_work_orders
+        WHERE work_date = ? AND assigned_employee_id IS NOT NULL AND work_state = 'ASSIGNED'
+        GROUP BY assigned_employee_id
+        HAVING n_cnt > 0 AND p_cnt > 0
+      `).all(operationalBusinessDate);
+
+      for (const conf of streamConflicts) {
+        const empMem = db.prepare('SELECT team_membership FROM employees WHERE id = ?').get(conf.assigned_employee_id)?.team_membership || 'Both';
+        let dominant = 'NEW';
+        if (empMem.toLowerCase() === 'pending') dominant = 'PENDING';
+        else if (empMem.toLowerCase() === 'new') dominant = 'NEW';
+        else dominant = conf.n_cnt >= conf.p_cnt ? 'NEW' : 'PENDING';
+
+        const minorityCondition = dominant === 'NEW'
+          ? "(LOWER(status) LIKE '%pending%' OR source_type = 'PENDING')"
+          : "(LOWER(status) NOT LIKE '%pending%' AND source_type != 'PENDING')";
+
+        db.prepare(`
+          UPDATE current_work_orders
+          SET assigned_employee_id = null,
+              assigned_employee_name = 'UNASSIGNED',
+              work_state = 'UNASSIGNED',
+              updated_at = datetime('now')
+          WHERE work_date = ? AND assigned_employee_id = ? AND ${minorityCondition}
+        `).run(operationalBusinessDate, conf.assigned_employee_id);
+      }
+    } catch (_) {}
 
     // Smart Dispatcher: check if newly arrived orders match an existing allocation for their account (strictly when dispatcher is ENABLED)
     let smartDispatcherResult = null;
@@ -641,6 +728,8 @@ export async function syncVendoorLogs(options = {}) {
       `).all(startDate, endDate).map(r => r.k)
     );
 
+    const datesToRecompute = new Set([startDate, endDate].filter(Boolean));
+
     const tx = db.transaction(() => {
       for (const log of logs) {
         if (!log.order_code || !log.employee_name) {
@@ -657,6 +746,9 @@ export async function syncVendoorLogs(options = {}) {
         // Resolve authoritative business date using operational cutoff
         const opDateObj = getOperationalBusinessDate(rawTs);
         const resolvedWorkDate = opDateObj ? opDateObj.business_date : (log.date || startDate);
+        if (resolvedWorkDate) {
+          datesToRecompute.add(resolvedWorkDate);
+        }
 
         // Deterministic Identity Match
         const identity = resolveEmployeeIdentity(log.employee_name, { persistIdentity: true });
@@ -711,7 +803,6 @@ export async function syncVendoorLogs(options = {}) {
 
     // Recompute canonical performance snapshots for all relevant dates
     try {
-      const datesToRecompute = new Set([startDate, endDate].filter(Boolean));
       for (const d of datesToRecompute) {
         const records = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all(d);
         if (records && records.length > 0) {
@@ -725,9 +816,8 @@ export async function syncVendoorLogs(options = {}) {
 
     // Auto-restore observed working team from real Vendoor logs if no manual team exists
     try {
-      syncAndRestoreObservedTeam(startDate);
-      if (endDate && endDate !== startDate) {
-        syncAndRestoreObservedTeam(endDate);
+      for (const d of datesToRecompute) {
+        syncAndRestoreObservedTeam(d);
       }
     } catch (wtErr) {
       console.warn('[Vendoor Sync] Working team auto-restore notice:', wtErr.message);

@@ -1476,9 +1476,12 @@ export function getTrackingOverview(workDate) {
 
   // Union of all active/assigned/working employees
   const allEmployeesSet = new Set([...empAssignedAccounts.keys(), ...empWorkedOrders.keys()]);
+  const allDbEmployees = db.prepare('SELECT id, name, department, active, status FROM employees').all();
+  const empNameToId = new Map(allDbEmployees.map(e => [e.name.toLowerCase().trim(), e.id]));
 
   for (const empName of allEmployeesSet) {
     if (!isCsEmployee(empName)) continue;
+    const empId = empNameToId.get(empName.toLowerCase().trim()) || null;
     const assigned = Array.from(empAssignedAccounts.get(empName) || []);
     const assignedSet = new Set(assigned);
     const worked = Array.from(empWorkedAccounts.get(empName) || []);
@@ -1515,6 +1518,7 @@ export function getTrackingOverview(workDate) {
       : null;
 
     const empData = {
+      employee_id: empId,
       employee_name: empName,
       assigned_accounts: assigned,
       actually_worked_accounts: worked,
@@ -1542,10 +1546,12 @@ export function getTrackingOverview(workDate) {
 
     if (extraAccounts.length > 0) {
       employeesOutsideAllocation.push({
+        employee_id: empId,
         employee_name: empName,
         assigned_accounts: assigned,
         actual_accounts: worked,
         extra_accounts: extraAccounts,
+        extra_accounts_worked: extraAccounts,
         orders_worked_outside: dailyLogUploaded ? outsideOrdersCount : null,
         real_actions_outside: dailyLogUploaded ? outsideActionsCount : null,
       });
@@ -2900,6 +2906,11 @@ export function getOperationalDashboardData(workDate, options = {}) {
       actions: totalActions,
       alt: totalAlt
     }],
+    top10Performers: [...employees].sort((a, b) => (b.performance_score || 0) - (a.performance_score || 0)).slice(0, 10),
+    mostActive: [...employees].sort((a, b) => (b.actions || 0) - (a.actions || 0)).slice(0, 10),
+    topCSContributor: null,
+    topCSContributors: [],
+    allCSContributors: [],
     rankings: {
       printed: [...employees].sort((a, b) => b.printed - a.printed),
       pending: [...employees].sort((a, b) => b.pending - a.pending),

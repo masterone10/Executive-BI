@@ -58,7 +58,7 @@ export async function fetchFreshOrdersCsrfToken() {
  */
 export async function collectAllOrderIdsForStatus(categoryId, options = {}) {
   const pageSize = Math.min(300, Math.max(10, parseInt(options.pageSize, 10) || 300));
-  const maxPages = Math.min(100, Math.max(1, parseInt(options.maxPages, 10) || 50));
+  const maxPages = Math.min(1000, Math.max(1, parseInt(options.maxPages, 10) || 100));
   const fromDate = options.fromDate || '';
   const toDate = options.toDate || '';
   const search = options.search || '';

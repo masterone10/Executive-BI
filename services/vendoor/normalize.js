@@ -124,7 +124,7 @@ export function normalizeVendoorOrder(rawOrder) {
   }
   const status = rawStatus || 'Unknown';
 
-  // Extract merchant / account (Never fallback to affiliate or marketer)
+  // Extract merchant name & code (Never fallback to affiliate or marketer for account/merchant identity)
   const merchantCode = String(
     rawOrder.merchant_code ||
     rawOrder.merchant_id ||
@@ -132,6 +132,36 @@ export function normalizeVendoorOrder(rawOrder) {
     rawOrder.client_code ||
     rawOrder['كود التاجر'] ||
     rawOrder['كود_التاجر'] ||
+    ''
+  ).trim();
+
+  const merchantName = String(
+    rawOrder.merchant_name ||
+    rawOrder.merchant ||
+    rawOrder['اسم التاجر'] ||
+    rawOrder['اسم_التاجر'] ||
+    rawOrder['التاجر'] ||
+    rawOrder.store_name ||
+    rawOrder.account_name ||
+    ''
+  ).trim();
+
+  // Extract affiliate / marketer code & name
+  const affiliateCode = String(
+    rawOrder.affiliate_code ||
+    rawOrder['الافيليت كود'] ||
+    rawOrder['كود الافلييت'] ||
+    rawOrder['كود المسوق'] ||
+    rawOrder.affiliate ||
+    rawOrder.marketer_code ||
+    ''
+  ).trim();
+
+  const affiliateName = String(
+    rawOrder.affiliate_name ||
+    rawOrder['اسم الافلييت'] ||
+    rawOrder['اسم المسوق'] ||
+    rawOrder.marketer_name ||
     ''
   ).trim();
 
@@ -178,6 +208,9 @@ export function normalizeVendoorOrder(rawOrder) {
     status,
     account,
     merchant_code: merchantCode || null,
+    merchant_name: merchantName || account || null,
+    affiliate_code: affiliateCode || null,
+    affiliate_name: affiliateName || null,
     date: sourceDateStr,
     source_date: sourceDateStr,
     created_at: rawOrder.created_at || null,

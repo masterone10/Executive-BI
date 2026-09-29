@@ -180,7 +180,7 @@ export async function fetchVendoorOrdersPage(options = {}) {
  */
 export async function fetchAllVendoorOrders(options = {}) {
   const pageSize = Math.min(300, Math.max(10, parseInt(options.pageSize, 10) || 300));
-  const maxPages = Math.min(100, Math.max(1, parseInt(options.maxPages, 10) || 50));
+  const maxPages = Math.min(1000, Math.max(1, parseInt(options.maxPages, 10) || 50));
 
   // If statusFilter is an array (e.g. ['NEW', 'PENDING']), fetch each status completely
   if (Array.isArray(options.statusFilter) && options.statusFilter.length > 1) {

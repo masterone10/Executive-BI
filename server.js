@@ -64,8 +64,11 @@ import {
   executeEnterpriseAllocation,
   checkEnterpriseOperationalAlerts,
   getEnterpriseAllocationRunDetails,
-  getEnterpriseAllocationHistory
+  getEnterpriseAllocationHistory,
+  undoLastAllocation,
+  getLatestUndoableAllocationRun
 } from './services/allocation.js';
+import { createDatabaseBackup, restoreDatabaseFromBackup } from './services/backup_restore.js';
 import {
   inspectExcelSchema,
   persistDailyLogRecords,
@@ -148,6 +151,8 @@ import {
   generateDispatcherReport,
   generateDataQualityReport,
   generateSystemHealthReport,
+  generateMerchantReport,
+  generateMarketerReport,
   exportReportToCSV,
   exportReportToExcel,
   saveReportRecord,
@@ -215,11 +220,14 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB
 });
 
-// Serve static frontend with caching headers for static assets
+// Serve static frontend with caching headers for static assets (HTML is never cached)
 app.use(express.static(PUBLIC_DIR, {
-  maxAge: '1d',
   setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.png') || filePath.endsWith('.svg') || filePath.endsWith('.ico')) {
+    if (filePath.endsWith('.html') || filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    } else if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.png') || filePath.endsWith('.svg') || filePath.endsWith('.ico')) {
       res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
     }
   }
@@ -854,6 +862,53 @@ app.delete('/api/account-exceptions/:id', (req, res) => {
 });
 
 // -------------------------------------------------------------
+// 3C. SYSTEM DATABASE BACKUP & SAFE RESTORE
+// -------------------------------------------------------------
+app.post('/api/system/backup', async (req, res) => {
+  try {
+    const result = await createDatabaseBackup(req.body?.filename);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/system/backups', (req, res) => {
+  try {
+    const backupsDir = path.join(process.cwd(), 'backups');
+    if (!fs.existsSync(backupsDir)) {
+      return res.json([]);
+    }
+    const files = fs.readdirSync(backupsDir)
+      .filter(f => f.endsWith('.db'))
+      .map(f => {
+        const stat = fs.statSync(path.join(backupsDir, f));
+        return {
+          filename: f,
+          size_bytes: stat.size,
+          created_at: stat.birthtime.toISOString()
+        };
+      })
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    res.json(files);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/system/restore', (req, res) => {
+  try {
+    const filename = req.body?.filename;
+    if (!filename) return res.status(400).json({ error: 'filename is required for restore' });
+    const backupPath = path.join(process.cwd(), 'backups', path.basename(filename));
+    const result = restoreDatabaseFromBackup(backupPath);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
 // 4. WORK ALLOCATION & CURRENT WORK (Parts 13 to 25, 39, 40)
 // -------------------------------------------------------------
 app.get('/api/global-context', (req, res) => {
@@ -1225,9 +1280,56 @@ app.get(['/api/allocation/alerts', '/api/allocations/:date/alerts'], (req, res) 
   }
 });
 
-/**
- * GENERATE ORDER-LEVEL ALLOCATION (Automatic Engine)
- */
+// 13. POST Undo / Reject Allocation (Rollback to exact pre-allocation state)
+app.post(['/api/allocations/:date/undo', '/api/allocation/:date/undo', '/api/allocations/undo', '/api/allocation/undo'], (req, res) => {
+  const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
+  const { allocation_run_id, run_id, reason, operator, generated_by, forceFailForTest } = req.body || {};
+  try {
+    const result = undoLastAllocation(date, {
+      allocation_run_id: allocation_run_id || run_id,
+      reason,
+      operator: operator || generated_by || 'Supervisor',
+      forceFailForTest: forceFailForTest === true
+    });
+    console.log(`[ALLOCATION UNDO] Successfully rolled back run ${result.allocation_run_id} for date=${date}: restored=${result.restored_orders_count}, protected=${result.protected_orders_count}`);
+    res.json(result);
+  } catch (err) {
+    console.error(`[ALLOCATION UNDO ERROR] date=${date}, error=${err.message}`);
+    res.status(400).json({
+      success: false,
+      work_date: date,
+      allocation_run_id: allocation_run_id || run_id || null,
+      undone: false,
+      restored_orders_count: 0,
+      protected_orders_count: 0,
+      skipped_changed_orders_count: 0,
+      error: err.message,
+      message: err.message
+    });
+  }
+});
+
+// 14. GET Latest Undoable Run Info
+app.get(['/api/allocations/:date/latest-undoable-run', '/api/allocation/:date/latest-undoable-run'], (req, res) => {
+  const date = req.params.date || req.query.date || getCairoBusinessDate();
+  try {
+    const run = getLatestUndoableAllocationRun(date);
+    res.json({ success: true, work_date: date, run });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 15. GET Allocation Undo History
+app.get(['/api/allocations/:date/undo-history', '/api/allocation/:date/undo-history'], (req, res) => {
+  const date = req.params.date || req.query.date || getCairoBusinessDate();
+  try {
+    const logs = db.prepare('SELECT * FROM allocation_undo_logs WHERE work_date = ? ORDER BY created_at DESC').all(date);
+    res.json({ success: true, work_date: date, count: logs.length, logs });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 app.post(['/api/allocations/:date/generate', '/api/allocations/generate', '/api/allocation/generate'], (req, res) => {
   const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
   const { method, account_specific_rules, regenerate, round_based, round_number, max_capacity_per_employee, max_capacity, enterprise, use_enterprise } = req.body || {};
@@ -1431,7 +1533,7 @@ app.get('/api/allocations/:date/export-employee/:employeeId', (req, res) => {
 /**
  * EXPORT ALL EMPLOYEES ALLOCATION WORKBOOKS AS ZIP
  */
-app.get('/api/allocations/:date/export-all-zip', async (req, res) => {
+app.get(['/api/allocations/:date/export-zip', '/api/allocations/:date/export-all-zip'], async (req, res) => {
   const { date } = req.params;
   const { version } = req.query;
   try {
@@ -1506,8 +1608,18 @@ app.delete('/api/allocations/:id', (req, res) => {
   }
 });
 
-app.delete('/api/allocations/date/:date', (req, res) => {
-  const { date } = req.params;
+app.delete(['/api/allocations/date/:date', '/api/allocations/:date'], (req, res) => {
+  const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
+  try {
+    const result = deleteAllocationForDate(date);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post(['/api/allocations/:date/reset', '/api/allocations/reset', '/api/allocation/reset'], (req, res) => {
+  const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
   try {
     const result = deleteAllocationForDate(date);
     res.json(result);
@@ -2799,11 +2911,14 @@ app.post('/api/integrations/vendoor/reconcile-history', async (req, res) => {
 
 app.post('/api/integrations/vendoor/bootstrap-2months', async (req, res) => {
   try {
-    const { endDate, toDate, days, chunkDays } = req.body || {};
+    const { endDate, toDate, days, chunkDays, startDate, fromDate, forceMode, today } = req.body || {};
     const result = await bootstrapHistoricalTwoMonths({
+      startDate: startDate || fromDate,
       endDate: endDate || toDate,
       days: days || 60,
-      chunkDays: chunkDays || 2
+      chunkDays: chunkDays || 2,
+      forceMode,
+      today
     });
     return res.json(result);
   } catch (err) {
@@ -3113,6 +3228,74 @@ app.get('/api/reports/account', (req, res) => {
   }
 });
 
+app.get('/api/reports/merchant', (req, res) => {
+  try {
+    const cacheKey = `rep_merch_${JSON.stringify(req.query)}`;
+    const cached = getCachedApiResponse(cacheKey);
+    if (cached) return res.json(cached);
+
+    const report = generateMerchantReport({
+      dateMode: req.query.date_mode || 'day',
+      targetDate: req.query.target_date,
+      startDate: req.query.start_date,
+      endDate: req.query.end_date,
+      filters: req.query
+    });
+    setCachedApiResponse(cacheKey, report);
+    setImmediate(() => {
+      try {
+        saveReportRecord({
+          reportType: 'merchant',
+          dateMode: report.date_mode,
+          startDate: report.start_date,
+          endDate: report.end_date,
+          filters: req.query,
+          generatedBy: req.query.generated_by || 'System User',
+          rowCount: report.total_merchants,
+          reportData: report
+        });
+      } catch (e) {}
+    });
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/reports/marketer', (req, res) => {
+  try {
+    const cacheKey = `rep_mark_${JSON.stringify(req.query)}`;
+    const cached = getCachedApiResponse(cacheKey);
+    if (cached) return res.json(cached);
+
+    const report = generateMarketerReport({
+      dateMode: req.query.date_mode || 'day',
+      targetDate: req.query.target_date,
+      startDate: req.query.start_date,
+      endDate: req.query.end_date,
+      filters: req.query
+    });
+    setCachedApiResponse(cacheKey, report);
+    setImmediate(() => {
+      try {
+        saveReportRecord({
+          reportType: 'marketer',
+          dateMode: report.date_mode,
+          startDate: report.start_date,
+          endDate: report.end_date,
+          filters: req.query,
+          generatedBy: req.query.generated_by || 'System User',
+          rowCount: report.total_marketers,
+          reportData: report
+        });
+      } catch (e) {}
+    });
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/reports/allocation', (req, res) => {
   try {
     const cacheKey = `rep_alloc_${JSON.stringify(req.query)}`;
@@ -3326,6 +3509,13 @@ app.get('/api/reports/export/:format', (req, res) => {
       case 'system_health':
         data = generateSystemHealthReport(req.query);
         break;
+      case 'merchant':
+        data = generateMerchantReport(req.query);
+        break;
+      case 'marketer':
+      case 'affiliate':
+        data = generateMarketerReport(req.query);
+        break;
       default:
         return res.status(400).json({ error: `Unknown report type: ${type}` });
     }
@@ -3359,10 +3549,13 @@ app.use('/api', (err, req, res, next) => {
   });
 });
 
-// Fallback to index.html
+// Fallback to index.html with strict no-cache headers
 app.get('*', (req, res) => {
   const indexPath = path.join(PUBLIC_DIR, 'index.html');
   if (fs.existsSync(indexPath)) {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.sendFile(indexPath);
   } else {
     res.status(404).send('Dashboard not found.');

@@ -19,6 +19,9 @@ import {
   checkEnterpriseOperationalAlerts,
   getEnterpriseAllocationRunDetails,
   getEnterpriseAllocationHistory,
+  createPreAllocationSnapshot,
+  undoLastAllocation,
+  getLatestUndoableAllocationRun,
   ALLOCATION_MODES,
   ALLOCATION_ERROR_CODES
 } from './enterprise_allocation.js';
@@ -38,6 +41,9 @@ export {
   checkEnterpriseOperationalAlerts,
   getEnterpriseAllocationRunDetails,
   getEnterpriseAllocationHistory,
+  createPreAllocationSnapshot,
+  undoLastAllocation,
+  getLatestUndoableAllocationRun,
   ALLOCATION_MODES,
   ALLOCATION_ERROR_CODES
 };
@@ -1027,9 +1033,8 @@ export function saveWorkAllocation(workDate, assignments, notes = '') {
  */
 export function getAllocationForDate(workDate) {
   const header = db.prepare('SELECT * FROM allocation_headers WHERE allocation_date = ?').get(workDate);
-  if (!header) return null;
 
-  const items = db.prepare(`
+  const items = header ? db.prepare(`
     SELECT 
       ai.id,
       ai.allocation_header_id,
@@ -1044,7 +1049,54 @@ export function getAllocationForDate(workDate) {
     JOIN employees e ON ai.employee_id = e.id
     WHERE ai.allocation_header_id = ?
     ORDER BY e.name ASC, ai.account ASC
-  `).all(header.id).filter(it => isCsEmployee({ name: it.employee_name, department: it.department, id: it.employee_id }));
+  `).all(header.id).filter(it => isCsEmployee({ name: it.employee_name, department: it.department, id: it.employee_id })) : [];
+
+  // Fallback: If no legacy allocation items found, check current_work_orders for assigned work
+  if (items.length === 0) {
+    const assignedFromOrders = db.prepare(`
+      SELECT 
+        MIN(c.id) as id,
+        c.assigned_employee_id as employee_id,
+        c.assigned_employee_name as employee_name,
+        e.department,
+        c.account,
+        c.status,
+        COUNT(*) as available_orders_at_assignment,
+        MIN(c.created_at) as created_at
+      FROM current_work_orders c
+      LEFT JOIN employees e ON c.assigned_employee_id = e.id
+      WHERE c.work_date = ? AND c.assigned_employee_id IS NOT NULL AND c.work_state = 'ASSIGNED'
+      GROUP BY c.assigned_employee_id, c.account, c.status
+      ORDER BY c.assigned_employee_name ASC, c.account ASC
+    `).all(workDate).filter(it => isCsEmployee({ name: it.employee_name, department: it.department, id: it.employee_id }));
+
+    if (assignedFromOrders.length > 0) {
+      const byEmployee = new Map();
+      for (const it of assignedFromOrders) {
+        if (!byEmployee.has(it.employee_id)) {
+          byEmployee.set(it.employee_id, {
+            employee_id: it.employee_id,
+            employee_name: it.employee_name,
+            department: it.department,
+            accounts: [],
+          });
+        }
+        byEmployee.get(it.employee_id).accounts.push({
+          item_id: it.id,
+          account: it.account,
+          status: it.status,
+          available_orders: it.available_orders_at_assignment,
+        });
+      }
+
+      return {
+        header: header || { id: 0, allocation_date: workDate, notes: 'Enterprise Engine Synthesized' },
+        items: assignedFromOrders,
+        by_employee: Array.from(byEmployee.values()),
+      };
+    }
+    return null;
+  }
 
   // Group by employee
   const byEmployee = new Map();
@@ -1106,16 +1158,71 @@ export function deleteAllocationItem(id) {
 }
 
 /**
- * Delete entire allocation for a date
+ * Delete and reset re-allocatable allocations for a date (restore eligible unworked orders to unassigned state while preserving protected work)
  */
 export function deleteAllocationForDate(workDate) {
-  const header = db.prepare('SELECT id FROM allocation_headers WHERE allocation_date = ?').get(workDate);
-  if (!header) {
-    return { success: false, message: 'No allocation found for this date.' };
-  }
-  db.prepare('DELETE FROM allocation_items WHERE allocation_header_id = ?').run(header.id);
-  db.prepare('DELETE FROM allocation_headers WHERE id = ?').run(header.id);
-  return { success: true, deleted_date: workDate };
+  const tx = db.transaction(() => {
+    // 1. Reset ONLY re-allocatable / unworked orders in current_work_orders to UNASSIGNED
+    // Protected orders (CLAIMED, IN_PROGRESS, PRINTED, COMPLETED, CANCELLED) MUST NOT be modified, deleted, or unassigned!
+    const resetResult = db.prepare(`
+      UPDATE current_work_orders
+      SET assigned_employee_id = null,
+          assigned_employee_name = 'UNASSIGNED',
+          work_state = 'UNASSIGNED',
+          round_number = NULL,
+          updated_at = datetime('now')
+      WHERE work_date = ?
+        AND (assigned_employee_id IS NOT NULL OR work_state = 'ASSIGNED' OR (assigned_employee_name IS NOT NULL AND assigned_employee_name != 'UNASSIGNED'))
+        AND (work_state NOT IN ('CLAIMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'))
+        AND (status IS NULL OR LOWER(TRIM(status)) NOT IN ('printed', 'completed', 'cancelled', 'sealed', 'dispatched', 'delivered'))
+        AND claimed_at IS NULL
+        AND completed_at IS NULL
+    `).run(workDate);
+
+    // 2. Remove order-level allocations ONLY for unworked / re-allocatable orders
+    // Protected order allocations (CLAIMED, IN_PROGRESS, COMPLETED, CANCELLED, PRINTED) MUST retain their history and assigned employee!
+    db.prepare(`
+      DELETE FROM order_level_allocations
+      WHERE allocation_date = ?
+        AND (work_state IS NULL OR work_state IN ('ASSIGNED', 'UNASSIGNED'))
+        AND (work_state NOT IN ('CLAIMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'))
+        AND (status IS NULL OR LOWER(TRIM(status)) NOT IN ('printed', 'completed', 'cancelled', 'sealed', 'dispatched', 'delivered'))
+    `).run(workDate);
+
+    // 3. Remove header/items allocations
+    const header = db.prepare('SELECT id FROM allocation_headers WHERE allocation_date = ?').get(workDate);
+    if (header) {
+      db.prepare('DELETE FROM allocation_items WHERE allocation_header_id = ?').run(header.id);
+      db.prepare('DELETE FROM allocation_headers WHERE id = ?').run(header.id);
+    }
+
+    // 4. Clear account sticky owners for this date
+    db.prepare(`
+      DELETE FROM account_owners
+      WHERE work_date = ? AND is_override = 0
+    `).run(workDate);
+
+    // 5. Reset employee daily allocation states
+    db.prepare(`
+      DELETE FROM employee_daily_allocation_states
+      WHERE work_date = ?
+    `).run(workDate);
+
+    // 6. Reset enterprise allocation runs and snapshots for this date
+    try {
+      db.prepare(`DELETE FROM enterprise_allocation_runs WHERE work_date = ?`).run(workDate);
+      db.prepare(`DELETE FROM allocation_snapshots WHERE work_date = ?`).run(workDate);
+    } catch (_) {}
+
+    return {
+      success: true,
+      deleted_date: workDate,
+      reset_orders_count: resetResult.changes,
+      message: `Re-allocatable orders for ${workDate} have been reset to initial unassigned state (${resetResult.changes} orders unassigned). Protected operational orders were preserved.`
+    };
+  });
+
+  return tx();
 }
 
 /**
@@ -2591,6 +2698,52 @@ export function saveFinalOrderLevelAllocation(workDate, allocationPayload, notes
   const unassignedCount = raw_allocations.filter(a => a.employee_id === null).length;
 
   const tx = db.transaction(() => {
+    // 0. Capture Pre-allocation Snapshot and register run
+    const runId = `alloc_run_v${versionNumber}_${Date.now()}`;
+    createPreAllocationSnapshot(workDate, runId, versionNumber, {
+      method,
+      generatedBy,
+      notes,
+      assignments: raw_allocations
+    });
+
+    db.prepare(`
+      INSERT INTO enterprise_allocation_runs (
+        run_id, work_date, trigger, mode, allocation_type, status, rescue_state,
+        configuration_version, context_hash, fingerprint, total_orders_input,
+        assigned_count, unassigned_count, proposal_json, started_at, completed_at
+      ) VALUES (?, ?, 'MANUAL', 'ACTIVE', 'ORDER_LEVEL', 'COMMITTED', 'NONE', ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `).run(
+      runId,
+      workDate,
+      versionNumber,
+      'ctx_' + runId,
+      'fp_' + runId,
+      raw_allocations.length,
+      assignedCount,
+      unassignedCount,
+      JSON.stringify(raw_allocations)
+    );
+
+    // 0.5. Sync to current_work_orders
+    const updateCwoStmt = db.prepare(`
+      UPDATE current_work_orders
+      SET assigned_employee_id = ?,
+          assigned_employee_name = ?,
+          work_state = CASE WHEN ? IS NOT NULL THEN 'ASSIGNED' ELSE 'UNASSIGNED' END,
+          updated_at = datetime('now')
+      WHERE work_date = ? AND order_code = ?
+    `);
+    for (const item of raw_allocations) {
+      updateCwoStmt.run(
+        item.employee_id || null,
+        item.employee_name || 'UNASSIGNED',
+        item.employee_id || null,
+        workDate,
+        item.order_code
+      );
+    }
+
     // 1. Insert order-level allocations
     for (const item of raw_allocations) {
       insertOrdAlloc.run(
@@ -3254,13 +3407,13 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
     // If locked to PENDING or already has PENDING orders in this round, CANNOT take NEW.
     if (stream === 'NEW') {
       if (candidate.round_stream_lock === 'PENDING') return false;
-      const hasPendingInRound = candidate.assigned_orders.some(o => (o.round_number === targetRound || !o.is_preserved) && ((o.status || '').toLowerCase().includes('pending') || o.source_type === 'PENDING'));
-      if (hasPendingInRound) return false;
+      const hasAnyPending = candidate.assigned_orders.some(o => (o.round_number === targetRound || !o.is_preserved) && ((o.status || '').toLowerCase().includes('pending') || o.source_type === 'PENDING'));
+      if (hasAnyPending) return false;
     }
     if (stream === 'PENDING') {
       if (candidate.round_stream_lock === 'NEW') return false;
-      const hasNewInRound = candidate.assigned_orders.some(o => (o.round_number === targetRound || !o.is_preserved) && (!(o.status || '').toLowerCase().includes('pending') && o.source_type !== 'PENDING'));
-      if (hasNewInRound) return false;
+      const hasAnyNew = candidate.assigned_orders.some(o => (o.round_number === targetRound || !o.is_preserved) && (!(o.status || '').toLowerCase().includes('pending') && o.source_type !== 'PENDING'));
+      if (hasAnyNew) return false;
     }
 
     // 4. Capacity limit: candidate must have remaining capacity
@@ -3562,6 +3715,46 @@ export function generateRoundBasedAllocation(workDate, options = {}) {
   const nextVersion = (newVersionRow?.max_v || 0) + 1;
 
   db.transaction(() => {
+    // 0. Capture Pre-allocation Snapshot and register run
+    const runId = `round_run_${targetRound}_v${nextVersion}_${Date.now()}`;
+    const allAssignedOrders = [];
+    for (const emp of employeeStateMap.values()) {
+      for (const ord of emp.assigned_orders) {
+        if (!ord.is_preserved) {
+          allAssignedOrders.push({
+            order_code: ord.order_code,
+            account: ord.account,
+            status: ord.status,
+            employee_id: emp.employee_id,
+            employee_name: emp.employee_name
+          });
+        }
+      }
+    }
+    createPreAllocationSnapshot(workDate, runId, nextVersion, {
+      method,
+      round: targetRound,
+      assignments: allAssignedOrders
+    });
+
+    db.prepare(`
+      INSERT INTO enterprise_allocation_runs (
+        run_id, work_date, trigger, mode, allocation_type, status, rescue_state,
+        configuration_version, context_hash, fingerprint, total_orders_input,
+        assigned_count, unassigned_count, proposal_json, started_at, completed_at
+      ) VALUES (?, ?, 'MANUAL', 'ACTIVE', 'ROUND_BASED', 'COMMITTED', 'NONE', ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `).run(
+      runId,
+      workDate,
+      nextVersion,
+      'ctx_' + runId,
+      'fp_' + runId,
+      orders.length,
+      allAssignedOrders.length,
+      unassignedOrders.length,
+      JSON.stringify(allAssignedOrders)
+    );
+
     // 1. Update current_work_orders
     const updateOrderStmt = db.prepare(`
       UPDATE current_work_orders

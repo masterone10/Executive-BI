@@ -451,6 +451,20 @@ input:checked + .slider:before{transform:translateX(16px)}
 </div>
 
 <script>
+// Safe non-blocking shims for iframe preview environment
+if (typeof window !== 'undefined') {
+  window.safeAlert = function(msg) {
+    console.warn('[Notice]', msg);
+    if (typeof showToast === 'function') {
+      showToast('ℹ️ Notice', String(msg));
+    }
+  };
+  window.alert = window.safeAlert;
+  window.confirm = function(msg) {
+    console.log('[AutoConfirm in Iframe]', msg);
+    return true;
+  };
+}
 let D = {"exists":false,"date":null,"work_date":null,"employees":[],"log_totals":{"actions":0,"printed":0,"pending":0,"processing":0,"cancelled":0,"alt":0},"status_totals":{"Printed":0,"Pending":0,"Processing":0,"Cancelled":0},"hr":{"days":0,"tot_new":0,"tot_printed":0,"tot_cancel":0,"tot_add":0},"daily":[],"rankings":{"printed":[],"pending":[],"cancelled":[]},"cancel_rate_rank":[],"team_cancel_rate":0,"team_pending_rate":0,"addedOrders":{"totalAdded":0,"totalAddedCS":0,"totalAddedNonCS":0,"fromCS":0,"fromOtherDepartments":0,"topCSContributors":[],"allCSContributors":[]}};
 const NAVY='#1E3A8A',BLUE='#2563EB',GREEN='#16A34A',AMBER='#F59E0B',RED='#DC2626',PURPLE='#7C3AED',SLATE='#64748B',MUT='#64748B';
 const AV=['#1E3A8A','#2563EB','#0891B2','#7C3AED','#DB2777','#0D9488','#EA580C','#4F46E5','#059669','#C026D3'];
@@ -820,7 +834,11 @@ async function setGlobalSelectedDate(newDate) {
   // Re-render
   RENDERED = pages();
   show(currentMainPage, currentPage);
+  updateGlobalContextBar();
 }
+
+window.selectDate = setGlobalSelectedDate;
+window.showPageTab = function(page, tab) { show(page, tab); };
 
 window.applyTimeWindowFilter = async function() {
   const fromVal = (document.getElementById('timeFilterFrom')?.value || '').trim();
@@ -1094,6 +1112,10 @@ async function apiFetch(url, options = {}) {
 
 async function loadWorkAllocationData() {
   const container = document.getElementById('workAllocContainer');
+  // Immediately render toolbar into DOM so controls are accessible without waiting
+  if (container && !document.getElementById('btnRejectAndUndoAllocation')) {
+    renderWorkAllocationUI();
+  }
   try {
     const [overviewRes, accRes, teamRes, allocRes] = await Promise.all([
       apiFetch(`/api/work/current?date=${currentWorkDate}`),
@@ -1120,21 +1142,29 @@ async function loadWorkAllocationData() {
   } catch (err) {
     console.error('Error loading work allocation data:', err);
     if (container) {
-      container.innerHTML = `
-        <div class="panel" style="border:1px solid #FECACA;background:#FEF2F2;padding:24px;border-radius:12px;margin:20px 0">
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-            <span style="font-size:22px">⚠️</span>
+      if (!document.getElementById('btnRejectAndUndoAllocation')) {
+        renderWorkAllocationUI();
+      }
+      const existingNotice = document.getElementById('allocErrorNotice');
+      if (existingNotice) existingNotice.remove();
+      const noticeDiv = document.createElement('div');
+      noticeDiv.id = 'allocErrorNotice';
+      noticeDiv.innerHTML = `
+        <div class="panel" style="border:1px solid #FECACA;background:#FEF2F2;padding:18px 22px;border-radius:12px;margin:16px 0">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+            <span style="font-size:20px">⚠️</span>
             <h3 style="margin:0;color:#991B1B">Failed to Load Work Allocation</h3>
           </div>
-          <p style="color:#7F1D1D;font-size:13px;margin:0 0 14px 0">
+          <p style="color:#7F1D1D;font-size:13px;margin:0 0 12px 0">
             ${escapeHtml(err.message || 'An error occurred while loading work allocation data.')}
           </p>
           <div style="display:flex;gap:10px">
             <button class="btn primary sm" onclick="loadWorkAllocationData()">↻ Retry</button>
-            <button class="btn sm" onclick="show('working-team')">👥 Check Working Team</button>
+            <button class="btn sm" onclick="show('operations', 'working-team')">👥 Check Working Team</button>
           </div>
         </div>
       `;
+      container.appendChild(noticeDiv);
     }
   }
 }
@@ -1213,7 +1243,9 @@ function renderWorkAllocationUI(overview) {
         <button class="btn primary" onclick="runEnterpriseAllocationPreview()" style="background:linear-gradient(135deg,#1E3A8A,#2563EB);color:#fff;font-weight:700" title="Evaluate eligibility, schedules, capacity, and preview state machine assignments">🔍 Enterprise Preview</button>
         <button class="btn success" onclick="runEnterpriseAllocationExecute()" style="background:#16A34A;color:#fff;font-weight:700" title="Atomically commit Enterprise Allocation (NEW/PENDING State Machine, Hard Capacities, Rescue, Uniqueness)">⚡ Execute Enterprise</button>
         <button class="btn sm" onclick="runAutoFairAllocation(false)" title="Distributes work fairly. Preserves existing allocations if any.">⚡ Auto Fair Allocation</button>
-        <button class="btn sm" onclick="confirmRegenerateAllocation()" title="Wipe current assignments and distribute from scratch" style="background:#FFF1F2;color:#BE123C;border-color:#FECDD3">🔄 Re-allocate All</button>
+        <button class="btn sm" onclick="confirmRegenerateAllocation()" title="Wipe current assignments and distribute fresh allocations from scratch" style="background:#FFF1F2;color:#BE123C;border-color:#FECDD3">🔄 Re-allocate All</button>
+        <button class="btn sm" onclick="resetAllAllocationsToUnassigned()" title="Reset re-allocatable orders to unassigned (إلغاء التوزيعات غير المشغولة وإعادتها لحوض العمل مع الحفاظ على الطلبات المحمية)" style="background:#FEF2F2;color:#DC2626;border-color:#FCA5A5">↺ Reset Allocations</button>
+        <button class="btn sm" id="btnRejectAndUndoAllocation" data-testid="reject-undo-allocation" onclick="promptUndoLastAllocation()" title="رفض التوزيعة الحالية وإلغاء آخر توزيع وإرجاع حالة الطلبات لما كانت عليه قبل التوزيع" style="background:#FFF7ED;color:#C2410C;border:1.5px solid #FDBA74;font-weight:800;display:inline-flex !important;visibility:visible !important;opacity:1 !important;align-items:center;gap:4px;cursor:pointer">↩️ رفض التوزيعة والتراجع</button>
         <button class="btn sm" onclick="copyAllEmployeesDirect()" style="background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE" title="Copy combined WhatsApp/Teams message for the entire group">📋 Copy All Employees</button>
         <button class="btn sm" onclick="copySelectedEmployeeDirect()" style="background:#F8FAFC;color:var(--slate)" title="Copy allocation for a specific CS agent">👤 Copy Selected</button>
         <button class="btn sm" onclick="openOrderLevelModal()" style="background:#F0FDF4;color:#15803D;border-color:#BBF7D0">🔍 View & Override Orders</button>
@@ -1608,28 +1640,145 @@ async function runAutoFairAllocation(regenerate = false) {
           <b>Eligible Orders:</b> ${totalEligible} (Preserved: ${preservedCount}, Newly Assigned: ${assignedCount}, Unassigned: ${unassignedCount})<br>
           <b>Accounts:</b> ${accMap.size} Total (${unifiedCount} Unified, ${twoEmpCount} 2-CS Split, ${threePlusCount} 3+ Split)<br>
           <b>Priorities:</b> ${delayedNewCount} Delayed NEW · ${normalNewCount} Normal NEW · ${pendingCount} PENDING<br>
-          <span style="color:#15803D;font-weight:700">✓ Version #${versionNum} Saved Automatically</span>
+          <span style="color:#15803D;font-weight:700">✓ Version #${versionNum} ${regenerate ? 'Re-allocated & Saved' : 'Saved Automatically'}</span>
         </div>
       `;
 
-      showToast('✓ Allocation Complete', summaryText, 8000);
+      showToast(regenerate ? '✓ Re-allocation Complete' : '✓ Allocation Complete', summaryText, 8000);
       
-      const overview = await apiFetch(`/api/work/current?date=${currentWorkDate}`).catch(() => null);
-      renderWorkAllocationUI(overview);
+      await loadWorkAllocationData();
     } else {
-      alert('Allocation error: ' + (res.error || 'Failed to generate allocation'));
+      const errMsg = (res && (res.message || res.block_reason || res.error)) || 'Failed to generate allocation';
+      showToast('⚠️ Allocation Notice', errMsg, 8000);
     }
   } catch (err) {
     console.error('Allocation failure:', err);
-    alert('Failed to generate allocation: ' + err.message);
+    showToast('❌ Allocation Error', 'Failed to generate allocation: ' + err.message, 8000);
   }
 }
 
 function confirmRegenerateAllocation() {
-  if (confirm(`⚠️ Are you sure you want to re-allocate ALL orders from scratch for ${currentWorkDate}?\n\nThis will re-calculate fair quotas and random order codes for all active accounts.`)) {
-    runAutoFairAllocation(true);
+  showAppConfirmModal({
+    title: 'Re-allocate All Orders from Scratch?',
+    icon: '🔄',
+    message: `
+      Are you sure you want to re-allocate <b>ALL unworked orders</b> from scratch for <b>${escapeHtml(currentWorkDate)}</b>?<br><br>
+      <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:10px 12px;margin:8px 0;font-size:12px;line-height:1.6;color:#334155">
+        <b>• Re-allocate All:</b> Clears previous assignments and calculates brand-new fair allocations across working CS agents.<br>
+        <b>• Reset All:</b> To only unassign orders without re-distributing, use the red <b>↺ Reset All</b> button.
+      </div>
+    `,
+    confirmText: '🔄 Yes, Re-allocate All',
+    confirmBg: '#BE123C',
+    confirmColor: '#ffffff',
+    onConfirm: () => {
+      runAutoFairAllocation(true);
+    }
+  });
+}
+
+async function resetAllAllocationsToUnassigned() {
+  showAppConfirmModal({
+    title: 'Reset Re-allocatable Orders (إلغاء التوزيعات القابلة للإعادة)?',
+    icon: '↺',
+    message: `
+      Are you sure you want to <b>reset re-allocatable allocations</b> for <b>${escapeHtml(currentWorkDate)}</b>?<br><br>
+      <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:10px 12px;margin:8px 0;font-size:12.5px;line-height:1.6;color:#991B1B">
+        <b>سيتم إعادة الطلبات القابلة لإعادة التوزيع فقط</b> إلى الحالة غير الموزعة (UNASSIGNED) مع حذف حالة التوزيع الخاصة بها.<br>
+        الطلبات المحمية والمنتهية (مثل CLAIMED، IN_PROGRESS، PRINTED، COMPLETED) ستبقى محفوظة دون أي تغيير.
+      </div>
+    `,
+    confirmText: '↺ Yes, Reset Unworked Allocations',
+    confirmBg: '#DC2626',
+    confirmColor: '#ffffff',
+    onConfirm: async () => {
+      try {
+        showToast('⏳ Resetting Allocations...', 'Resetting re-allocatable orders to unassigned pool...');
+        const res = await apiFetch(`/api/allocations/${currentWorkDate}/reset`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ work_date: currentWorkDate })
+        });
+        
+        activeAllocations = [];
+        currentOrderLevelAllocation = null;
+        showToast('✓ Reset Complete', res.message || 'Re-allocatable allocations reset successfully.', 6000);
+        await loadWorkAllocationData();
+      } catch (err) {
+        console.error('Reset error:', err);
+        showToast('❌ Reset Error', 'Failed to reset allocations: ' + err.message, 8000);
+      }
+    }
+  });
+}
+
+function promptUndoLastAllocation() {
+  showAppConfirmModal({
+    title: 'رفض التوزيعة والتراجع',
+    icon: '↩️',
+    message: `
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:8px">
+        هل أنت متأكد من رفض التوزيعة الحالية؟
+      </div>
+      <div style="font-size:13px;color:var(--slate);line-height:1.6">
+        سيتم إلغاء آخر توزيع وإرجاع حالة الطلبات لما كانت عليه قبل التوزيع.
+      </div>
+      <div style="background:#FFF7ED;border:1px solid #FFEDD5;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:12px;color:#9A3412">
+        🛡️ الطلبات التي بدأ العمل عليها (CLAIMED / IN_PROGRESS / PRINTED / COMPLETED) أو عُدلت يدوياً بعد التوزيع ستظل محفوظة تماماً ولن يتم التراجع عنها.
+      </div>
+    `,
+    confirmText: 'تأكيد التراجع',
+    cancelText: 'إلغاء',
+    confirmBg: '#EA580C',
+    confirmColor: '#ffffff',
+    onConfirm: async () => {
+      await executeUndoAllocation();
+    }
+  });
+}
+
+async function executeUndoAllocation() {
+  try {
+    showToast('⏳ جاري التراجع...', `إلغاء آخر توزيع واسترجاع الحالة السابقة لتاريخ ${currentWorkDate}...`);
+    const res = await apiFetch(`/api/allocations/${currentWorkDate}/undo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Supervisor rejected current distribution' })
+    });
+
+    if (res.success) {
+      // 1. Clear cached allocation state in Frontend
+      activeAllocations = [];
+      currentOrderLevelAllocation = null;
+      currentEnterprisePreviewPlan = null;
+
+      showToast(
+        '✓ تم التراجع بنجاح',
+        `تم إلغاء التوزيعة (${res.allocation_run_id}). تم استرجاع ${res.restored_orders_count} طلب للحالة السابقة (${res.protected_orders_count} طلب محمي).`,
+        7000
+      );
+
+      // 2. Freshly reload all state directly from SQLite / API
+      await Promise.all([
+        loadWorkAllocationData(),
+        typeof loadCurrentOrdersView === 'function' ? loadCurrentOrdersView() : Promise.resolve(),
+        typeof fetchPerformanceDataForDate === 'function' ? fetchPerformanceDataForDate(currentWorkDate) : Promise.resolve()
+      ]);
+      RENDERED = pages();
+      show('operations', 'allocation');
+    } else {
+      showToast('⚠️ خطأ في التراجع', res.error || res.message || 'تعذر التراجع عن التوزيعة.', 8000);
+      alert('خطأ في التراجع: ' + (res.error || res.message));
+    }
+  } catch (err) {
+    showToast('❌ خطأ في الاتصال', err.message, 8000);
+    alert('حدث خطأ أثناء تنفيذ التراجع: ' + err.message);
   }
 }
+
+// Global runtime accessibility
+window.promptUndoLastAllocation = promptUndoLastAllocation;
+window.executeUndoAllocation = executeUndoAllocation;
 
 async function saveManualAllocation() {
   const assignments = [];
@@ -2058,6 +2207,42 @@ let currentConfigCenterData = null;
 let configDraft = null;
 let configUnsavedChangesCount = 0;
 let currentEnterprisePreviewPlan = null;
+let configSelectedScheduleDay = 'all';
+
+function changeConfigScheduleDay(day) {
+  configSelectedScheduleDay = day || 'all';
+  renderAllocationConfigCenterUI();
+}
+
+function setAllAccountsAllDayForDay(day) {
+  if (!configDraft || !day || day === 'all') return;
+  configDraft.accounts.forEach(acc => {
+    if (!acc.day_schedules) acc.day_schedules = {};
+    acc.day_schedules[day] = {
+      new_start_time: '',
+      new_end_time: '',
+      pending_start_time: '',
+      pending_end_time: ''
+    };
+  });
+  configUnsavedChangesCount++;
+  updateUnsavedBadge();
+  renderAllocationConfigCenterUI();
+  showToast('✓ Updated Schedule', `All accounts set to ALL_DAY (طوال اليوم) for ${day.toUpperCase()}`);
+}
+
+function resetDayScheduleToDefault(day) {
+  if (!configDraft || !day || day === 'all') return;
+  configDraft.accounts.forEach(acc => {
+    if (acc.day_schedules && acc.day_schedules[day]) {
+      delete acc.day_schedules[day];
+    }
+  });
+  configUnsavedChangesCount++;
+  updateUnsavedBadge();
+  renderAllocationConfigCenterUI();
+  showToast('✓ Reset Schedule', `Custom schedules for ${day.toUpperCase()} reset to default`);
+}
 
 async function loadAllocationConfigCenterView() {
   const container = document.getElementById('allocationConfigCenterContainer');
@@ -2197,14 +2382,42 @@ function renderAllocationConfigCenterUI(alerts = []) {
 
     <!-- SECTION B: ACCOUNT SCHEDULES -->
     <div class="panel" style="margin-bottom:20px">
-      <div class="hd">
+      <div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
         <div>
           <h3>⏰ Account + Status Schedules</h3>
           <p>Independent time windows for NEW and PENDING work per account. Blank Start & End = ALL_DAY (Always open).</p>
         </div>
-        <div style="font-size:12px;color:var(--mut)">
-          Showing ${accounts.length} Accounts
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:6px">
+            <label style="font-size:12.5px;font-weight:700;color:var(--navy)">📅 Schedule Day / يوم الجدول:</label>
+            <select id="cfgScheduleDaySelect" class="filter" style="padding:6px 12px;border-radius:8px;border:1.5px solid var(--blue);font-weight:700;color:var(--navy);background:#F8FAFC" onchange="changeConfigScheduleDay(this.value)">
+              <option value="all" ${configSelectedScheduleDay === 'all' ? 'selected' : ''}>🌟 All Days (Default) / جميع الأيام (الافتراضي)</option>
+              <option value="sunday" ${configSelectedScheduleDay === 'sunday' ? 'selected' : ''}>الأحد / Sunday</option>
+              <option value="monday" ${configSelectedScheduleDay === 'monday' ? 'selected' : ''}>الإثنين / Monday</option>
+              <option value="tuesday" ${configSelectedScheduleDay === 'tuesday' ? 'selected' : ''}>الثلاثاء / Tuesday</option>
+              <option value="wednesday" ${configSelectedScheduleDay === 'wednesday' ? 'selected' : ''}>الأربعاء / Wednesday</option>
+              <option value="thursday" ${configSelectedScheduleDay === 'thursday' ? 'selected' : ''}>الخميس / Thursday</option>
+              <option value="friday" ${configSelectedScheduleDay === 'friday' ? 'selected' : ''}>🕌 الجمعة / Friday (e.g. All Day / طوال اليوم)</option>
+              <option value="saturday" ${configSelectedScheduleDay === 'saturday' ? 'selected' : ''}>السبت / Saturday</option>
+            </select>
+          </div>
+          ${configSelectedScheduleDay !== 'all' ? `
+            <button class="btn sm success" onclick="setAllAccountsAllDayForDay('${configSelectedScheduleDay}')" title="Set all accounts to work all day on this day" style="background:#DCFCE7;color:#15803D;border-color:#86EFAC">⚡ Set All Day for ${configSelectedScheduleDay.toUpperCase()}</button>
+            <button class="btn sm" onclick="resetDayScheduleToDefault('${configSelectedScheduleDay}')" title="Reset this day to use default schedule" style="background:#FEF2F2;color:#991B1B;border-color:#FECACA">↺ Reset to Default</button>
+          ` : ''}
+          <div style="font-size:12px;color:var(--mut)">
+            Showing ${accounts.length} Accounts
+          </div>
         </div>
+      </div>
+
+      <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#1E40AF;display:flex;align-items:center;gap:8px">
+        <span>💡</span>
+        <span>
+          ${configSelectedScheduleDay === 'all' 
+            ? '<b>الجدول الافتراضي (Default):</b> ينطبق على جميع أيام الأسبوع ما لم يتم تخصيص يوم محدد في القائمة أعلاه (مثل يوم الجمعة ALL_DAY للعمل طوال اليوم والتوزيع العادي).' 
+            : `<b>تخصيص جدول يوم ${configSelectedScheduleDay.toUpperCase()}:</b> الحسابات التي يتم إدخال مواعيد لها هنا ستلتزم بها في هذا اليوم فقط. الحسابات ذات الخانات الفارغة في هذا اليوم ستعمل طوال اليوم ALL_DAY.`}
+        </span>
       </div>
 
       <div class="tbl-scroll" style="max-height:450px;overflow-y:auto">
@@ -2223,10 +2436,33 @@ function renderAllocationConfigCenterUI(alerts = []) {
           </thead>
           <tbody>
             ${accounts.map((acc, idx) => {
-              const ns = acc.new_start_time || '';
-              const ne = acc.new_end_time || '';
-              const ps = acc.pending_start_time || '';
-              const pe = acc.pending_end_time || '';
+              const dayOverrides = (acc.day_schedules && acc.day_schedules[configSelectedScheduleDay]) || null;
+              const isDaySpecific = configSelectedScheduleDay !== 'all';
+              const hasDayOverride = !!dayOverrides;
+
+              let ns = '';
+              let ne = '';
+              let ps = '';
+              let pe = '';
+
+              if (!isDaySpecific) {
+                ns = acc.new_start_time || '';
+                ne = acc.new_end_time || '';
+                ps = acc.pending_start_time || '';
+                pe = acc.pending_end_time || '';
+              } else {
+                if (hasDayOverride) {
+                  ns = dayOverrides.new_start_time !== undefined && dayOverrides.new_start_time !== null ? dayOverrides.new_start_time : '';
+                  ne = dayOverrides.new_end_time !== undefined && dayOverrides.new_end_time !== null ? dayOverrides.new_end_time : '';
+                  ps = dayOverrides.pending_start_time !== undefined && dayOverrides.pending_start_time !== null ? dayOverrides.pending_start_time : '';
+                  pe = dayOverrides.pending_end_time !== undefined && dayOverrides.pending_end_time !== null ? dayOverrides.pending_end_time : '';
+                } else {
+                  ns = acc.new_start_time || '';
+                  ne = acc.new_end_time || '';
+                  ps = acc.pending_start_time || '';
+                  pe = acc.pending_end_time || '';
+                }
+              }
 
               const newStatus = (!ns && !ne) ? 'ALL_DAY' : (isTimeWindowOpen(ns, ne) ? 'OPEN' : 'CLOSED');
               const pendStatus = (!ps && !pe) ? 'ALL_DAY' : (isTimeWindowOpen(ps, pe) ? 'OPEN' : 'CLOSED');
@@ -2240,29 +2476,36 @@ function renderAllocationConfigCenterUI(alerts = []) {
               return `
                 <tr>
                   <td><span class="rk">${idx + 1}</span></td>
-                  <td><b style="font-size:13px;color:var(--navy)">${escapeHtml(acc.account)}</b></td>
                   <td>
-                    <input type="text" placeholder="e.g. 18:00 or blank" value="${escapeHtml(ns)}" 
-                           style="width:90px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:12px"
-                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'new_start_time', this.value)">
+                    <b style="font-size:13px;color:var(--navy)">${escapeHtml(acc.account)}</b>
+                    ${isDaySpecific ? `
+                      <span class="tag sm" style="font-size:10px;margin-left:4px;background:${hasDayOverride ? '#DBEAFE' : '#F1F5F9'};color:${hasDayOverride ? '#1D4ED8' : '#64748B'}">
+                        ${hasDayOverride ? `✓ ${configSelectedScheduleDay}` : 'Default'}
+                      </span>
+                    ` : ''}
                   </td>
                   <td>
-                    <input type="text" placeholder="e.g. 23:00 or blank" value="${escapeHtml(ne)}" 
-                           style="width:90px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:12px"
-                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'new_end_time', this.value)">
+                    <input type="text" placeholder="${isDaySpecific ? (acc.new_start_time || 'blank=ALL_DAY') : 'e.g. 18:00 or blank'}" value="${escapeHtml(ns)}" 
+                           style="width:90px;padding:4px 6px;border:1px solid ${hasDayOverride ? 'var(--blue)' : 'var(--line)'};border-radius:6px;font-family:monospace;font-size:12px;background:${hasDayOverride ? '#F0F9FF' : '#fff'}"
+                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'new_start_time', this.value, '${configSelectedScheduleDay}')">
+                  </td>
+                  <td>
+                    <input type="text" placeholder="${isDaySpecific ? (acc.new_end_time || 'blank=ALL_DAY') : 'e.g. 23:00 or blank'}" value="${escapeHtml(ne)}" 
+                           style="width:90px;padding:4px 6px;border:1px solid ${hasDayOverride ? 'var(--blue)' : 'var(--line)'};border-radius:6px;font-family:monospace;font-size:12px;background:${hasDayOverride ? '#F0F9FF' : '#fff'}"
+                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'new_end_time', this.value, '${configSelectedScheduleDay}')">
                   </td>
                   <td>
                     <span class="tag sm" style="background:${newBadgeBg};color:${newBadgeCol};font-weight:700">${newStatus}</span>
                   </td>
                   <td>
-                    <input type="text" placeholder="HH:MM or blank" value="${escapeHtml(ps)}" 
-                           style="width:90px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:12px"
-                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'pending_start_time', this.value)">
+                    <input type="text" placeholder="${isDaySpecific ? (acc.pending_start_time || 'blank=ALL_DAY') : 'HH:MM or blank'}" value="${escapeHtml(ps)}" 
+                           style="width:90px;padding:4px 6px;border:1px solid ${hasDayOverride ? 'var(--blue)' : 'var(--line)'};border-radius:6px;font-family:monospace;font-size:12px;background:${hasDayOverride ? '#F0F9FF' : '#fff'}"
+                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'pending_start_time', this.value, '${configSelectedScheduleDay}')">
                   </td>
                   <td>
-                    <input type="text" placeholder="HH:MM or blank" value="${escapeHtml(pe)}" 
-                           style="width:90px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:12px"
-                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'pending_end_time', this.value)">
+                    <input type="text" placeholder="${isDaySpecific ? (acc.pending_end_time || 'blank=ALL_DAY') : 'HH:MM or blank'}" value="${escapeHtml(pe)}" 
+                           style="width:90px;padding:4px 6px;border:1px solid ${hasDayOverride ? 'var(--blue)' : 'var(--line)'};border-radius:6px;font-family:monospace;font-size:12px;background:${hasDayOverride ? '#F0F9FF' : '#fff'}"
+                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'pending_end_time', this.value, '${configSelectedScheduleDay}')">
                   </td>
                   <td>
                     <span class="tag sm" style="background:${pendBadgeBg};color:${pendBadgeCol};font-weight:700">${pendStatus}</span>
@@ -2344,13 +2587,29 @@ function updateDraftGlobal(key, val) {
   updateUnsavedBadge();
 }
 
-function updateDraftAccountSchedule(accountName, field, val) {
+function updateDraftAccountSchedule(accountName, field, val, day = 'all') {
   if (!configDraft) return;
   const acc = configDraft.accounts.find(a => a.account.toLowerCase() === accountName.toLowerCase());
   if (acc) {
-    acc[field] = val.trim();
+    if (!acc.day_schedules) acc.day_schedules = {};
+    const cleanVal = (val || '').trim();
+
+    if (!day || day === 'all') {
+      acc[field] = cleanVal;
+    } else {
+      if (!acc.day_schedules[day]) {
+        acc.day_schedules[day] = {
+          new_start_time: acc.new_start_time || '',
+          new_end_time: acc.new_end_time || '',
+          pending_start_time: acc.pending_start_time || '',
+          pending_end_time: acc.pending_end_time || ''
+        };
+      }
+      acc.day_schedules[day][field] = cleanVal;
+    }
     configUnsavedChangesCount++;
     updateUnsavedBadge();
+    renderAllocationConfigCenterUI();
   }
 }
 
@@ -2520,13 +2779,11 @@ async function runEnterpriseAllocationPreview() {
     currentEnterprisePreviewPlan = plan;
     renderEnterprisePreviewModal(plan);
   } catch (err) {
-    alert('Preview failed: ' + err.message);
+    showToast('❌ Preview Error', err.message);
   }
 }
 
 async function runEnterpriseAllocationExecute() {
-  if (!confirm(`Execute Enterprise Allocation for ${currentWorkDate}? This will atomically commit production assignments using the latest published configuration.`)) return;
-
   try {
     showToast('⏳ Executing Enterprise Allocation...', `Committing atomic state transitions for ${currentWorkDate}...`);
     const res = await apiFetch(`/api/allocations/${currentWorkDate}/execute`, {
@@ -2536,13 +2793,15 @@ async function runEnterpriseAllocationExecute() {
     });
 
     if (res.success) {
-      showToast('✓ Enterprise Allocation Committed!', `Committed ${res.assigned_count} orders across eligible CS agents. Fingerprint: ${res.fingerprint ? res.fingerprint.slice(0, 10) : 'N/A'}`);
+      const assigned = res.assigned_count ?? res.assigned_orders ?? 0;
+      const preserved = res.preserved_count ?? res.preserved_orders ?? 0;
+      showToast('✓ Enterprise Allocation Committed!', `Committed ${assigned} orders (${preserved} preserved) across eligible CS agents.`);
       await loadWorkAllocationData();
     } else {
-      alert('Allocation error: ' + (res.error || 'Unknown error'));
+      showToast('⚠️ Allocation Notice', res.error || res.message || res.block_reason || 'Could not complete allocation.');
     }
   } catch (err) {
-    alert('Failed to execute enterprise allocation: ' + err.message);
+    showToast('❌ Execution Error', err.message);
   }
 }
 
@@ -2584,12 +2843,23 @@ function renderEnterprisePreviewModal(plan) {
             ${escapeHtml(plan.block_reason || 'No eligible candidates or schedules open.')}
           </div>
         ` : `
+          ${assignments.length === 0 ? `
+            <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:12px 16px;color:#1E40AF;font-size:13px">
+              ℹ️ <b>Zero new assignments:</b> All current orders in the pool are already preserved, or active CS agents have reached their configured maximum capacity (40 orders), or account schedules are currently closed.
+            </div>
+          ` : ''}
+
           <!-- KPI Summary -->
           <div class="kpis">
             ${kpiCard('📦', assignments.length, 'Proposed Assignments', `${fmt(plan.total_orders_input || 0)} Total Inventory`, BLUE)}
             ${kpiCard('👥', candidates.filter(c => c.is_eligible).length, 'Eligible CS Agents', `${candidates.filter(c => !c.is_eligible).length} Excluded`, GREEN)}
             ${kpiCard('⏳', fmt(plan.unassigned_count || 0), 'Remaining Unassigned', 'Respects Hard Capacities & Time Windows', PURPLE)}
             ${kpiCard('🛡️', plan.is_rescue_active ? 'ACTIVE' : 'NONE', 'PENDING Rescue', plan.is_rescue_active ? 'NEW orders support PENDING' : 'Normal Operations', plan.is_rescue_active ? AMBER : GREEN)}
+          </div>
+
+          <div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:10px;padding:10px 14px;color:#166534;font-size:12px;display:flex;align-items:center;gap:8px">
+            <span style="font-size:16px">🎯</span>
+            <span><b>قاعدة التوزيع الصارمة (Single Status Guarantee):</b> يتوزع للموظف حالة واحدة فقط (إما <b>NEW</b> فقط أو <b>PENDING</b> فقط) ولا يتم توزيع حالتين معاً لنفس الموظف نهائياً.</span>
           </div>
 
           <!-- Proposed Assignments Table -->
@@ -2668,8 +2938,10 @@ function renderEnterprisePreviewModal(plan) {
 }
 
 async function commitEnterprisePreviewPlan() {
-  if (!currentEnterprisePreviewPlan) return;
-  if (!confirm('Commit this validated plan to production state?')) return;
+  if (!currentEnterprisePreviewPlan) {
+    showToast('⚠️ Notice', 'No preview plan available. Please click Enterprise Preview first.');
+    return;
+  }
 
   try {
     showToast('⏳ Committing Allocation...', 'Atomically writing assignments, snapshots, and updating sequence state...');
@@ -2679,19 +2951,22 @@ async function commitEnterprisePreviewPlan() {
       body: JSON.stringify({
         plan: currentEnterprisePreviewPlan,
         previewPlanId: currentEnterprisePreviewPlan.run_id,
-        work_date: currentWorkDate
+        work_date: currentWorkDate,
+        mode: 'ACTIVE'
       })
     });
 
     if (res.success) {
-      document.getElementById('enterprisePreviewModal').style.display = 'none';
-      showToast('✓ Allocation Committed!', `Committed ${res.assigned_count} orders. Fingerprint: ${res.fingerprint ? res.fingerprint.slice(0, 10) : 'N/A'}`);
+      const modal = document.getElementById('enterprisePreviewModal');
+      if (modal) modal.style.display = 'none';
+      const assigned = res.assigned_count ?? res.assigned_orders ?? (currentEnterprisePreviewPlan.assignments ? currentEnterprisePreviewPlan.assignments.length : 0);
+      showToast('✓ Allocation Committed!', `Committed ${assigned} orders across eligible CS agents.`);
       await loadWorkAllocationData();
     } else {
-      alert('Commit failed: ' + (res.error || 'Unknown error'));
+      showToast('⚠️ Commit Notice', res.error || res.message || res.block_reason || 'Commit failed.');
     }
   } catch (err) {
-    alert('Commit failed: ' + err.message);
+    showToast('❌ Commit Error', err.message);
   }
 }
 
@@ -7965,7 +8240,7 @@ async function loadTrackingOverviewView() {
                     <td><b>${fmt(row.orders_worked_outside)}</b></td>
                     <td><b>${fmt(row.real_actions_outside)}</b></td>
                     <td>
-                      <button class="btn sm" onclick="show('employee-tracking');loadEmployeeTrackingView('${escapeHtml(row.employee_name)}')">View Reality →</button>
+                      <button class="btn sm" onclick="show('employee-tracking');loadEmployeeTrackingView('${escapeHtml(String(row.employee_id || ''))}')">View Reality →</button>
                     </td>
                   </tr>
                 `).join('')}
@@ -8106,8 +8381,9 @@ async function loadTrackingAuditView() {
 function pages(){
   const hr=D.hr||{},st=D.status_totals||{},tot=D.log_totals||{},ded=D.dedup||{};
   const rankings=D.rankings||{printed:[],pending:[],cancelled:[]};
-  const dops=tot.actions||1;
-  const pctv=x=>((x||0)/dops*100);
+  const realActionsCount=tot.actions||0;
+  const dops=realActionsCount>0?realActionsCount:1;
+  const pctv=x=>realActionsCount>0?((x||0)/realActionsCount*100):0;
   const p1=pctv(st.Printed),p2=p1+pctv(st.Pending),p3=p2+pctv(st.Processing);
   const donutBg=`conic-gradient(${GREEN} 0 ${p1}%,${PURPLE} ${p1}% ${p2}%,${AMBER} ${p2}% ${p3}%,${RED} ${p3}% 100%)`;
 
@@ -8381,7 +8657,7 @@ function pages(){
 
     overview = allDayBanner + dedupBanner + `
       <div class="kpis">
-        ${kpiCard('▤',fmt(dops),'Total Real Actions',`Across <b>${D.employees.length}</b> agents · Deduplicated`,NAVY)}
+        ${kpiCard('▤',fmt(realActionsCount),'Total Real Actions',`Across <b>${D.employees.length}</b> agents · Deduplicated`,NAVY)}
         ${kpiCard('📦',fmt(hr.tot_new),'Total New Orders',`Unique order codes created`,BLUE)}
         ${kpiCard('✓',fmt(st.Printed),'Printed Orders',`<b>${pctv(st.Printed).toFixed(1)}%</b> of actions`,GREEN)}
         ${kpiCard('✕',fmt(st.Cancelled),'Cancelled Orders',`<b>${D.team_cancel_rate}%</b> cancel rate`,RED)}
@@ -8413,7 +8689,7 @@ function pages(){
           </div>
           <div class="donut-wrap">
             <div class="donut" style="background:${donutBg}">
-              <div class="ctr"><b>${fmt(dops)}</b><span>Actions</span></div>
+              <div class="ctr"><b>${fmt(realActionsCount)}</b><span>Actions</span></div>
             </div>
             <div class="leg">
               <div class="li"><span class="dot" style="background:${GREEN}"></span><span class="lt">Printed</span><span class="lv">${fmt(st.Printed)}<span class="lp">${pctv(st.Printed).toFixed(1)}%</span></span></div>
@@ -8701,7 +8977,7 @@ function pages(){
   const printed=`
     <div class="kpis">
       ${kpiCard('✓',fmt(tot.printed),'Total Printed Orders','Deduplicated print executions',GREEN)}
-      ${kpiCard('%',(tot.printed/tot.actions*100).toFixed(1)+'%','Team Print Rate','Of all actions',GREEN)}
+      ${kpiCard('%',(tot.actions ? (tot.printed/tot.actions*100).toFixed(1) : '0.0')+'%','Team Print Rate','Of all actions',GREEN)}
       ${kpiCard('◉',prEmp.length,'Agents Printing',`Of ${D.employees.length}`,NAVY)}
       ${kpiCard('▲',prEmp[0]?prEmp[0].own_printed_rate+'%':'-','Highest Own Rate',`<b>${prEmp[0]?.name||''}</b>`,GREEN)}
     </div>
@@ -8977,13 +9253,15 @@ const MAIN_PAGES_CONFIG = {
   },
   reports: {
     title: 'Reports & Analytics',
-    sub: 'Multi-Period Operational Reports, CS Performance, Allocation & Activity Audits',
+    sub: 'Multi-Period Operational Reports, CS Performance, Allocation, Merchant & Marketer Audits',
     defaultTab: 'executive',
     tabs: [
       { id: 'executive', label: 'Executive Summary', icon: '📊' },
       { id: 'employee', label: 'CS Performance', icon: '👤' },
+      { id: 'merchants', label: 'Merchants', icon: '🏪' },
+      { id: 'marketers', label: 'Marketers / Affiliates', icon: '📣' },
       { id: 'allocation', label: 'Work Allocation', icon: '⚡' },
-      { id: 'accounts', label: 'Accounts & Merchants', icon: '📑' },
+      { id: 'accounts', label: 'Accounts', icon: '📑' },
       { id: 'activity', label: 'Vendoor Activity Audit', icon: '📋' }
     ]
   }
@@ -9029,6 +9307,8 @@ const LEGACY_ROUTE_MAP = {
   reports: { page: 'reports', tab: 'executive' },
   'reports-executive': { page: 'reports', tab: 'executive' },
   'reports-employee': { page: 'reports', tab: 'employee' },
+  'reports-merchants': { page: 'reports', tab: 'merchants' },
+  'reports-marketers': { page: 'reports', tab: 'marketers' },
   'reports-allocation': { page: 'reports', tab: 'allocation' },
   'reports-accounts': { page: 'reports', tab: 'accounts' },
   'reports-activity': { page: 'reports', tab: 'activity' }
@@ -9290,6 +9570,173 @@ async function loadReportsView(tab = 'executive') {
           </div>
         </div>
       `;
+    } else if (tab === 'merchants') {
+      const res = await apiFetch(`/api/reports/merchant${queryParams}`);
+      const r = (res && res.data) ? res.data : res;
+      const s = r.summary || {};
+
+      viewContainer.innerHTML = `
+        <!-- Metrics Grid -->
+        <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px;margin-bottom:20px">
+          <div class="card" style="padding:16px;border-left:4px solid var(--blue)">
+            <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Active Merchants</div>
+            <div style="font-size:24px;font-weight:900;color:var(--navy);margin-top:4px">${fmt(s.total_merchants || (r.rows || []).length)}</div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">Period: ${r.start_date} → ${r.end_date}</div>
+          </div>
+          <div class="card" style="padding:16px;border-left:4px solid #16A34A">
+            <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Total Merchant Orders</div>
+            <div style="font-size:24px;font-weight:900;color:#16A34A;margin-top:4px">${fmt(s.total_orders || 0)}</div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">New: ${fmt(s.new_orders || 0)} | Pending: ${fmt(s.pending_orders || 0)}</div>
+          </div>
+          <div class="card" style="padding:16px;border-left:4px solid #8B5CF6">
+            <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Total GMV / Value</div>
+            <div style="font-size:24px;font-weight:900;color:#8B5CF6;margin-top:4px">${fmt(s.total_value || 0)} <span style="font-size:13px;font-weight:600">EGP</span></div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">Printed: ${fmt(s.printed_orders || 0)}</div>
+          </div>
+          <div class="card" style="padding:16px;border-left:4px solid #EF4444">
+            <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Cancellation Rate</div>
+            <div style="font-size:24px;font-weight:900;color:#DC2626;margin-top:4px">${(s.overall_cancellation_rate || 0).toFixed(1)}%</div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">Cancelled: ${fmt(s.cancelled_orders || 0)} orders</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+            <div>
+              <h3>🏪 Merchants Intelligence & Performance (${r.total_merchants || (r.rows || []).length} Merchants)</h3>
+              <p>Canonical merchant registry, operational order volumes, accounts mapping and cancellation metrics</p>
+            </div>
+            <div>
+              <input type="text" id="merchantSearchInput" placeholder="Filter merchant or code..." onkeyup="filterMerchantTable()" style="padding:6px 12px;border:1px solid #CBD5E1;border-radius:6px;font-size:12px;width:220px">
+            </div>
+          </div>
+          <div class="tbl-scroll">
+            <table id="merchantsReportTable">
+              <thead>
+                <tr>
+                  <th>Merchant Name</th>
+                  <th>Merchant Code</th>
+                  <th>Linked Accounts</th>
+                  <th style="text-align:right">Total Orders</th>
+                  <th style="text-align:right">New</th>
+                  <th style="text-align:right">Pending</th>
+                  <th style="text-align:right">Printed</th>
+                  <th style="text-align:right">Cancelled</th>
+                  <th style="text-align:right">Cancel Rate</th>
+                  <th style="text-align:right">Total GMV (EGP)</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(r.rows || []).map(row => `
+                  <tr>
+                    <td><b style="color:var(--navy);font-size:13.5px">${escapeHtml(row.merchant_name)}</b></td>
+                    <td><span class="tag" style="background:#EFF6FF;color:var(--blue);font-weight:700;font-family:monospace">${escapeHtml(row.merchant_code)}</span></td>
+                    <td>
+                      ${(row.linked_accounts || []).map(acc => `<span class="tag" style="font-size:11px;margin-right:3px;background:#F8FAFC;border:1px solid #E2E8F0">${escapeHtml(acc)}</span>`).join('')}
+                    </td>
+                    <td style="text-align:right;font-weight:800">${fmt(row.total_orders)}</td>
+                    <td style="text-align:right;color:var(--blue)">${fmt(row.new_orders)}</td>
+                    <td style="text-align:right;color:#D97706">${fmt(row.pending_orders)}</td>
+                    <td style="text-align:right;color:#16A34A">${fmt(row.printed_orders)}</td>
+                    <td style="text-align:right;color:#DC2626">${fmt(row.cancelled_orders)}</td>
+                    <td style="text-align:right">
+                      <span class="tag" style="background:${row.cancellation_rate > 15 ? '#FEE2E2;color:#DC2626' : (row.cancellation_rate > 5 ? '#FEF3C7;color:#D97706' : '#DCFCE7;color:#15803D')};font-weight:700">
+                        ${row.cancellation_rate.toFixed(1)}%
+                      </span>
+                    </td>
+                    <td style="text-align:right;font-weight:700">${fmt(row.total_value)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    } else if (tab === 'marketers') {
+      const res = await apiFetch(`/api/reports/marketer${queryParams}`);
+      const r = (res && res.data) ? res.data : res;
+      const s = r.summary || {};
+
+      viewContainer.innerHTML = `
+        <!-- Metrics Grid -->
+        <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px;margin-bottom:20px">
+          <div class="card" style="padding:16px;border-left:4px solid #8B5CF6">
+            <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Active Marketers / Affiliates</div>
+            <div style="font-size:24px;font-weight:900;color:var(--navy);margin-top:4px">${fmt(s.total_marketers || (r.rows || []).length)}</div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">Period: ${r.start_date} → ${r.end_date}</div>
+          </div>
+          <div class="card" style="padding:16px;border-left:4px solid #16A34A">
+            <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Total Generated Orders</div>
+            <div style="font-size:24px;font-weight:900;color:#16A34A;margin-top:4px">${fmt(s.total_orders || 0)}</div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">New: ${fmt(s.new_orders || 0)} | Pending: ${fmt(s.pending_orders || 0)}</div>
+          </div>
+          <div class="card" style="padding:16px;border-left:4px solid var(--blue)">
+            <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Total Revenue Value</div>
+            <div style="font-size:24px;font-weight:900;color:var(--blue);margin-top:4px">${fmt(s.total_value || 0)} <span style="font-size:13px;font-weight:600">EGP</span></div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">Printed: ${fmt(s.printed_orders || 0)}</div>
+          </div>
+          <div class="card" style="padding:16px;border-left:4px solid #EF4444">
+            <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Cancellation Rate</div>
+            <div style="font-size:24px;font-weight:900;color:#DC2626;margin-top:4px">${(s.overall_cancellation_rate || 0).toFixed(1)}%</div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">Cancelled: ${fmt(s.cancelled_orders || 0)} orders</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+            <div>
+              <h3>📣 Marketers & Affiliates Intelligence (${r.total_marketers || (r.rows || []).length} Affiliates)</h3>
+              <p>Direct affiliate code tracking, order throughput by promoter, promoted merchant accounts and lifecycle cancellation</p>
+            </div>
+            <div>
+              <input type="text" id="marketerSearchInput" placeholder="Filter affiliate code or name..." onkeyup="filterMarketerTable()" style="padding:6px 12px;border:1px solid #CBD5E1;border-radius:6px;font-size:12px;width:220px">
+            </div>
+          </div>
+          <div class="tbl-scroll">
+            <table id="marketersReportTable">
+              <thead>
+                <tr>
+                  <th>Affiliate / Marketer Code</th>
+                  <th>Affiliate Name</th>
+                  <th>Promoted Merchants</th>
+                  <th style="text-align:right">Total Orders</th>
+                  <th style="text-align:right">New</th>
+                  <th style="text-align:right">Pending</th>
+                  <th style="text-align:right">Printed</th>
+                  <th style="text-align:right">Cancelled</th>
+                  <th style="text-align:right">Cancel Rate</th>
+                  <th style="text-align:right">Total GMV (EGP)</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(r.rows || []).map(row => `
+                  <tr>
+                    <td><span class="tag" style="background:#F3E8FF;color:#7E22CE;font-weight:800;font-family:monospace;font-size:12.5px">${escapeHtml(row.affiliate_code)}</span></td>
+                    <td style="color:var(--slate);font-size:12px">${escapeHtml(row.affiliate_name || 'N/A')}</td>
+                    <td>
+                      <span title="${escapeHtml((row.linked_merchants || []).join(', '))}">
+                        <b>${row.merchants_count || (row.linked_merchants || []).length}</b> merchant(s)
+                        <span style="color:var(--mut);font-size:11px">(${(row.linked_merchants || []).slice(0, 3).join(', ')}${(row.linked_merchants || []).length > 3 ? '...' : ''})</span>
+                      </span>
+                    </td>
+                    <td style="text-align:right;font-weight:800">${fmt(row.total_orders)}</td>
+                    <td style="text-align:right;color:var(--blue)">${fmt(row.new_orders)}</td>
+                    <td style="text-align:right;color:#D97706">${fmt(row.pending_orders)}</td>
+                    <td style="text-align:right;color:#16A34A">${fmt(row.printed_orders)}</td>
+                    <td style="text-align:right;color:#DC2626">${fmt(row.cancelled_orders)}</td>
+                    <td style="text-align:right">
+                      <span class="tag" style="background:${row.cancellation_rate > 15 ? '#FEE2E2;color:#DC2626' : (row.cancellation_rate > 5 ? '#FEF3C7;color:#D97706' : '#DCFCE7;color:#15803D')};font-weight:700">
+                        ${row.cancellation_rate.toFixed(1)}%
+                      </span>
+                    </td>
+                    <td style="text-align:right;font-weight:700">${fmt(row.total_value)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
     } else if (tab === 'allocation') {
       const res = await apiFetch(`/api/reports/allocation${queryParams}`);
       const r = (res && res.data) ? res.data : res;
@@ -9415,6 +9862,30 @@ async function loadReportsView(tab = 'executive') {
     }
   } catch (err) {
     viewContainer.innerHTML = `<div class="panel" style="color:#DC2626;padding:24px;text-align:center">Error loading report: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function filterMerchantTable() {
+  const input = document.getElementById('merchantSearchInput');
+  const filter = input ? input.value.toLowerCase().trim() : '';
+  const table = document.getElementById('merchantsReportTable');
+  if (!table) return;
+  const trs = table.getElementsByTagName('tr');
+  for (let i = 1; i < trs.length; i++) {
+    const text = trs[i].textContent || trs[i].innerText;
+    trs[i].style.display = text.toLowerCase().includes(filter) ? '' : 'none';
+  }
+}
+
+function filterMarketerTable() {
+  const input = document.getElementById('marketerSearchInput');
+  const filter = input ? input.value.toLowerCase().trim() : '';
+  const table = document.getElementById('marketersReportTable');
+  if (!table) return;
+  const trs = table.getElementsByTagName('tr');
+  for (let i = 1; i < trs.length; i++) {
+    const text = trs[i].textContent || trs[i].innerText;
+    trs[i].style.display = text.toLowerCase().includes(filter) ? '' : 'none';
   }
 }
 
@@ -9804,6 +10275,75 @@ function showToast(title, body) {
   `;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 6000);
+}
+
+let appConfirmCallback = null;
+
+function showAppConfirmModal({ title, icon = '⚠️', message, confirmText = 'Confirm', cancelText = 'Cancel', confirmBg = '#BE123C', confirmColor = '#ffffff', onConfirm }) {
+  let modal = document.getElementById('appConfirmModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'appConfirmModal';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:10000;align-items:center;justify-content:center;padding:20px';
+    modal.onclick = (e) => { if (e.target === modal) closeAppConfirmModal(); };
+    modal.innerHTML = `
+      <div style="background:#fff;border-radius:16px;max-width:480px;width:100%;box-shadow:var(--shadow-lg);overflow:hidden">
+        <div style="padding:22px 24px">
+          <div style="display:flex;align-items:flex-start;gap:14px">
+            <div id="appConfirmIcon" style="width:44px;height:44px;border-radius:12px;background:#FFF1F2;color:#E11D48;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">⚠️</div>
+            <div style="flex:1">
+              <h3 id="appConfirmTitle" style="margin:0 0 6px 0;font-size:16px;font-weight:800;color:var(--navy)">Confirm Action</h3>
+              <div id="appConfirmMessage" style="font-size:13px;color:var(--slate);line-height:1.5">Are you sure you want to proceed?</div>
+            </div>
+          </div>
+        </div>
+        <div style="padding:14px 24px;background:#F8FAFC;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px">
+          <button type="button" class="btn" id="appConfirmCancelBtn" onclick="closeAppConfirmModal()">Cancel</button>
+          <button type="button" class="btn" id="appConfirmActionBtn" style="background:#E11D48;color:#fff;font-weight:700">Confirm</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  const iconEl = document.getElementById('appConfirmIcon');
+  if (iconEl) iconEl.textContent = icon;
+  const titleEl = document.getElementById('appConfirmTitle');
+  if (titleEl) titleEl.textContent = title || 'Confirm Action';
+  const msgEl = document.getElementById('appConfirmMessage');
+  if (msgEl) msgEl.innerHTML = message || 'Are you sure?';
+
+  const actionBtn = document.getElementById('appConfirmActionBtn');
+  if (actionBtn) {
+    actionBtn.textContent = confirmText;
+    actionBtn.style.background = confirmBg;
+    actionBtn.style.color = confirmColor;
+    actionBtn.onclick = () => {
+      const cb = appConfirmCallback;
+      closeAppConfirmModal();
+      if (typeof cb === 'function') {
+        try {
+          cb();
+        } catch (err) {
+          console.error('Confirm modal callback error:', err);
+        }
+      }
+    };
+  }
+
+  const cancelBtn = document.getElementById('appConfirmCancelBtn');
+  if (cancelBtn) {
+    cancelBtn.textContent = cancelText;
+  }
+
+  appConfirmCallback = onConfirm;
+  modal.style.display = 'flex';
+}
+
+function closeAppConfirmModal() {
+  const modal = document.getElementById('appConfirmModal');
+  if (modal) modal.style.display = 'none';
+  appConfirmCallback = null;
 }
 
 async function initApp() {

@@ -28,12 +28,18 @@ import {
 
 const TEST_DATE = '2029-07-20';
 
+function cleanupDate(date) {
+  db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(date);
+  db.prepare('DELETE FROM order_level_allocations WHERE allocation_date = ?').run(date);
+  db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(date);
+  db.prepare('DELETE FROM enterprise_allocation_runs WHERE work_date = ?').run(date);
+  db.prepare('DELETE FROM employee_daily_allocation_states WHERE work_date = ?').run(date);
+  db.prepare('DELETE FROM vendoor_orders WHERE business_date = ? OR source_date = ?').run(date, date);
+}
+
 test('FINAL PRODUCTION READINESS - 20 CORE REAL-WORLD SCENARIOS', async (t) => {
   // Setup isolated test workspace for TEST_DATE
-  db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(TEST_DATE);
-  db.prepare('DELETE FROM order_level_allocations WHERE allocation_date = ?').run(TEST_DATE);
-  db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(TEST_DATE);
-  db.prepare('DELETE FROM enterprise_allocation_runs WHERE work_date = ?').run(TEST_DATE);
+  cleanupDate(TEST_DATE);
 
   // Seed standard test CS team
   const csEmps = db.prepare("SELECT id, name, department, team_membership FROM employees WHERE department = 'CS' AND active = 1 LIMIT 5").all();
@@ -48,6 +54,10 @@ test('FINAL PRODUCTION READINESS - 20 CORE REAL-WORLD SCENARIOS', async (t) => {
 
   // 1. 0 Orders
   await t.test('1. Scenario: 0 Orders handling', () => {
+    cleanupDate(TEST_DATE);
+    for (const emp of csEmps) {
+      db.prepare("INSERT INTO daily_working_team (work_date, employee_id, is_working, source) VALUES (?, ?, 1, 'MANUAL')").run(TEST_DATE, emp.id);
+    }
     const plan = planEnterpriseAllocation(TEST_DATE, 'PREVIEW');
     assert.ok(plan.status === 'UP_TO_DATE' || plan.status === 'VALID' || plan.total_orders_input === 0);
     assert.equal(plan.assignments.length, 0);
@@ -55,6 +65,10 @@ test('FINAL PRODUCTION READINESS - 20 CORE REAL-WORLD SCENARIOS', async (t) => {
 
   // 2. Orders less than capacity
   await t.test('2. Scenario: Orders < Team Capacity', () => {
+    cleanupDate(TEST_DATE);
+    for (const emp of csEmps) {
+      db.prepare("INSERT INTO daily_working_team (work_date, employee_id, is_working, source) VALUES (?, ?, 1, 'MANUAL')").run(TEST_DATE, emp.id);
+    }
     for (let i = 1; i <= 5; i++) {
       db.prepare(`
         INSERT INTO current_work_orders (work_date, order_code, account, status, source_type, work_state)
@@ -70,8 +84,8 @@ test('FINAL PRODUCTION READINESS - 20 CORE REAL-WORLD SCENARIOS', async (t) => {
   // 3. Orders greater than capacity (Hard Cap Enforcement)
   await t.test('3. Scenario: Orders > Capacity does not exceed max capacity', () => {
     const singleDate = '2029-07-21';
-    db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(singleDate);
-    db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(singleDate);
+    cleanupDate(singleDate);
+    db.prepare('DELETE FROM employee_capacities WHERE employee_id = ?').run(csEmps[0].id);
     db.prepare("INSERT INTO daily_working_team (work_date, employee_id, is_working) VALUES (?, ?, 1)").run(singleDate, csEmps[0].id);
 
     for (let i = 1; i <= 60; i++) {
@@ -90,8 +104,7 @@ test('FINAL PRODUCTION READINESS - 20 CORE REAL-WORLD SCENARIOS', async (t) => {
   // 4. NEW only orders
   await t.test('4. Scenario: Pure NEW Orders allocation', () => {
     const d4 = '2029-07-22';
-    db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(d4);
-    db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(d4);
+    cleanupDate(d4);
     for (const e of csEmps) db.prepare("INSERT INTO daily_working_team (work_date, employee_id, is_working) VALUES (?, ?, 1)").run(d4, e.id);
 
     for (let i = 1; i <= 10; i++) {
@@ -108,8 +121,7 @@ test('FINAL PRODUCTION READINESS - 20 CORE REAL-WORLD SCENARIOS', async (t) => {
   // 5. PENDING only orders
   await t.test('5. Scenario: Pure PENDING Orders allocation', () => {
     const d5 = '2029-07-23';
-    db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(d5);
-    db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(d5);
+    cleanupDate(d5);
     for (const e of csEmps) db.prepare("INSERT INTO daily_working_team (work_date, employee_id, is_working) VALUES (?, ?, 1)").run(d5, e.id);
 
     for (let i = 1; i <= 10; i++) {
@@ -126,8 +138,7 @@ test('FINAL PRODUCTION READINESS - 20 CORE REAL-WORLD SCENARIOS', async (t) => {
   // 6. Mixed NEW + PENDING in one cycle with ZERO cross-stream violation
   await t.test('6. Scenario: Mixed NEW + PENDING -> Strict Stream Separation', () => {
     const d6 = '2029-07-24';
-    db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(d6);
-    db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(d6);
+    cleanupDate(d6);
     for (const e of csEmps) db.prepare("INSERT INTO daily_working_team (work_date, employee_id, is_working) VALUES (?, ?, 1)").run(d6, e.id);
 
     for (let i = 1; i <= 10; i++) {
@@ -155,8 +166,7 @@ test('FINAL PRODUCTION READINESS - 20 CORE REAL-WORLD SCENARIOS', async (t) => {
   // 7. Single Employee Working
   await t.test('7. Scenario: Single Employee Working on shift', () => {
     const d7 = '2029-07-25';
-    db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(d7);
-    db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(d7);
+    cleanupDate(d7);
     db.prepare("INSERT INTO daily_working_team (work_date, employee_id, is_working) VALUES (?, ?, 1)").run(d7, csEmps[0].id);
 
     for (let i = 1; i <= 5; i++) {
@@ -171,8 +181,7 @@ test('FINAL PRODUCTION READINESS - 20 CORE REAL-WORLD SCENARIOS', async (t) => {
   // 8. Full Working Team
   await t.test('8. Scenario: Full Working Team distribution', () => {
     const d8 = '2029-07-26';
-    db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(d8);
-    db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(d8);
+    cleanupDate(d8);
     for (const e of csEmps) db.prepare("INSERT INTO daily_working_team (work_date, employee_id, is_working) VALUES (?, ?, 1)").run(d8, e.id);
 
     for (let i = 1; i <= 25; i++) {
@@ -213,8 +222,7 @@ test('FINAL PRODUCTION READINESS - 20 CORE REAL-WORLD SCENARIOS', async (t) => {
   // 11. Repeated Allocation Idempotency
   await t.test('11. Scenario: Repeated Allocation without changes produces 0 changes', () => {
     const d11 = '2029-07-27';
-    db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(d11);
-    db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(d11);
+    cleanupDate(d11);
     for (const e of csEmps) db.prepare("INSERT INTO daily_working_team (work_date, employee_id, is_working) VALUES (?, ?, 1)").run(d11, e.id);
 
     for (let i = 1; i <= 5; i++) {
@@ -242,8 +250,7 @@ test('FINAL PRODUCTION READINESS - 20 CORE REAL-WORLD SCENARIOS', async (t) => {
   // 13. Failed Allocation (Zero Candidates) handled safely
   await t.test('13. Scenario: Blocked Allocation when zero candidates in working team', () => {
     const d13 = '2029-07-28';
-    db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(d13);
-    db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(d13);
+    cleanupDate(d13);
     db.prepare("INSERT INTO current_work_orders (work_date, order_code, account, status, source_type, work_state) VALUES (?, 'ORD-NO-TEAM', 'Acc', 'New', 'NEW', 'UNASSIGNED')").run(d13);
 
     const plan = planEnterpriseAllocation(d13, 'ACTIVE');
@@ -267,6 +274,10 @@ test('FINAL PRODUCTION READINESS - 20 CORE REAL-WORLD SCENARIOS', async (t) => {
   // 15. Historical Date Protection
   await t.test('15. Scenario: Historical date allocation preserves existing state', () => {
     const histDate = '2026-09-27';
+    db.prepare(`
+      INSERT OR IGNORE INTO current_work_orders (work_date, order_code, account, status, source_type, work_state)
+      VALUES (?, 'HIST-PROTECT-1', 'AccHist', 'New', 'NEW', 'ASSIGNED')
+    `).run(histDate);
     const beforeCount = db.prepare('SELECT COUNT(*) as c FROM current_work_orders WHERE work_date = ?').get(histDate).c;
     assert.ok(beforeCount > 0);
   });

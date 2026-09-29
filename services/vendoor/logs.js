@@ -197,7 +197,23 @@ export async function fetchVendoorLogsRange(options = {}) {
       await new Promise(resolve => setTimeout(resolve, 80));
     }
 
-    const res = await fetchSingleLogsChunk(chunk.start, chunk.end);
+    // Robust retry with backoff for each chunk to protect long historical periods
+    let res = null;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        res = await fetchSingleLogsChunk(chunk.start, chunk.end);
+        break;
+      } catch (chunkErr) {
+        lastErr = chunkErr;
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, attempt * 1200));
+        }
+      }
+    }
+    if (!res) {
+      throw lastErr;
+    }
     totalDurationMs += res.durationMs;
     totalSizeBytes += res.fileSizeBytes;
     lastStatus = res.status;

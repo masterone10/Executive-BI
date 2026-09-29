@@ -311,6 +311,7 @@ export async function bootstrapHistoricalTwoMonths(options = {}) {
       toDate: endDate,
       pageSize: 300,
       maxPages: 200,
+      isHistoricalSync: true,
       forceMode: effectiveMode
     });
 
