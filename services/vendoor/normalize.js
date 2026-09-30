@@ -90,14 +90,14 @@ export function extractCanonicalAccountName(rawOrder) {
 export function normalizeVendoorOrder(rawOrder) {
   if (!rawOrder || typeof rawOrder !== 'object') return null;
 
-  // Extract order code / tracking number (Vendoor logs use random_number/tracking code)
+  // Extract order code / tracking number (Vendoor logs use order_code / code / id / order_no)
   const orderCode = String(
-    rawOrder.random_number ||
-    rawOrder.order_no ||
     rawOrder.order_code ||
+    rawOrder.order_no ||
     rawOrder.code ||
     rawOrder.order_id ||
     rawOrder.id ||
+    rawOrder.random_number ||
     rawOrder.reference ||
     ''
   ).trim();
@@ -146,24 +146,60 @@ export function normalizeVendoorOrder(rawOrder) {
     ''
   ).trim();
 
-  // Extract affiliate / marketer code & name
-  const affiliateCode = String(
-    rawOrder.affiliate_code ||
-    rawOrder['الافيليت كود'] ||
-    rawOrder['كود الافلييت'] ||
-    rawOrder['كود المسوق'] ||
-    rawOrder.affiliate ||
-    rawOrder.marketer_code ||
-    ''
-  ).trim();
+  // Extract affiliate / marketer code & marketer name (From Vendoor 'اسم المسوق' / 'الافيليت كود')
+  // CRITICAL RULE: marketer_name is NEVER derived from affiliate_code
+  const candidateMarketerNames = [
+    rawOrder['اسم المسوق'],
+    rawOrder['اسم_المسوق'],
+    rawOrder['المسوق'],
+    rawOrder['اسم الافلييت'],
+    rawOrder['اسم الافيليت'],
+    rawOrder['الافيليت'],
+    rawOrder['الافلييت'],
+    rawOrder.affiliate_name,
+    rawOrder.marketer_name,
+    rawOrder.marketer,
+    rawOrder.affiliateName,
+    rawOrder.marketerName
+  ];
 
-  const affiliateName = String(
-    rawOrder.affiliate_name ||
-    rawOrder['اسم الافلييت'] ||
-    rawOrder['اسم المسوق'] ||
-    rawOrder.marketer_name ||
-    ''
-  ).trim();
+  let marketerName = null;
+  for (const cand of candidateMarketerNames) {
+    if (cand && typeof cand === 'string') {
+      const clean = cand.replace(/<[^>]+>/g, '').trim();
+      if (clean && 
+          clean !== '[object Object]' && 
+          clean !== 'undefined' && 
+          clean !== 'null' && 
+          !/no name specified|none specified|unknown \/ not available|^\s*[-_—]\s*$/i.test(clean)) {
+        marketerName = clean;
+        break;
+      }
+    }
+  }
+
+  const candidateAffiliateCodes = [
+    rawOrder.affiliate_code,
+    rawOrder['الافيليت كود'],
+    rawOrder['كود الافلييت'],
+    rawOrder['كود المسوق'],
+    rawOrder['كود_المسوق'],
+    rawOrder.affiliate,
+    rawOrder.marketer_code,
+    rawOrder.affiliateCode,
+    rawOrder.marketerCode
+  ];
+
+  let affiliateCode = null;
+  for (const cand of candidateAffiliateCodes) {
+    if (cand !== undefined && cand !== null) {
+      const s = String(cand).trim();
+      if (s && s !== '[object Object]' && s !== 'undefined' && s !== 'null') {
+        affiliateCode = s;
+        break;
+      }
+    }
+  }
 
   const account = extractCanonicalAccountName(rawOrder);
 
@@ -210,7 +246,8 @@ export function normalizeVendoorOrder(rawOrder) {
     merchant_code: merchantCode || null,
     merchant_name: merchantName || account || null,
     affiliate_code: affiliateCode || null,
-    affiliate_name: affiliateName || null,
+    marketer_name: marketerName || null,
+    affiliate_name: marketerName || null,
     date: sourceDateStr,
     source_date: sourceDateStr,
     created_at: rawOrder.created_at || null,

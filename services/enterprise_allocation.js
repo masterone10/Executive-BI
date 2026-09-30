@@ -1409,6 +1409,30 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     }
   }
 
+  // 6b. Fetch Active Account Rules and Exceptions
+  let accountRulesList = [];
+  let accountExceptionsList = [];
+  try {
+    accountRulesList = db.prepare('SELECT * FROM account_rules WHERE active = 1').all();
+  } catch (_) {}
+  try {
+    accountExceptionsList = db.prepare(`
+      SELECT * FROM account_exceptions 
+      WHERE (work_date IS NULL OR work_date = ?)
+    `).all(workDate);
+  } catch (_) {}
+
+  const accountRulesMap = new Map();
+  for (const r of accountRulesList) {
+    if (r.account_name) {
+      accountRulesMap.set(r.account_name.trim().toLowerCase(), {
+        new_eligible: r.new_eligible_json ? JSON.parse(r.new_eligible_json) : [],
+        pending_eligible: r.pending_eligible_json ? JSON.parse(r.pending_eligible_json) : [],
+        blocked: r.blocked_json ? JSON.parse(r.blocked_json) : []
+      });
+    }
+  }
+
   // 7. Order-Level Prioritized Queue
   const scheduledAccountsMap = new Map();
   const auditRecords = [];
@@ -1505,13 +1529,26 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
   // 9. Order-Level Fair Allocation Loop (One-Click NEW + PENDING, Zero Cross-Stream Violation)
   for (const ord of eligibleOrdersQueue) {
     const streamType = ord.work_type; // 'NEW' or 'PENDING'
+    const accKey = (ord.account || '').trim().toLowerCase();
 
-    // Filter available candidates with strict stream separation and capacity check
-    // ABSOLUTE INVARIANT: An employee must NEVER receive both NEW and PENDING!
+    // Fetch account rules and exceptions for this order
+    const ruleObj = accountRulesMap.get(accKey) || { new_eligible: [], pending_eligible: [], blocked: [] };
+    const accExceptions = accountExceptionsList.filter(e => {
+      if (!e.account_name || e.account_name.trim().toLowerCase() !== accKey) return false;
+      const st = String(e.status_type || 'Both').toLowerCase();
+      return st === 'both' || st === streamType.toLowerCase();
+    });
+
+    const forceAssignExceptions = accExceptions.filter(e => e.exception_type === 'force_assign');
+    const allowOnlyExceptions = accExceptions.filter(e => e.exception_type === 'allow_only');
+    const blockExceptions = accExceptions.filter(e => e.exception_type === 'block');
+
+    // Filter available candidates with strict stream separation, capacity check, and PENDING State Machine
     const available = eligibleCandidates.filter(c => {
       const remaining = c.remaining_capacity - c.assigned_in_this_run;
       if (remaining <= 0) return false;
 
+      // Invariant: Employee must NEVER receive both NEW and PENDING
       if (streamType === 'NEW') {
         if (c.assigned_pending > 0) return false;
         if (c.has_preserved_pending && (eligibleCandidates.length > 1 || c.locked_lane !== 'NEW')) return false;
@@ -1526,44 +1563,108 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
       }
     });
 
-    if (available.length === 0) {
-      auditRecords.push({
-        entity_type: 'ORDER',
-        entity_id: ord.order_code,
-        decision: 'BLOCKED',
-        reason_code: 'CAPACITY_EXHAUSTED',
-        reason_details: `No remaining capacity among eligible ${streamType}-lane candidates for order ${ord.order_code}`
-      });
-      continue;
-    }
-
-    // Check if account has a sticky owner eligible for this stream
-    const accOwner = stickyOwnerMap.get((ord.account || '').toLowerCase());
+    // Handle force_assign
     let chosen = null;
-    if (accOwner && accOwner.employee_id) {
-      const stickyCand = available.find(c => c.id === accOwner.employee_id);
-      if (stickyCand) {
-        chosen = stickyCand;
+    let assignmentNote = `${streamType} Allocation Event`;
+
+    if (forceAssignExceptions.length > 0) {
+      const distinctForcedIds = Array.from(new Set(forceAssignExceptions.map(f => f.employee_id).filter(Boolean)));
+      if (distinctForcedIds.length > 1) {
+        auditRecords.push({
+          entity_type: 'ORDER',
+          entity_id: ord.order_code,
+          decision: 'BLOCKED',
+          reason_code: ALLOCATION_ERROR_CODES.ALLOCATION_CONFLICT,
+          reason_details: `Conflicting force_assign exceptions detected for account ${ord.account}`
+        });
+        continue;
+      }
+
+      const forcedId = distinctForcedIds[0];
+      const forcedCandidate = available.find(c => c.id === forcedId);
+      const isBlocked = blockExceptions.some(b => b.employee_id === forcedId);
+
+      if (forcedCandidate && !isBlocked) {
+        chosen = forcedCandidate;
+        assignmentNote = `Exception: Force Assign ${forcedCandidate.name}`;
+      } else {
+        auditRecords.push({
+          entity_type: 'ORDER',
+          entity_id: ord.order_code,
+          decision: 'BLOCKED',
+          reason_code: ALLOCATION_ERROR_CODES.ALLOCATION_CONFLICT,
+          reason_details: `Forced employee (ID: ${forcedId}) cannot be assigned to order ${ord.order_code} due to safety constraints (capacity exhausted/blocked/ineligible stream)`
+        });
+        continue;
       }
     }
 
     if (!chosen) {
-      // Sort candidates:
-      // 1. Prefer candidate already locked to this stream (fills committed candidates)
-      // 2. Lowest total load (current_workload + assigned_in_this_run) for balanced workload
-      // 3. Stable tie-breaker
-      available.sort((a, b) => {
-        const aLocked = a.locked_lane === streamType ? 1 : 0;
-        const bLocked = b.locked_lane === streamType ? 1 : 0;
-        if (bLocked !== aLocked) return bLocked - aLocked;
-
-        const aLoad = a.current_workload + a.assigned_in_this_run;
-        const bLoad = b.current_workload + b.assigned_in_this_run;
-        if (aLoad !== bLoad) return aLoad - bLoad;
-
-        return a.id - b.id;
+      // Filter candidates through account rules and exceptions (allow_only, block, new_eligible, pending_eligible)
+      const filteredByRules = available.filter(c => {
+        // 1. Explicit block exception
+        if (blockExceptions.some(b => b.employee_id === c.id || (b.employee_name && b.employee_name.toLowerCase() === c.name.toLowerCase()))) {
+          return false;
+        }
+        // 2. Blocked in account_rules
+        if (ruleObj.blocked.includes(c.id) || ruleObj.blocked.includes(c.name)) {
+          return false;
+        }
+        // 3. allow_only exception
+        if (allowOnlyExceptions.length > 0) {
+          const isAllowed = allowOnlyExceptions.some(a => a.employee_id === c.id || (a.employee_name && a.employee_name.toLowerCase() === c.name.toLowerCase()));
+          if (!isAllowed) return false;
+        }
+        // 4. new_eligible list for NEW
+        if (streamType === 'NEW' && ruleObj.new_eligible.length > 0) {
+          if (!ruleObj.new_eligible.includes(c.id) && !ruleObj.new_eligible.includes(c.name)) return false;
+        }
+        // 5. pending_eligible list for PENDING
+        if (streamType === 'PENDING' && ruleObj.pending_eligible.length > 0) {
+          if (!ruleObj.pending_eligible.includes(c.id) && !ruleObj.pending_eligible.includes(c.name)) return false;
+        }
+        return true;
       });
-      chosen = available[0];
+
+      if (filteredByRules.length === 0) {
+        auditRecords.push({
+          entity_type: 'ORDER',
+          entity_id: ord.order_code,
+          decision: 'BLOCKED',
+          reason_code: 'NO_ELIGIBLE_CANDIDATE_FOR_RULES',
+          reason_details: `No remaining eligible candidates meet account rules/exceptions for ${ord.account} (${streamType})`
+        });
+        continue;
+      }
+
+      // Check Sticky Ownership
+      const accOwner = stickyOwnerMap.get(accKey);
+      if (accOwner && accOwner.employee_id) {
+        const stickyCand = filteredByRules.find(c => c.id === accOwner.employee_id);
+        if (stickyCand) {
+          chosen = stickyCand;
+          assignmentNote = 'Preserved Account Owner';
+        }
+      }
+
+      if (!chosen) {
+        // Sort candidates:
+        // 1. Prefer candidate already locked to this stream (fills committed candidates)
+        // 2. Lowest total load (current_workload + assigned_in_this_run) for balanced workload
+        // 3. Stable tie-breaker
+        filteredByRules.sort((a, b) => {
+          const aLocked = a.locked_lane === streamType ? 1 : 0;
+          const bLocked = b.locked_lane === streamType ? 1 : 0;
+          if (bLocked !== aLocked) return bLocked - aLocked;
+
+          const aLoad = a.current_workload + a.assigned_in_this_run;
+          const bLoad = b.current_workload + b.assigned_in_this_run;
+          if (aLoad !== bLoad) return aLoad - bLoad;
+
+          return a.id - b.id;
+        });
+        chosen = filteredByRules[0];
+      }
     }
 
     chosen.locked_lane = streamType; // STRICT WORK-LANE LOCK (Rule: ONLY NEW or ONLY PENDING)

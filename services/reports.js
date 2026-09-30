@@ -6,7 +6,7 @@
  */
 
 import { db, checkDatabaseIntegrity } from '../db/index.js';
-import { isCsEmployee } from './parser.js';
+import { isCsEmployee, ALT_RE, ADDED_RE } from './parser.js';
 import { getFullEmployeeProductivityProfiles } from './vendoor/productivity.js';
 import { getEmployeeWorkloadAndRefillStates } from './vendoor/workload.js';
 import { getDispatcherStatus, getDispatcherConfig, getEffectiveWorkDate } from './vendoor/dispatcher.js';
@@ -14,6 +14,7 @@ import { getUnallocatedOrdersPool } from './vendoor/unallocated.js';
 import { classifyVendoorAction } from './vendoor/actions.js';
 import { getSafeVendoorStatus } from './vendoor/auth.js';
 import { computePerformanceFromRecords } from './performance.js';
+import { ensurePhoneAlertsTable, scanAndRecordPhoneMatches } from './employee_evaluation.js';
 import * as XLSX from 'xlsx';
 
 /**
@@ -340,6 +341,33 @@ export function generateEmployeeReport(opts = {}) {
     const realActions = logs?.real_actions || 0;
     const uniqueOrdersWorked = logs?.unique_worked || 0;
 
+    // Confirmed orders attributable to CS employee in range
+    const confirmedRow = db.prepare(`
+      SELECT COUNT(DISTINCT order_code) as confirmed_count
+      FROM raw_log_records
+      WHERE employee_name = ? AND work_date IN (${placeholders})
+        AND (status = 'Printed' OR action LIKE '%Printed%' OR action LIKE '%طبع%' OR action LIKE '%طباعة%' OR action LIKE '%تأكيد%' OR action LIKE '%تاكيد%' OR action LIKE '%confirmed%')
+    `).get(emp.name, ...range.dates);
+    const confirmedOrders = confirmedRow?.confirmed_count || 0;
+
+    // Added phone numbers by CS employee in range
+    const addedPhonesRow = db.prepare(`
+      SELECT COUNT(*) as phones_count
+      FROM raw_log_records
+      WHERE employee_name = ? AND work_date IN (${placeholders})
+        AND (action LIKE '%بديل%' OR action LIKE '%اضافة%رقم%' OR action LIKE '%إضافة%رقم%' OR action LIKE '%تعديل%رقم%' OR action LIKE '%تحديث%رقم%')
+    `).get(emp.name, ...range.dates);
+    const addedPhones = addedPhonesRow?.phones_count || 0;
+
+    // Phone match review alerts for this employee in range
+    const alertsRow = db.prepare(`
+      SELECT COUNT(*) as alerts_count
+      FROM phone_match_alerts
+      WHERE (employee_id = ? OR employee_name = ?) AND work_date IN (${placeholders})
+    `).get(emp.id, emp.name, ...range.dates);
+    const phoneMatchAlerts = alertsRow?.alerts_count || 0;
+    const phoneMatchRate = confirmedOrders > 0 ? Number(((phoneMatchAlerts / confirmedOrders) * 100).toFixed(1)) : 0.0;
+
     // Completed orders in range from vendoor_logs
     const compRow = db.prepare(`
       SELECT COUNT(DISTINCT order_code) as comp_count
@@ -401,6 +429,10 @@ export function generateEmployeeReport(opts = {}) {
       department: emp.department || 'CS',
       team_membership: emp.team_membership || 'Both',
       working_days: workingDays,
+      confirmed_orders: confirmedOrders,
+      added_phone_numbers: addedPhones,
+      phone_match_alerts: phoneMatchAlerts,
+      phone_match_rate: phoneMatchRate,
       valid_unique_orders_worked: uniqueOrdersWorked,
       typical_orders_10m: typical10m,
       recent_rate: recentRate,
@@ -850,21 +882,63 @@ export function generateDataQualityReport(opts = {}) {
     WHERE (merchant_code IS NULL OR merchant_code = '') AND (merchant_name IS NULL OR merchant_name = '')
   `).get()?.c || 0;
 
-  const ordersMissingAffiliate = db.prepare(`
+  const ordersMissingMerchantCode = db.prepare(`
+    SELECT COUNT(*) as c FROM vendoor_orders 
+    WHERE (merchant_code IS NULL OR merchant_code = '') AND (merchant_name IS NOT NULL AND merchant_name != '')
+  `).get()?.c || 0;
+
+  const ordersMissingAffiliateCode = db.prepare(`
     SELECT COUNT(*) as c FROM vendoor_orders 
     WHERE (affiliate_code IS NULL OR affiliate_code = '')
   `).get()?.c || 0;
 
+  const ordersMissingMarketerName = db.prepare(`
+    SELECT COUNT(*) as c FROM vendoor_orders 
+    WHERE (marketer_name IS NULL OR marketer_name = '' OR marketer_name = 'Unknown / Not Available')
+  `).get()?.c || 0;
+
+  const affiliateCodeWithoutMarketerName = db.prepare(`
+    SELECT COUNT(*) as c FROM vendoor_orders 
+    WHERE (affiliate_code IS NOT NULL AND affiliate_code != '') 
+      AND (marketer_name IS NULL OR marketer_name = '' OR marketer_name = 'Unknown / Not Available')
+  `).get()?.c || 0;
+
+  const marketerNameWithoutAffiliateCode = db.prepare(`
+    SELECT COUNT(*) as c FROM vendoor_orders 
+    WHERE (marketer_name IS NOT NULL AND marketer_name != '' AND marketer_name != 'Unknown / Not Available')
+      AND (affiliate_code IS NULL OR affiliate_code = '')
+  `).get()?.c || 0;
+
+  const merchantCodeWithoutName = db.prepare(`
+    SELECT COUNT(*) as c FROM merchants 
+    WHERE (merchant_name IS NULL OR merchant_name = '' OR merchant_name = 'Unknown Merchant')
+  `).get()?.c || 0;
+
+  const accountsWithoutMerchant = db.prepare(`
+    SELECT COUNT(DISTINCT account) as c FROM vendoor_orders 
+    WHERE account IS NOT NULL AND account != '' AND (merchant_code IS NULL OR merchant_code = '')
+  `).get()?.c || 0;
+
+  // Check for same affiliate_code appearing with multiple distinct marketer names
+  const multiNamesQuery = db.prepare(`
+    SELECT affiliate_code, COUNT(DISTINCT marketer_name) as names_count, GROUP_CONCAT(DISTINCT marketer_name) as names_list
+    FROM vendoor_orders
+    WHERE affiliate_code IS NOT NULL AND affiliate_code != '' AND marketer_name IS NOT NULL AND marketer_name != ''
+    GROUP BY affiliate_code
+    HAVING COUNT(DISTINCT marketer_name) > 1
+  `).all();
+
   const totalMerchantsCount = db.prepare('SELECT COUNT(*) as c FROM merchants').get()?.c || 0;
   const totalMarketersCount = db.prepare('SELECT COUNT(*) as c FROM marketers').get()?.c || 0;
 
-  // Verify CS Separation (0% contamination)
+  // Verify CS Separation (0% contamination: Marketer ≠ Employee and Merchant ≠ Employee)
   const empNames = db.prepare('SELECT LOWER(name) as name FROM employees').all().map(e => e.name);
   const merchantNames = db.prepare('SELECT LOWER(merchant_name) as name FROM merchants').all().map(m => m.name);
-  const marketerCodes = db.prepare('SELECT LOWER(affiliate_code) as code FROM marketers').all().map(m => m.code);
+  const marketerNames = db.prepare("SELECT LOWER(COALESCE(marketer_name, affiliate_name, '')) as name FROM marketers").all().map(m => m.name).filter(Boolean);
+  const marketerCodes = db.prepare("SELECT LOWER(COALESCE(affiliate_code, '')) as code FROM marketers").all().map(m => m.code).filter(Boolean);
 
   const contaminatedMerchants = merchantNames.filter(m => empNames.includes(m));
-  const contaminatedMarketers = marketerCodes.filter(m => empNames.includes(m));
+  const contaminatedMarketers = [...marketerNames, ...marketerCodes].filter(m => empNames.includes(m));
 
   return {
     report_type: 'data_quality',
@@ -885,12 +959,22 @@ export function generateDataQualityReport(opts = {}) {
     merchant_data_health: {
       total_merchants_registered: totalMerchantsCount,
       orders_missing_merchant: ordersMissingMerchant,
-      merchant_employee_contamination_count: contaminatedMerchants.length
+      orders_missing_merchant_code: ordersMissingMerchantCode,
+      merchant_code_without_name: merchantCodeWithoutName,
+      accounts_without_merchant: accountsWithoutMerchant,
+      merchant_employee_contamination_count: contaminatedMerchants.length,
+      is_cs_separated: contaminatedMerchants.length === 0
     },
     marketer_data_health: {
       total_marketers_registered: totalMarketersCount,
-      orders_missing_affiliate: ordersMissingAffiliate,
-      marketer_employee_contamination_count: contaminatedMarketers.length
+      orders_missing_affiliate_code: ordersMissingAffiliateCode,
+      orders_missing_marketer_name: ordersMissingMarketerName,
+      affiliate_code_without_marketer_name: affiliateCodeWithoutMarketerName,
+      marketer_name_without_affiliate_code: marketerNameWithoutAffiliateCode,
+      multi_names_for_same_affiliate_code: multiNamesQuery.length,
+      multi_name_details: multiNamesQuery,
+      marketer_employee_contamination_count: contaminatedMarketers.length,
+      is_cs_separated: contaminatedMarketers.length === 0
     }
   };
 }
@@ -907,25 +991,54 @@ export function generateMerchantReport(opts = {}) {
   const range = resolveDateRange(dateMode, targetDate, startDate, endDate);
   const placeholders = range.dates.map(() => '?').join(',');
 
-  let baseQuery = `
-    SELECT 
-      COALESCE(merchant_code, 'UNASSIGNED') as merchant_code,
-      COALESCE(merchant_name, account, 'Unknown Merchant') as merchant_name,
-      COUNT(*) as total_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%new%' OR LOWER(status) LIKE '%جديد%' THEN 1 ELSE 0 END) as new_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%pending%' OR LOWER(status) LIKE '%معلق%' THEN 1 ELSE 0 END) as pending_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%print%' OR LOWER(status) LIKE '%طباعة%' THEN 1 ELSE 0 END) as printed_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%cancel%' OR LOWER(status) LIKE '%ملغ%' THEN 1 ELSE 0 END) as cancelled_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%deliver%' OR LOWER(status) LIKE '%collect%' OR LOWER(status) LIKE '%استلام%' OR LOWER(status) LIKE '%تحصيل%' THEN 1 ELSE 0 END) as completed_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%process%' OR LOWER(status) LIKE '%تجهيز%' THEN 1 ELSE 0 END) as processing_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%ship%' OR LOWER(status) LIKE '%شحن%' THEN 1 ELSE 0 END) as shipped_orders,
-      COALESCE(SUM(total_price), 0) as total_value,
-      GROUP_CONCAT(DISTINCT account) as accounts_list,
-      COUNT(DISTINCT account) as accounts_count
-    FROM vendoor_orders
-    WHERE (business_date IN (${placeholders}) OR source_date IN (${placeholders}))
-  `;
-  const params = [...range.dates, ...range.dates];
+  // Check if vendoor_orders has data for this date range, else fallback to current_work_orders
+  const voCount = db.prepare(`SELECT COUNT(*) as c FROM vendoor_orders WHERE (business_date IN (${placeholders}) OR source_date IN (${placeholders}))`).get(...range.dates, ...range.dates)?.c || 0;
+  const useCwo = (voCount === 0);
+
+  let baseQuery = '';
+  let params = [];
+
+  if (useCwo) {
+    baseQuery = `
+      SELECT 
+        COALESCE(merchant_code, 'UNASSIGNED') as merchant_code,
+        COALESCE(merchant_name, account, 'Unknown Merchant') as merchant_name,
+        COUNT(*) as total_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%new%' OR LOWER(status) LIKE '%جديد%' THEN 1 ELSE 0 END) as new_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%pending%' OR LOWER(status) LIKE '%معلق%' THEN 1 ELSE 0 END) as pending_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%print%' OR LOWER(status) LIKE '%طباعة%' THEN 1 ELSE 0 END) as printed_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%cancel%' OR LOWER(status) LIKE '%ملغ%' THEN 1 ELSE 0 END) as cancelled_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%deliver%' OR LOWER(status) LIKE '%collect%' OR LOWER(status) LIKE '%استلام%' OR LOWER(status) LIKE '%تحصيل%' THEN 1 ELSE 0 END) as completed_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%process%' OR LOWER(status) LIKE '%تجهيز%' THEN 1 ELSE 0 END) as processing_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%ship%' OR LOWER(status) LIKE '%شحن%' THEN 1 ELSE 0 END) as shipped_orders,
+        0 as total_value,
+        GROUP_CONCAT(DISTINCT account) as accounts_list,
+        COUNT(DISTINCT account) as accounts_count
+      FROM current_work_orders
+      WHERE work_date IN (${placeholders})
+    `;
+    params = [...range.dates];
+  } else {
+    baseQuery = `
+      SELECT 
+        COALESCE(merchant_code, 'UNASSIGNED') as merchant_code,
+        COALESCE(merchant_name, account, 'Unknown Merchant') as merchant_name,
+        COUNT(*) as total_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%new%' OR LOWER(status) LIKE '%جديد%' THEN 1 ELSE 0 END) as new_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%pending%' OR LOWER(status) LIKE '%معلق%' THEN 1 ELSE 0 END) as pending_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%print%' OR LOWER(status) LIKE '%طباعة%' THEN 1 ELSE 0 END) as printed_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%cancel%' OR LOWER(status) LIKE '%ملغ%' THEN 1 ELSE 0 END) as cancelled_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%deliver%' OR LOWER(status) LIKE '%collect%' OR LOWER(status) LIKE '%استلام%' OR LOWER(status) LIKE '%تحصيل%' THEN 1 ELSE 0 END) as completed_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%process%' OR LOWER(status) LIKE '%تجهيز%' THEN 1 ELSE 0 END) as processing_orders,
+        SUM(CASE WHEN LOWER(status) LIKE '%ship%' OR LOWER(status) LIKE '%شحن%' THEN 1 ELSE 0 END) as shipped_orders,
+        COALESCE(SUM(total_price), 0) as total_value,
+        GROUP_CONCAT(DISTINCT account) as accounts_list,
+        COUNT(DISTINCT account) as accounts_count
+      FROM vendoor_orders
+      WHERE (business_date IN (${placeholders}) OR source_date IN (${placeholders}))
+    `;
+    params = [...range.dates, ...range.dates];
+  }
 
   if (filters.merchant_code && filters.merchant_code !== 'ALL') {
     baseQuery += ` AND merchant_code = ?`;
@@ -967,7 +1080,7 @@ export function generateMerchantReport(opts = {}) {
     overallValue += r.total_value || 0;
 
     return {
-      merchant_code: r.merchant_code,
+      merchant_code: r.merchant_code !== 'UNASSIGNED' ? r.merchant_code : null,
       merchant_name: r.merchant_name,
       total_orders: total,
       new_orders: r.new_orders || 0,
@@ -1012,6 +1125,12 @@ export function generateMerchantReport(opts = {}) {
 
 /**
  * 11. Marketer / Affiliate Intelligence Report
+ *
+ * CRITICAL RULE:
+ * - Marketer Name comes directly from Vendoor column "اسم المسوق"
+ * - Affiliate Code is used as the technical identifier
+ * - Name is NEVER synthesized or derived from the code
+ * - Marketer is NEVER an employee (Strict CS employee isolation)
  */
 export function generateMarketerReport(opts = {}) {
   const dateMode = opts.dateMode || opts.date_mode || 'day';
@@ -1022,37 +1141,110 @@ export function generateMarketerReport(opts = {}) {
   const range = resolveDateRange(dateMode, targetDate, startDate, endDate);
   const placeholders = range.dates.map(() => '?').join(',');
 
-  let baseQuery = `
-    SELECT 
-      COALESCE(affiliate_code, 'UNASSIGNED') as affiliate_code,
-      COALESCE(affiliate_name, 'Unknown / Not Available') as affiliate_name,
-      COUNT(*) as total_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%new%' OR LOWER(status) LIKE '%جديد%' THEN 1 ELSE 0 END) as new_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%pending%' OR LOWER(status) LIKE '%معلق%' THEN 1 ELSE 0 END) as pending_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%print%' OR LOWER(status) LIKE '%طباعة%' THEN 1 ELSE 0 END) as printed_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%cancel%' OR LOWER(status) LIKE '%ملغ%' THEN 1 ELSE 0 END) as cancelled_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%deliver%' OR LOWER(status) LIKE '%collect%' OR LOWER(status) LIKE '%استلام%' OR LOWER(status) LIKE '%تحصيل%' THEN 1 ELSE 0 END) as completed_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%process%' OR LOWER(status) LIKE '%تجهيز%' THEN 1 ELSE 0 END) as processing_orders,
-      SUM(CASE WHEN LOWER(status) LIKE '%ship%' OR LOWER(status) LIKE '%شحن%' THEN 1 ELSE 0 END) as shipped_orders,
-      COALESCE(SUM(total_price), 0) as total_value,
-      GROUP_CONCAT(DISTINCT merchant_name) as merchants_list,
-      COUNT(DISTINCT merchant_code) as merchants_count,
-      COUNT(DISTINCT account) as accounts_count
-    FROM vendoor_orders
-    WHERE (business_date IN (${placeholders}) OR source_date IN (${placeholders}))
-  `;
-  const params = [...range.dates, ...range.dates];
+  // Check if vendoor_orders has data for this date range, else fallback to current_work_orders
+  const voCount = db.prepare(`SELECT COUNT(*) as c FROM vendoor_orders WHERE (business_date IN (${placeholders}) OR source_date IN (${placeholders}))`).get(...range.dates, ...range.dates)?.c || 0;
+  const useCwo = (voCount === 0);
 
-  if (filters.affiliate_code && filters.affiliate_code !== 'ALL') {
-    baseQuery += ` AND affiliate_code = ?`;
-    params.push(filters.affiliate_code);
-  }
-  if (filters.search) {
-    baseQuery += ` AND (affiliate_code LIKE ? OR affiliate_name LIKE ? OR merchant_name LIKE ? OR account LIKE ?)`;
-    params.push(`%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`);
-  }
+  let baseQuery = '';
+  let params = [];
 
-  baseQuery += ` GROUP BY COALESCE(affiliate_code, 'UNASSIGNED'), COALESCE(affiliate_name, 'Unknown / Not Available') ORDER BY total_orders DESC`;
+  if (useCwo) {
+    baseQuery = `
+      SELECT 
+        COALESCE(cwo.marketer_name, m.marketer_name, m.affiliate_name) as raw_marketer_name,
+        cwo.affiliate_code,
+        COUNT(*) as total_orders,
+        SUM(CASE WHEN LOWER(cwo.status) LIKE '%new%' OR LOWER(cwo.status) LIKE '%جديد%' THEN 1 ELSE 0 END) as new_orders,
+        SUM(CASE WHEN LOWER(cwo.status) LIKE '%pending%' OR LOWER(cwo.status) LIKE '%معلق%' THEN 1 ELSE 0 END) as pending_orders,
+        SUM(CASE WHEN LOWER(cwo.status) LIKE '%print%' OR LOWER(cwo.status) LIKE '%طباعة%' THEN 1 ELSE 0 END) as printed_orders,
+        SUM(CASE WHEN LOWER(cwo.status) LIKE '%cancel%' OR LOWER(cwo.status) LIKE '%ملغ%' THEN 1 ELSE 0 END) as cancelled_orders,
+        SUM(CASE WHEN LOWER(cwo.status) LIKE '%deliver%' OR LOWER(cwo.status) LIKE '%collect%' OR LOWER(cwo.status) LIKE '%استلام%' OR LOWER(cwo.status) LIKE '%تحصيل%' THEN 1 ELSE 0 END) as completed_orders,
+        SUM(CASE WHEN LOWER(cwo.status) LIKE '%process%' OR LOWER(cwo.status) LIKE '%تجهيز%' THEN 1 ELSE 0 END) as processing_orders,
+        SUM(CASE WHEN LOWER(cwo.status) LIKE '%ship%' OR LOWER(cwo.status) LIKE '%شحن%' THEN 1 ELSE 0 END) as shipped_orders,
+        0 as total_value,
+        GROUP_CONCAT(DISTINCT cwo.merchant_name) as merchants_list,
+        COUNT(DISTINCT cwo.merchant_code) as merchants_count,
+        GROUP_CONCAT(DISTINCT cwo.account) as accounts_list,
+        COUNT(DISTINCT cwo.account) as accounts_count
+      FROM current_work_orders cwo
+      LEFT JOIN (
+        SELECT affiliate_code, MAX(marketer_name) as marketer_name, MAX(affiliate_name) as affiliate_name
+        FROM marketers
+        WHERE affiliate_code IS NOT NULL
+        GROUP BY affiliate_code
+      ) m ON m.affiliate_code = cwo.affiliate_code
+      WHERE cwo.work_date IN (${placeholders})
+    `;
+    params = [...range.dates];
+
+    if (filters.affiliate_code && filters.affiliate_code !== 'ALL') {
+      baseQuery += ` AND cwo.affiliate_code = ?`;
+      params.push(filters.affiliate_code);
+    }
+    if (filters.marketer_name && filters.marketer_name !== 'ALL') {
+      baseQuery += ` AND (cwo.marketer_name LIKE ? OR m.marketer_name LIKE ?)`;
+      params.push(`%${filters.marketer_name}%`, `%${filters.marketer_name}%`);
+    }
+    if (filters.search) {
+      baseQuery += ` AND (cwo.affiliate_code LIKE ? OR cwo.marketer_name LIKE ? OR m.marketer_name LIKE ? OR cwo.merchant_name LIKE ? OR cwo.account LIKE ?)`;
+      params.push(`%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`);
+    }
+
+    baseQuery += ` 
+      GROUP BY 
+        COALESCE(cwo.marketer_name, m.marketer_name, m.affiliate_name, '__NO_NAME__'),
+        COALESCE(cwo.affiliate_code, '__NO_CODE__')
+      ORDER BY total_orders DESC
+    `;
+  } else {
+    baseQuery = `
+      SELECT 
+        COALESCE(vo.marketer_name, vo.affiliate_name, m.marketer_name, m.affiliate_name) as raw_marketer_name,
+        vo.affiliate_code as affiliate_code,
+        COUNT(*) as total_orders,
+        SUM(CASE WHEN LOWER(vo.status) LIKE '%new%' OR LOWER(vo.status) LIKE '%جديد%' THEN 1 ELSE 0 END) as new_orders,
+        SUM(CASE WHEN LOWER(vo.status) LIKE '%pending%' OR LOWER(vo.status) LIKE '%معلق%' THEN 1 ELSE 0 END) as pending_orders,
+        SUM(CASE WHEN LOWER(vo.status) LIKE '%print%' OR LOWER(vo.status) LIKE '%طباعة%' THEN 1 ELSE 0 END) as printed_orders,
+        SUM(CASE WHEN LOWER(vo.status) LIKE '%cancel%' OR LOWER(vo.status) LIKE '%ملغ%' THEN 1 ELSE 0 END) as cancelled_orders,
+        SUM(CASE WHEN LOWER(vo.status) LIKE '%deliver%' OR LOWER(vo.status) LIKE '%collect%' OR LOWER(vo.status) LIKE '%استلام%' OR LOWER(vo.status) LIKE '%تحصيل%' THEN 1 ELSE 0 END) as completed_orders,
+        SUM(CASE WHEN LOWER(vo.status) LIKE '%process%' OR LOWER(vo.status) LIKE '%تجهيز%' THEN 1 ELSE 0 END) as processing_orders,
+        SUM(CASE WHEN LOWER(vo.status) LIKE '%ship%' OR LOWER(vo.status) LIKE '%شحن%' THEN 1 ELSE 0 END) as shipped_orders,
+        COALESCE(SUM(vo.total_price), 0) as total_value,
+        GROUP_CONCAT(DISTINCT vo.merchant_name) as merchants_list,
+        COUNT(DISTINCT vo.merchant_code) as merchants_count,
+        GROUP_CONCAT(DISTINCT vo.account) as accounts_list,
+        COUNT(DISTINCT vo.account) as accounts_count
+      FROM vendoor_orders vo
+      LEFT JOIN (
+        SELECT affiliate_code, MAX(marketer_name) as marketer_name, MAX(affiliate_name) as affiliate_name
+        FROM marketers
+        WHERE affiliate_code IS NOT NULL
+        GROUP BY affiliate_code
+      ) m ON m.affiliate_code = vo.affiliate_code
+      WHERE (vo.business_date IN (${placeholders}) OR vo.source_date IN (${placeholders}))
+    `;
+    params = [...range.dates, ...range.dates];
+
+    if (filters.affiliate_code && filters.affiliate_code !== 'ALL') {
+      baseQuery += ` AND vo.affiliate_code = ?`;
+      params.push(filters.affiliate_code);
+    }
+    if (filters.marketer_name && filters.marketer_name !== 'ALL') {
+      baseQuery += ` AND (vo.marketer_name LIKE ? OR vo.affiliate_name LIKE ? OR m.marketer_name LIKE ?)`;
+      params.push(`%${filters.marketer_name}%`, `%${filters.marketer_name}%`, `%${filters.marketer_name}%`);
+    }
+    if (filters.search) {
+      baseQuery += ` AND (vo.affiliate_code LIKE ? OR vo.marketer_name LIKE ? OR vo.affiliate_name LIKE ? OR m.marketer_name LIKE ? OR vo.merchant_name LIKE ? OR vo.account LIKE ?)`;
+      params.push(`%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`);
+    }
+
+    baseQuery += ` 
+      GROUP BY 
+        COALESCE(vo.marketer_name, vo.affiliate_name, m.marketer_name, m.affiliate_name, '__NO_NAME__'),
+        COALESCE(vo.affiliate_code, '__NO_CODE__')
+      ORDER BY total_orders DESC
+    `;
+  }
 
   const rows = db.prepare(baseQuery).all(...params);
 
@@ -1069,6 +1261,7 @@ export function generateMarketerReport(opts = {}) {
     const cancelled = r.cancelled_orders || 0;
     const cancelRate = total > 0 ? Number(((cancelled / total) * 100).toFixed(1)) : 0;
     const merchantsArr = r.merchants_list ? r.merchants_list.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const accountsArr = r.accounts_list ? r.accounts_list.split(',').map(s => s.trim()).filter(Boolean) : [];
 
     overallTotalOrders += total;
     overallNewOrders += r.new_orders || 0;
@@ -1078,9 +1271,15 @@ export function generateMarketerReport(opts = {}) {
     overallCompletedOrders += r.completed_orders || 0;
     overallValue += r.total_value || 0;
 
+    const mktName = r.raw_marketer_name && r.raw_marketer_name !== '__NO_NAME__' ? r.raw_marketer_name : null;
+    const affCode = r.affiliate_code && r.affiliate_code !== '__NO_CODE__' ? r.affiliate_code : null;
+
     return {
-      affiliate_code: r.affiliate_code,
-      affiliate_name: r.affiliate_name,
+      marketer_name: mktName,
+      affiliate_code: affCode,
+      affiliate_name: mktName, // Backward-compatibility
+      has_marketer_name: Boolean(mktName),
+      has_affiliate_code: Boolean(affCode),
       total_orders: total,
       new_orders: r.new_orders || 0,
       pending_orders: r.pending_orders || 0,
@@ -1093,7 +1292,8 @@ export function generateMarketerReport(opts = {}) {
       cancellation_rate: cancelRate,
       merchants_count: r.merchants_count || merchantsArr.length,
       linked_merchants: merchantsArr,
-      accounts_count: r.accounts_count || 0
+      accounts_count: r.accounts_count || accountsArr.length,
+      linked_accounts: accountsArr
     };
   });
 
@@ -1109,6 +1309,8 @@ export function generateMarketerReport(opts = {}) {
     filters,
     summary: {
       total_marketers: formattedRows.length,
+      marketers_with_name: formattedRows.filter(r => r.marketer_name).length,
+      marketers_missing_name: formattedRows.filter(r => !r.marketer_name).length,
       total_orders: overallTotalOrders,
       new_orders: overallNewOrders,
       pending_orders: overallPendingOrders,
@@ -1119,6 +1321,93 @@ export function generateMarketerReport(opts = {}) {
       overall_cancellation_rate: overallCancellationRate
     },
     total_marketers: formattedRows.length,
+    rows: formattedRows
+  };
+}
+
+/**
+ * 10. Phone Match Alerts Report
+ */
+export function generatePhoneAlertsReport(opts = {}) {
+  const dateMode = opts.dateMode || opts.date_mode || 'day';
+  const targetDate = opts.targetDate || opts.target_date;
+  const startDate = opts.startDate || opts.start_date;
+  const endDate = opts.endDate || opts.end_date;
+  const filters = opts.filters || opts;
+  const range = resolveDateRange(dateMode, targetDate, startDate, endDate);
+  const placeholders = range.dates.map(() => '?').join(',');
+
+  ensurePhoneAlertsTable(db);
+  scanAndRecordPhoneMatches(db, { work_date: range.endDate });
+
+  let query = `
+    SELECT 
+      id,
+      work_date,
+      order_code,
+      employee_id,
+      employee_name,
+      phone_a_raw,
+      phone_b_raw,
+      phone_a_normalized,
+      phone_b_normalized,
+      alert_type,
+      status,
+      source,
+      details_json,
+      created_at
+    FROM phone_match_alerts
+    WHERE work_date IN (${placeholders})
+  `;
+  const params = [...range.dates];
+
+  if (filters.employee_name && filters.employee_name !== 'ALL') {
+    query += ' AND employee_name = ?';
+    params.push(filters.employee_name);
+  }
+  if (filters.employee_id) {
+    query += ' AND employee_id = ?';
+    params.push(parseInt(filters.employee_id, 10));
+  }
+  if (filters.order_code) {
+    query += ' AND order_code LIKE ?';
+    params.push(`%${filters.order_code}%`);
+  }
+
+  query += ' ORDER BY work_date DESC, id DESC LIMIT 500';
+
+  const rows = db.prepare(query).all(...params);
+
+  const formattedRows = rows.map(r => {
+    let details = {};
+    try { details = JSON.parse(r.details_json || '{}'); } catch (_) {}
+    return {
+      id: r.id,
+      work_date: r.work_date,
+      order_code: r.order_code,
+      employee_id: r.employee_id,
+      employee_name: r.employee_name,
+      phone_a_raw: r.phone_a_raw,
+      phone_b_raw: r.phone_b_raw,
+      phone_a_normalized: r.phone_a_normalized,
+      phone_b_normalized: r.phone_b_normalized,
+      alert_type: r.alert_type,
+      status: r.status || 'REVIEW_REQUIRED',
+      source: r.source,
+      customer_name: details.customer_name || '',
+      account: details.account || '',
+      total_price: details.total_price || 0,
+      created_at: r.created_at
+    };
+  });
+
+  return {
+    report_type: 'phone_alerts',
+    date_mode: range.dateMode,
+    start_date: range.startDate,
+    end_date: range.endDate,
+    filters,
+    total_alerts: formattedRows.length,
     rows: formattedRows
   };
 }

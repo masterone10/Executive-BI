@@ -23,8 +23,8 @@ describe('Merchant & Marketer Integration & Forensic Audit Suite', () => {
     `);
 
     const insMarketer = db.prepare(`
-      INSERT OR REPLACE INTO marketers (affiliate_code, affiliate_name, updated_at)
-      VALUES (?, ?, datetime('now'))
+      INSERT OR REPLACE INTO marketers (marketer_name, affiliate_code, affiliate_name, updated_at)
+      VALUES (?, ?, ?, datetime('now'))
     `);
 
     const insMapping = db.prepare(`
@@ -33,30 +33,30 @@ describe('Merchant & Marketer Integration & Forensic Audit Suite', () => {
     `);
 
     const testOrders = [
-      { code: 'TST-101', status: 'New', acc: 'Alpha Merchant', mCode: '9001', mName: 'Alpha Store', affCode: 've1001', affName: 'Affiliate Ali', price: 500 },
-      { code: 'TST-102', status: 'Pending', acc: 'Alpha Merchant', mCode: '9001', mName: 'Alpha Store', affCode: 've1001', affName: 'Affiliate Ali', price: 300 },
-      { code: 'TST-103', status: 'Canceled', acc: 'Beta Trade', mCode: '9002', mName: 'Beta Goods', affCode: 've1002', affName: 'Affiliate Nour', price: 700 },
-      { code: 'TST-104', status: 'Printed', acc: 'Beta Trade', mCode: '9002', mName: 'Beta Goods', affCode: 've1001', affName: 'Affiliate Ali', price: 400 }
+      { code: 'TST-101', status: 'New', acc: 'Alpha Merchant', mCode: '9001', mName: 'Alpha Store', affCode: 've1001', mktName: 'مسوق أحمد علي', price: 500 },
+      { code: 'TST-102', status: 'Pending', acc: 'Alpha Merchant', mCode: '9001', mName: 'Alpha Store', affCode: 've1001', mktName: 'مسوق أحمد علي', price: 300 },
+      { code: 'TST-103', status: 'Canceled', acc: 'Beta Trade', mCode: '9002', mName: 'Beta Goods', affCode: 've1002', mktName: 'مسوقة نور خالد', price: 700 },
+      { code: 'TST-104', status: 'Printed', acc: 'Beta Trade', mCode: '9002', mName: 'Beta Goods', affCode: 've1001', mktName: 'مسوق أحمد علي', price: 400 }
     ];
 
     for (const t of testOrders) {
       insOrder.run(
-        t.code, t.status, t.status, t.acc, t.mCode, t.mName, t.affCode, t.affName,
-        testDate, testDate, t.price, JSON.stringify(t)
+        t.code, t.status, t.status, t.acc, t.mCode, t.mName, t.affCode, t.mktName,
+        testDate, testDate, t.price, JSON.stringify({ ...t, 'اسم المسوق': t.mktName, 'الافيليت كود': t.affCode })
       );
       insMerchant.run(t.mCode, t.mName);
-      insMarketer.run(t.affCode, t.affName);
+      insMarketer.run(t.mktName, t.affCode, t.mktName);
       insMapping.run(t.mCode, t.acc);
     }
   });
 
-  it('1. Normalize Vendoor Order extracts canonical merchant and affiliate identities', () => {
+  it('1. Normalize Vendoor Order extracts canonical merchant and marketer identities from Vendoor payload', () => {
     const rawOrder = {
       order_code: 'TEST-ORD-999',
       merchant_name: 'Alpha Traders',
       merchant_code: '98765',
-      affiliate_code: 've99112',
-      affiliate_name: 'Marketer Karim',
+      'الافيليت كود': 've99112',
+      'اسم المسوق': 'كريم المسوق',
       status: 'New',
       grand_total: 450.50,
       created_at: '2026-09-29 10:00:00'
@@ -67,12 +67,12 @@ describe('Merchant & Marketer Integration & Forensic Audit Suite', () => {
     assert.strictEqual(norm.merchant_name, 'Alpha Traders');
     assert.strictEqual(norm.merchant_code, '98765');
     assert.strictEqual(norm.affiliate_code, 've99112');
-    assert.strictEqual(norm.affiliate_name, 'Marketer Karim');
+    assert.strictEqual(norm.marketer_name, 'كريم المسوق');
     assert.strictEqual(norm.status, 'New');
     assert.strictEqual(norm.total_price, 450.50);
   });
 
-  it('2. Normalization handles missing affiliate and merchant gracefully', () => {
+  it('2. Normalization handles missing affiliate and merchant gracefully without fabricating names', () => {
     const rawOrder = {
       order_code: 'TEST-ORD-888',
       status: 'Pending',
@@ -83,7 +83,7 @@ describe('Merchant & Marketer Integration & Forensic Audit Suite', () => {
     assert.strictEqual(norm.order_code, 'TEST-ORD-888');
     assert.strictEqual(norm.merchant_code, null);
     assert.strictEqual(norm.affiliate_code, null);
-    assert.strictEqual(norm.affiliate_name, null);
+    assert.strictEqual(norm.marketer_name, null);
   });
 
   it('3. Merchants and Marketers master tables persist real entities in SQLite', () => {

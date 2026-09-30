@@ -153,12 +153,18 @@ import {
   generateSystemHealthReport,
   generateMerchantReport,
   generateMarketerReport,
+  generatePhoneAlertsReport,
   exportReportToCSV,
   exportReportToExcel,
   saveReportRecord,
   getReportHistory,
   getReportById
 } from './services/reports.js';
+import {
+  getEmployeeEvaluation,
+  getPhoneMatchAlerts,
+  getEmployeeEvaluationDetail
+} from './services/employee_evaluation.js';
 import {
   getEmployeeLifecycleProfile,
   getEmployeeActiveOrders,
@@ -1384,14 +1390,24 @@ app.post(['/api/allocations/:date/generate', '/api/allocations/generate', '/api/
  */
 app.post(['/api/allocations/:date/reallocate', '/api/allocations/reallocate', '/api/allocation/reallocate'], (req, res) => {
   const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
-  const { method, max_capacity_per_employee, max_capacity, round_number } = req.body || {};
+  const { method, max_capacity_per_employee, max_capacity, round_number, use_legacy } = req.body || {};
   try {
-    const result = reallocateWorkOrders(date, {
-      method,
-      max_capacity_per_employee: max_capacity_per_employee || max_capacity || 40,
-      round_number,
-      ...req.body
-    });
+    let result;
+    if (use_legacy === true) {
+      result = reallocateWorkOrders(date, {
+        method,
+        max_capacity_per_employee: max_capacity_per_employee || max_capacity || 40,
+        round_number,
+        ...req.body
+      });
+    } else {
+      result = executeEnterpriseAllocation(date, {
+        mode: 'ACTIVE',
+        isReallocate: true,
+        trigger: 'REALLOCATE_EVENT',
+        ...req.body
+      });
+    }
     res.json(result);
   } catch (err) {
     console.error('Error reallocating orders:', err);
@@ -3464,6 +3480,53 @@ app.get('/api/reports/system-health', (req, res) => {
   }
 });
 
+app.get('/api/employee-evaluation', (req, res) => {
+  try {
+    const result = getEmployeeEvaluation(req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/employee-evaluation/:id', (req, res) => {
+  try {
+    const detail = getEmployeeEvaluationDetail(parseInt(req.params.id, 10), req.query);
+    if (!detail) return res.status(404).json({ error: 'Employee not found' });
+    res.json(detail);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/phone-match-alerts', (req, res) => {
+  try {
+    const result = getPhoneMatchAlerts(req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/reports/phone-alerts', (req, res) => {
+  try {
+    const report = generatePhoneAlertsReport(req.query);
+    saveReportRecord({
+      reportType: 'phone_alerts',
+      dateMode: report.date_mode,
+      startDate: report.start_date,
+      endDate: report.end_date,
+      filters: req.query,
+      generatedBy: req.query.generated_by || 'Supervisor',
+      rowCount: report.total_alerts,
+      reportData: report
+    });
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/reports/history', (req, res) => {
   try {
     const limit = parseInt(req.query.limit, 10) || 50;
@@ -3515,6 +3578,10 @@ app.get('/api/reports/export/:format', (req, res) => {
       case 'marketer':
       case 'affiliate':
         data = generateMarketerReport(req.query);
+        break;
+      case 'phone_alerts':
+      case 'phone_match_alerts':
+        data = generatePhoneAlertsReport(req.query);
         break;
       default:
         return res.status(400).json({ error: `Unknown report type: ${type}` });

@@ -437,10 +437,13 @@ CREATE TABLE IF NOT EXISTS merchants (
 );
 
 CREATE TABLE IF NOT EXISTS marketers (
-  affiliate_code TEXT PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  marketer_name TEXT,
+  affiliate_code TEXT,
   affiliate_name TEXT,
   created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now'))
+  updated_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(marketer_name, affiliate_code)
 );
 
 CREATE TABLE IF NOT EXISTS merchant_account_mappings (
@@ -460,6 +463,7 @@ CREATE TABLE IF NOT EXISTS vendoor_orders (
   merchant_name TEXT,
   affiliate_code TEXT,
   affiliate_name TEXT,
+  marketer_name TEXT,
   source_date TEXT,
   business_date TEXT,
   active_status TEXT,
@@ -565,6 +569,10 @@ CREATE INDEX IF NOT EXISTS idx_raw_logs_emp_date ON raw_log_records(employee_nam
 CREATE INDEX IF NOT EXISTS idx_vendoor_logs_lookup ON vendoor_logs(order_code, employee_name, timestamp_str, action);
 CREATE INDEX IF NOT EXISTS idx_vendoor_logs_workdate ON vendoor_logs(work_date);
 CREATE INDEX IF NOT EXISTS idx_vendoor_orders_date ON vendoor_orders(source_date);
+CREATE INDEX IF NOT EXISTS idx_vendoor_orders_mcode ON vendoor_orders(merchant_code);
+CREATE INDEX IF NOT EXISTS idx_vendoor_orders_mname ON vendoor_orders(merchant_name);
+CREATE INDEX IF NOT EXISTS idx_vendoor_orders_affcode ON vendoor_orders(affiliate_code);
+CREATE INDEX IF NOT EXISTS idx_vendoor_orders_mktname ON vendoor_orders(marketer_name);
 CREATE INDEX IF NOT EXISTS idx_cwo_date_code ON current_work_orders(work_date, order_code);
 CREATE INDEX IF NOT EXISTS idx_sync_runs_res_date ON vendoor_sync_runs(resource, start_date, end_date, status);
 

@@ -125,9 +125,30 @@ export function runMigrations(database = db) {
       CREATE INDEX IF NOT EXISTS idx_review_queue_date ON order_review_queue(work_date);
       CREATE INDEX IF NOT EXISTS idx_review_queue_status ON order_review_queue(review_status);
       CREATE INDEX IF NOT EXISTS idx_review_queue_emp ON order_review_queue(previous_employee_id);
+
+      CREATE TABLE IF NOT EXISTS phone_match_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        work_date TEXT NOT NULL,
+        order_code TEXT NOT NULL,
+        employee_id INTEGER,
+        employee_name TEXT NOT NULL,
+        phone_a_raw TEXT,
+        phone_b_raw TEXT,
+        phone_a_normalized TEXT,
+        phone_b_normalized TEXT,
+        alert_type TEXT DEFAULT 'PHONE_DUPLICATED_IN_BOTH_FIELDS',
+        status TEXT DEFAULT 'REVIEW_REQUIRED',
+        source TEXT DEFAULT 'VENDOOR_SYNC',
+        details_json TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(work_date, order_code, employee_name, alert_type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_phone_alerts_date ON phone_match_alerts(work_date);
+      CREATE INDEX IF NOT EXISTS idx_phone_alerts_emp ON phone_match_alerts(employee_name);
+      CREATE INDEX IF NOT EXISTS idx_phone_alerts_order ON phone_match_alerts(order_code);
     `);
   } catch (e) {
-    console.warn('Migration for employee_lifecycle_audit & order_review_queue:', e.message);
+    console.warn('Migration for employee_lifecycle_audit, order_review_queue & phone_match_alerts:', e.message);
   }
 
   // Safe table migration: Ensure daily_working_team has real-time tracking fields
@@ -744,7 +765,7 @@ export function runMigrations(database = db) {
     console.warn('Migration for Vendoor Phase 2/3 tables:', e.message);
   }
 
-  // Safe table migration: Ensure vendoor_orders has merchant_code, merchant_name, affiliate_code, affiliate_name, business_date, active_status, is_active, last_synced_at, created_at_original
+  // Safe table migration: Ensure vendoor_orders has merchant_code, merchant_name, affiliate_code, affiliate_name, marketer_name, business_date, active_status, is_active, last_synced_at, created_at_original
   try {
     const vCols = database.prepare("PRAGMA table_info(vendoor_orders)").all();
     if (vCols.length > 0) {
@@ -759,6 +780,9 @@ export function runMigrations(database = db) {
       }
       if (!vCols.some(c => c.name === 'affiliate_name')) {
         database.exec("ALTER TABLE vendoor_orders ADD COLUMN affiliate_name TEXT");
+      }
+      if (!vCols.some(c => c.name === 'marketer_name')) {
+        database.exec("ALTER TABLE vendoor_orders ADD COLUMN marketer_name TEXT");
       }
       if (!vCols.some(c => c.name === 'business_date')) {
         database.exec("ALTER TABLE vendoor_orders ADD COLUMN business_date TEXT");
@@ -781,13 +805,14 @@ export function runMigrations(database = db) {
         CREATE INDEX IF NOT EXISTS idx_vo_merchant_code ON vendoor_orders(merchant_code);
         CREATE INDEX IF NOT EXISTS idx_vo_merchant_name ON vendoor_orders(merchant_name);
         CREATE INDEX IF NOT EXISTS idx_vo_affiliate_code ON vendoor_orders(affiliate_code);
+        CREATE INDEX IF NOT EXISTS idx_vo_marketer_name ON vendoor_orders(marketer_name);
       `);
     }
   } catch (e) {
     // Ignored
   }
 
-  // Safe table migration: Ensure current_work_orders has merchant_name and affiliate_code
+  // Safe table migration: Ensure current_work_orders has merchant_name, affiliate_code, marketer_name
   try {
     const cwCols = database.prepare("PRAGMA table_info(current_work_orders)").all();
     if (cwCols.length > 0) {
@@ -797,8 +822,12 @@ export function runMigrations(database = db) {
       if (!cwCols.some(c => c.name === 'affiliate_code')) {
         database.exec("ALTER TABLE current_work_orders ADD COLUMN affiliate_code TEXT");
       }
+      if (!cwCols.some(c => c.name === 'marketer_name')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN marketer_name TEXT");
+      }
       database.exec(`
         CREATE INDEX IF NOT EXISTS idx_cwo_affiliate ON current_work_orders(affiliate_code);
+        CREATE INDEX IF NOT EXISTS idx_cwo_marketer ON current_work_orders(marketer_name);
       `);
     }
   } catch (e) {
@@ -807,6 +836,37 @@ export function runMigrations(database = db) {
 
   // Safe table migration: Create merchants, marketers, and merchant_account_mappings master tables
   try {
+    // Ensure marketers table has proper multi-column uniqueness and autoincrement ID
+    try {
+      const mktCols = database.prepare("PRAGMA table_info(marketers)").all();
+      const hasIdPk = mktCols.some(c => c.name === 'id' && c.pk === 1);
+      if (mktCols.length > 0 && !hasIdPk) {
+        database.exec(`
+          CREATE TABLE IF NOT EXISTS marketers_temp (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            marketer_name TEXT,
+            affiliate_code TEXT,
+            affiliate_name TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(marketer_name, affiliate_code)
+          );
+          INSERT OR IGNORE INTO marketers_temp (marketer_name, affiliate_code, affiliate_name, created_at, updated_at)
+          SELECT 
+            COALESCE(marketer_name, affiliate_name) as marketer_name,
+            affiliate_code,
+            affiliate_name,
+            COALESCE(created_at, datetime('now')),
+            COALESCE(updated_at, datetime('now'))
+          FROM marketers;
+          DROP TABLE marketers;
+          ALTER TABLE marketers_temp RENAME TO marketers;
+        `);
+      }
+    } catch (e) {
+      // Fallback table creation
+    }
+
     database.exec(`
       CREATE TABLE IF NOT EXISTS merchants (
         merchant_code TEXT PRIMARY KEY,
@@ -816,10 +876,13 @@ export function runMigrations(database = db) {
       );
 
       CREATE TABLE IF NOT EXISTS marketers (
-        affiliate_code TEXT PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        marketer_name TEXT,
+        affiliate_code TEXT,
         affiliate_name TEXT,
         created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(marketer_name, affiliate_code)
       );
 
       CREATE TABLE IF NOT EXISTS merchant_account_mappings (
@@ -832,29 +895,45 @@ export function runMigrations(database = db) {
 
       CREATE INDEX IF NOT EXISTS idx_mam_merchant ON merchant_account_mappings(merchant_code);
       CREATE INDEX IF NOT EXISTS idx_mam_account ON merchant_account_mappings(account);
+      CREATE INDEX IF NOT EXISTS idx_marketers_name ON marketers(marketer_name);
+      CREATE INDEX IF NOT EXISTS idx_marketers_affcode ON marketers(affiliate_code);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_marketers_affcode_uniq ON marketers(affiliate_code);
     `);
 
-    // Safe idempotent backfill of existing orders
-    const needsBackfill = database.prepare(`
-      SELECT count(*) as c FROM vendoor_orders 
-      WHERE (merchant_name IS NULL OR affiliate_code IS NULL) AND raw_payload_json IS NOT NULL
-    `).get()?.c || 0;
+    // Clean up duplicate marketer rows if any
+    try {
+      database.exec(`
+        DELETE FROM marketers
+        WHERE id NOT IN (
+          SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (
+              PARTITION BY affiliate_code 
+              ORDER BY (CASE WHEN marketer_name IS NOT NULL AND marketer_name != '' THEN 1 ELSE 2 END), id DESC
+            ) as rn
+            FROM marketers
+            WHERE affiliate_code IS NOT NULL
+          ) WHERE rn = 1
+          UNION
+          SELECT MIN(id) FROM marketers WHERE affiliate_code IS NULL GROUP BY marketer_name
+        );
+      `);
+    } catch (_) {}
 
-    if (needsBackfill > 0) {
-      const ordersToBackfill = database.prepare(`
-        SELECT id, order_code, account, merchant_code, raw_payload_json 
-        FROM vendoor_orders 
-        WHERE (merchant_name IS NULL OR affiliate_code IS NULL) AND raw_payload_json IS NOT NULL
-      `).all();
+    // Safe, deterministic backfill of existing orders
+    const allOrders = database.prepare(`
+      SELECT id, order_code, account, merchant_code, merchant_name, affiliate_code, affiliate_name, marketer_name, raw_payload_json 
+      FROM vendoor_orders
+    `).all();
 
+    if (allOrders.length > 0) {
       const updateOrderStmt = database.prepare(`
         UPDATE vendoor_orders
-        SET merchant_name = ?, merchant_code = ?, affiliate_code = ?, affiliate_name = ?
+        SET merchant_name = ?, merchant_code = ?, affiliate_code = ?, affiliate_name = ?, marketer_name = ?
         WHERE id = ?
       `);
       const updateCwoStmt = database.prepare(`
         UPDATE current_work_orders
-        SET merchant_name = ?, merchant_code = ?, affiliate_code = ?
+        SET merchant_name = ?, merchant_code = ?, affiliate_code = ?, marketer_name = ?
         WHERE order_code = ?
       `);
       const upsertMerchantStmt = database.prepare(`
@@ -865,10 +944,11 @@ export function runMigrations(database = db) {
           updated_at = datetime('now')
       `);
       const upsertMarketerStmt = database.prepare(`
-        INSERT INTO marketers (affiliate_code, affiliate_name, updated_at)
-        VALUES (?, ?, datetime('now'))
+        INSERT INTO marketers (affiliate_code, marketer_name, affiliate_name, updated_at)
+        VALUES (?, ?, ?, datetime('now'))
         ON CONFLICT(affiliate_code) DO UPDATE SET
-          affiliate_name = COALESCE(excluded.affiliate_name, marketers.affiliate_name),
+          marketer_name = CASE WHEN excluded.marketer_name IS NOT NULL AND excluded.marketer_name != '' THEN excluded.marketer_name ELSE marketers.marketer_name END,
+          affiliate_name = CASE WHEN excluded.affiliate_name IS NOT NULL AND excluded.affiliate_name != '' THEN excluded.affiliate_name ELSE marketers.affiliate_name END,
           updated_at = datetime('now')
       `);
       const upsertMappingStmt = database.prepare(`
@@ -877,24 +957,37 @@ export function runMigrations(database = db) {
       `);
 
       const tx = database.transaction(() => {
-        for (const o of ordersToBackfill) {
-          let mName = o.account || 'Unassigned';
+        for (const o of allOrders) {
+          let mName = o.merchant_name || o.account || 'Unassigned';
           let mCode = o.merchant_code || null;
-          let affCode = null;
-          let affName = null;
+          let affCode = o.affiliate_code || null;
+          let mktName = o.marketer_name || o.affiliate_name || null;
 
           if (o.raw_payload_json) {
             try {
               const p = JSON.parse(o.raw_payload_json);
-              mName = p.merchant_name || o.account || 'Unassigned';
-              mCode = p.merchant_code || o.merchant_code || null;
-              affCode = p.affiliate_code ? String(p.affiliate_code).trim() : null;
-              affName = p.affiliate_name ? String(p.affiliate_name).trim() : null;
+              mName = p.merchant_name || p['اسم التاجر'] || p['اسم_التاجر'] || p['التاجر'] || p.merchant || p.store_name || o.account || 'Unassigned';
+              mCode = p.merchant_code || p['كود التاجر'] || p['كود_التاجر'] || p.merchant_id || o.merchant_code || null;
+              
+              // Extract affiliate code
+              const rawAff = p.affiliate_code || p['الافيليت كود'] || p['كود الافلييت'] || p['كود المسوق'] || p['كود_المسوق'] || p.affiliate || p.marketer_code || o.affiliate_code;
+              affCode = rawAff ? String(rawAff).trim() : null;
+              if (affCode && /^\s*[-_—]\s*$/i.test(affCode)) affCode = null;
+              
+              // Extract marketer name strictly from Vendoor 'اسم المسوق' / 'اسم الافلييت' / etc.
+              const rawMkt = p['اسم المسوق'] || p['اسم_المسوق'] || p['المسوق'] || p['اسم الافلييت'] || p['اسم الافيليت'] || p['الافيليت'] || p['الافلييت'] || p.marketer_name || p.marketer || p.affiliate_name || p.affiliateName || p.marketerName || o.marketer_name || o.affiliate_name;
+              let cleanMkt = rawMkt ? String(rawMkt).replace(/<[^>]+>/g, '').trim() : null;
+              if (cleanMkt && /no name specified|none specified|unknown \/ not available|^\s*[-_—]\s*$/i.test(cleanMkt)) {
+                cleanMkt = null;
+              }
+              if (cleanMkt) {
+                mktName = cleanMkt;
+              }
             } catch (_) {}
           }
 
-          updateOrderStmt.run(mName, mCode, affCode, affName, o.id);
-          try { updateCwoStmt.run(mName, mCode, affCode, o.order_code); } catch (_) {}
+          updateOrderStmt.run(mName, mCode, affCode, mktName, mktName, o.id);
+          try { updateCwoStmt.run(mName, mCode, affCode, mktName, o.order_code); } catch (_) {}
 
           if (mCode) {
             upsertMerchantStmt.run(mCode, mName);
@@ -903,11 +996,49 @@ export function runMigrations(database = db) {
             }
           }
           if (affCode) {
-            upsertMarketerStmt.run(affCode, affName);
+            try { upsertMarketerStmt.run(affCode, mktName, mktName); } catch (_) {}
           }
         }
       });
       tx();
+
+      // Ensure full cross-table marketer synchronization
+      try {
+        database.exec(`
+          UPDATE current_work_orders
+          SET marketer_name = (
+            SELECT marketer_name FROM marketers 
+            WHERE marketers.affiliate_code = current_work_orders.affiliate_code 
+              AND marketers.marketer_name IS NOT NULL
+          )
+          WHERE (marketer_name IS NULL OR marketer_name = '')
+            AND affiliate_code IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM marketers 
+              WHERE marketers.affiliate_code = current_work_orders.affiliate_code 
+                AND marketers.marketer_name IS NOT NULL
+            );
+
+          UPDATE vendoor_orders
+          SET marketer_name = (
+            SELECT marketer_name FROM marketers 
+            WHERE marketers.affiliate_code = vendoor_orders.affiliate_code 
+              AND marketers.marketer_name IS NOT NULL
+          ),
+          affiliate_name = (
+            SELECT affiliate_name FROM marketers 
+            WHERE marketers.affiliate_code = vendoor_orders.affiliate_code 
+              AND marketers.affiliate_name IS NOT NULL
+          )
+          WHERE (marketer_name IS NULL OR marketer_name = '')
+            AND affiliate_code IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM marketers 
+              WHERE marketers.affiliate_code = vendoor_orders.affiliate_code 
+                AND marketers.marketer_name IS NOT NULL
+            );
+        `);
+      } catch (_) {}
     }
   } catch (e) {
     console.warn('Migration for merchants, marketers, and backfill:', e.message);
@@ -1259,10 +1390,18 @@ export function checkDatabaseIntegrity(database = db) {
 
 // Initialize schema
 export function initDB() {
+  // 1. Run all safe migrations first to ensure columns exist on existing databases
+  try {
+    runMigrations(db);
+  } catch (e) {
+    console.warn('Initial runMigrations warning:', e.message);
+  }
+
+  // 2. Execute schema DDL
   const schema = fs.readFileSync(SCHEMA_PATH, 'utf-8');
   db.exec(schema);
 
-  // Run all safe migrations
+  // 3. Re-run migrations to catch any post-schema updates
   runMigrations(db);
 
   // Seed default system configs if empty

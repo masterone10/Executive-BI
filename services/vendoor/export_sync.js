@@ -64,6 +64,8 @@ export async function collectAllOrderIdsForStatus(categoryId, options = {}) {
   const search = options.search || '';
 
   let allIds = [];
+  const orderMetadata = new Map();
+  const affiliateNamesMap = new Map();
   let start = 0;
   let pageNum = 0;
   let reportedTotal = 0;
@@ -93,10 +95,26 @@ export async function collectAllOrderIdsForStatus(categoryId, options = {}) {
     reportedFiltered = json.recordsFiltered !== undefined ? json.recordsFiltered : reportedTotal;
 
     const pageRecords = Array.isArray(json.data) ? json.data : [];
-    const pageIds = pageRecords.map(o => o.id).filter(Boolean);
-    allIds.push(...pageIds);
+    for (const rec of pageRecords) {
+      if (!rec || !rec.id) continue;
+      const recId = rec.id;
+      allIds.push(recId);
 
-    if (pageIds.length === 0 || allIds.length >= reportedFiltered || pageRecords.length < pageSize) {
+      const rawAffCode = rec.affiliate_code ? String(rec.affiliate_code).trim() : null;
+      let cleanAffName = rec.affiliate_name ? String(rec.affiliate_name).replace(/<[^>]+>/g, '').trim() : null;
+      if (cleanAffName && /no name specified|none specified|unknown \/ not available|^\s*[-_—]\s*$/i.test(cleanAffName)) {
+        cleanAffName = null;
+      }
+      orderMetadata.set(String(recId), {
+        affiliate_code: rawAffCode,
+        affiliate_name: cleanAffName
+      });
+      if (rawAffCode && cleanAffName) {
+        affiliateNamesMap.set(rawAffCode, cleanAffName);
+      }
+    }
+
+    if (pageRecords.length === 0 || allIds.length >= reportedFiltered || pageRecords.length < pageSize) {
       break;
     }
 
@@ -108,7 +126,9 @@ export async function collectAllOrderIdsForStatus(categoryId, options = {}) {
     pagesFetched: pageNum,
     reportedTotal,
     reportedFiltered,
-    orderIds: allIds
+    orderIds: allIds,
+    orderMetadata,
+    affiliateNamesMap
   };
 }
 
@@ -120,7 +140,7 @@ export async function exportAndParseVendoorOrders(categoryId, options = {}) {
   
   // Step 1: Collect all order IDs across all pages
   const idCollection = await collectAllOrderIdsForStatus(categoryId, options);
-  const { orderIds, pagesFetched, reportedTotal, reportedFiltered } = idCollection;
+  const { orderIds, pagesFetched, reportedTotal, reportedFiltered, orderMetadata, affiliateNamesMap } = idCollection;
 
   if (orderIds.length === 0) {
     return {
@@ -226,7 +246,28 @@ export async function exportAndParseVendoorOrders(categoryId, options = {}) {
     const totalPrice = Number(r['Total'] || r['Net'] || r['السعر'] || 0);
     const shippingCompany = String(r['شركة الشحن'] || '').trim();
     const trackingNumber = String(r['بوليصة الشحن'] || '').trim();
-    const affiliateCode = String(r['الافيليت كود'] || '').trim(); // Preserved for metadata, NOT used for account identity
+    
+    const liveMeta = orderMetadata ? orderMetadata.get(orderCode) : null;
+
+    // Extract affiliate code directly from live DataTables metadata or Excel column
+    const rawAffiliateCode = liveMeta?.affiliate_code || 
+      r['الافيليت كود'] || r['كود الافلييت'] || r['كود المسوق'] || r['كود_المسوق'] || 
+      r['Affiliate Code'] || r['Marketer Code'] || r.affiliate_code || '';
+    let affiliateCode = String(rawAffiliateCode || '').trim() || null;
+    if (affiliateCode && /^\s*[-_—]\s*$/i.test(affiliateCode)) {
+      affiliateCode = null;
+    }
+
+    // Extract marketer name directly from live Vendoor runtime metadata or Excel column
+    const rawMarketerName = liveMeta?.affiliate_name || 
+      (affiliateCode && affiliateNamesMap ? affiliateNamesMap.get(affiliateCode) : null) ||
+      r['اسم المسوق'] || r['اسم_المسوق'] || r['المسوق'] || r['اسم الافلييت'] || r['اسم الافيليت'] || 
+      r['الافيليت'] || r['الافلييت'] || r['Marketer Name'] || r['Marketer'] || r['Affiliate Name'] || 
+      r.affiliate_name || r.marketer_name || '';
+    let marketerName = String(rawMarketerName || '').replace(/<[^>]+>/g, '').trim() || null;
+    if (marketerName && /no name specified|none specified|unknown \/ not available|^\s*[-_—]\s*$/i.test(marketerName)) {
+      marketerName = null;
+    }
 
     uniqueOrdersMap.set(orderCode, {
       order_code: orderCode,
@@ -248,7 +289,9 @@ export async function exportAndParseVendoorOrders(categoryId, options = {}) {
       total_price: totalPrice,
       shipping_company: shippingCompany,
       tracking_number: trackingNumber,
-      affiliate_code: affiliateCode
+      affiliate_code: affiliateCode,
+      marketer_name: marketerName,
+      affiliate_name: marketerName
     });
   }
 

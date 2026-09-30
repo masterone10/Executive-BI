@@ -906,21 +906,28 @@ export function parseDailyLogBuffer(fileBuffer, dbEmployeesMap = null) {
  * Helper to identify Specific Orders columns accurately
  */
 export function detectSpecificOrdersHeaders(hdr) {
-  let oi = -1, ai = -1, si = -1, di = -1, mi = -1;
+  let oi = -1, ai = -1, si = -1, di = -1, mi = -1, mki = -1, afi = -1;
 
   // Pass 1: Strict, high-confidence matches
   hdr.forEach((rawH, i) => {
     const h = String(rawH || '').trim();
     if (/رقم\s*الاوردر|رقم\s*الطلب|كود\s*الطلب|كود\s*الاوردر|order\s*(?:code|id|no|num|number)|order_id|order_code/i.test(h) &&
-        !/تاجر|merchant|عميل|client/i.test(h)) {
+        !/تاجر|merchant|عميل|client|مسوق|marketer|افلييت|affiliate/i.test(h)) {
       if (oi === -1) oi = i;
     }
     if (/اسم\s*التاجر|التاجر|merchant\s*name|merchant|account(?:\s*name)?/i.test(h) &&
-        !/كود|code|رقم|id/i.test(h)) {
+        !/كود|code|رقم|id|مسوق|marketer|افلييت|affiliate/i.test(h)) {
       if (ai === -1) ai = i;
     }
     if (/كود\s*التاجر|merchant\s*code|كود\s*العميل/i.test(h)) {
       if (mi === -1) mi = i;
+    }
+    if (/اسم\s*المسوق|اسم\s*الافلييت|اسم\s*الافيليت|الافيليت|الافلييت|المسوق|marketer\s*name|marketer|affiliate\s*name/i.test(h) &&
+        !/كود|code|رقم|id/i.test(h)) {
+      if (mki === -1) mki = i;
+    }
+    if (/الافيليت\s*كود|كود\s*الافلييت|كود\s*الافيليت|كود\s*المسوق|affiliate\s*code|marketer\s*code/i.test(h)) {
+      if (afi === -1) afi = i;
     }
     if (/حالة\s*الاوردر|حالة\s*الطلب|حاله\s*الاوردر|حاله\s*الطلب|الحالة|حالة|حاله|order\s*status|status/i.test(h)) {
       if (si === -1) si = i;
@@ -933,19 +940,29 @@ export function detectSpecificOrdersHeaders(hdr) {
   // Pass 2: Secondary broader matches if still missing
   hdr.forEach((rawH, i) => {
     const h = String(rawH || '').trim();
-    if (oi === -1 && i !== ai && i !== mi && i !== si && i !== di) {
-      if (/order|code|كود|رقم/i.test(h) && !/تاجر|merchant|عميل|client/i.test(h)) {
+    if (oi === -1 && i !== ai && i !== mi && i !== si && i !== di && i !== mki && i !== afi) {
+      if (/order|code|كود|رقم/i.test(h) && !/تاجر|merchant|عميل|client|مسوق|marketer/i.test(h)) {
         oi = i;
       }
     }
-    if (ai === -1 && i !== oi && i !== mi && i !== si && i !== di) {
-      if (/اسم\s*العميل|حساب|store|متجر/i.test(h) && !/كود|code/i.test(h)) {
+    if (ai === -1 && i !== oi && i !== mi && i !== si && i !== di && i !== mki && i !== afi) {
+      if (/اسم\s*العميل|حساب|store|متجر/i.test(h) && !/كود|code|مسوق|marketer/i.test(h)) {
         ai = i;
+      }
+    }
+    if (mki === -1 && i !== oi && i !== ai && i !== mi && i !== si && i !== di && i !== afi) {
+      if (/مسوق|marketer/i.test(h) && !/كود|code/i.test(h)) {
+        mki = i;
+      }
+    }
+    if (afi === -1 && i !== oi && i !== ai && i !== mi && i !== si && i !== di && i !== mki) {
+      if (/affiliate|افلييت|افيليت/i.test(h)) {
+        afi = i;
       }
     }
   });
 
-  return { oi, ai, si, di, mi };
+  return { oi, ai, si, di, mi, mki, afi };
 }
 
 /**
@@ -972,7 +989,7 @@ export function parseSpecificOrdersBuffer(fileBuffer, targetDate = null, expecte
   }
 
   const hdr = rows[0].map(h => String(h || '').trim());
-  let { oi, ai, si, di, mi } = detectSpecificOrdersHeaders(hdr);
+  let { oi, ai, si, di, mi, mki, afi } = detectSpecificOrdersHeaders(hdr);
 
   if (oi === -1) {
     const sampleVal = String(rows[1] && rows[1][0] || '').trim();
@@ -983,7 +1000,7 @@ export function parseSpecificOrdersBuffer(fileBuffer, targetDate = null, expecte
 
   if (ai === -1) {
     for (let c = 1; c < hdr.length; c++) {
-      if (c !== oi && c !== si && c !== di && c !== mi) {
+      if (c !== oi && c !== si && c !== di && c !== mi && c !== mki && c !== afi) {
         ai = c;
         break;
       }
@@ -998,7 +1015,7 @@ export function parseSpecificOrdersBuffer(fileBuffer, targetDate = null, expecte
 
   if (si === -1) {
     hdr.forEach((h, i) => {
-      if (i !== oi && i !== ai && i !== di && i !== mi && si === -1) {
+      if (i !== oi && i !== ai && i !== di && i !== mi && i !== mki && i !== afi && si === -1) {
         si = i;
       }
     });
@@ -1022,6 +1039,16 @@ export function parseSpecificOrdersBuffer(fileBuffer, targetDate = null, expecte
     const orderCode = oi !== -1 ? String(r[oi] || '').trim() : '';
     let account = ai !== -1 ? String(r[ai] || '').trim() : '';
     const merchantCode = mi !== -1 ? String(r[mi] || '').trim() : null;
+    const rawMarketerName = mki !== -1 ? String(r[mki] || '').replace(/<[^>]+>/g, '').trim() : '';
+    let marketerName = rawMarketerName || null;
+    if (marketerName && /no name specified|none specified|unknown \/ not available|^\s*[-_—]\s*$/i.test(marketerName)) {
+      marketerName = null;
+    }
+    const rawAffiliateCode = afi !== -1 ? String(r[afi] || '').trim() : '';
+    let affiliateCode = rawAffiliateCode || null;
+    if (affiliateCode && /^\s*[-_—]\s*$/i.test(affiliateCode)) {
+      affiliateCode = null;
+    }
     const rawStatus = si !== -1 ? String(r[si] || '').trim() : '';
     const orderDate = di !== -1 ? r[di] : null;
 
@@ -1069,7 +1096,11 @@ export function parseSpecificOrdersBuffer(fileBuffer, targetDate = null, expecte
       ordersMap.set(orderCode, {
         order_code: orderCode,
         account,
+        merchant_name: account,
         merchant_code: merchantCode,
+        marketer_name: marketerName,
+        affiliate_name: marketerName,
+        affiliate_code: affiliateCode,
         status,
         order_date: orderDate !== undefined && orderDate !== null ? String(orderDate) : null,
         raw_order_date: orderDate !== undefined && orderDate !== null ? String(orderDate) : null,

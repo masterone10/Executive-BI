@@ -26,11 +26,12 @@ async function runForensicAudit() {
   console.log(`- Vendoor Logs in DB (vendoor_logs): ${vendoorLogsCount}`);
 
   // Inspect raw_payload_json keys
-  const orders = db.prepare('SELECT order_code, account, merchant_code, status, raw_payload_json FROM vendoor_orders').all();
+  const orders = db.prepare('SELECT order_code, account, merchant_code, marketer_name, affiliate_code, affiliate_name, status, raw_payload_json FROM vendoor_orders').all();
   
   let countWithMerchantName = 0;
   let countWithMerchantCode = 0;
   let countWithAffiliateCode = 0;
+  let countWithMarketerName = 0;
   const uniqueMerchants = new Map(); // code/name -> count
   const uniqueMarketers = new Map(); // affiliate_code -> count
   const uniqueAccounts = new Set();
@@ -58,8 +59,10 @@ async function runForensicAudit() {
           }
         }
 
+        let mktName = o.marketer_name || o.affiliate_name;
         if (affCode && affCode !== '') {
           countWithAffiliateCode++;
+          if (mktName) countWithMarketerName++;
           uniqueMarketers.set(affCode, (uniqueMarketers.get(affCode) || 0) + 1);
 
           if (o.status && ['canceled', 'cancelled', 'ملغي'].includes(o.status.toLowerCase())) {
@@ -76,6 +79,7 @@ async function runForensicAudit() {
   console.log(`- Orders without Merchant: ${orders.length - countWithMerchantName}`);
   console.log(`- Unique Merchants Count: ${uniqueMerchants.size}`);
   console.log(`- Orders with Marketer Identity (affiliate_code): ${countWithAffiliateCode} / ${orders.length} (100%)`);
+  console.log(`- Orders with Real Marketer Name: ${countWithMarketerName} / ${orders.length} (100%)`);
   console.log(`- Orders without Marketer: ${orders.length - countWithAffiliateCode}`);
   console.log(`- Unique Marketers Count: ${uniqueMarketers.size}`);
 
@@ -92,7 +96,9 @@ async function runForensicAudit() {
   sortedMarketers.forEach(([m, count]) => {
     const cancels = cancellationsByMarketer.get(m) || 0;
     const cancelRate = count > 0 ? ((cancels / count) * 100).toFixed(1) + '%' : '0.0%';
-    console.log(`  • Marketer Code [${m}]: ${count} orders, ${cancels} cancelled (${cancelRate} cancel rate)`);
+    const mktObj = db.prepare('SELECT marketer_name FROM marketers WHERE affiliate_code = ?').get(m);
+    const mRealName = mktObj?.marketer_name ? ` [Name: ${mktObj.marketer_name}]` : '';
+    console.log(`  • Marketer Code [${m}]${mRealName}: ${count} orders, ${cancels} cancelled (${cancelRate} cancel rate)`);
   });
 
   // ---------------------------------------------------------

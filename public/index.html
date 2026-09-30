@@ -8775,46 +8775,105 @@ function pages(){
     </div>
   `;
 
-  // Scorecard (Rank by Performance Score)
+  // Operational Employee Evaluation & Phone Comparison Scorecard
+  const totalConfirmed = (D.employees||[]).reduce((s, e) => s + (e.printed || e.confirmed_orders || 0), 0);
+  const totalAddedPhones = (D.employees||[]).reduce((s, e) => s + (e.alt || e.added_phones || 0), 0);
+  const totalAlerts = (D.employees||[]).reduce((s, e) => s + (e.phone_match_alerts || 0), 0);
+  const avgConfirmedTeam = D.employees && D.employees.length > 0 ? (totalConfirmed / D.employees.length).toFixed(1) : '0.0';
+  const avgAddedPhonesTeam = D.employees && D.employees.length > 0 ? (totalAddedPhones / D.employees.length).toFixed(1) : '0.0';
+  const overallAlertRate = totalConfirmed > 0 ? ((totalAlerts / totalConfirmed) * 100).toFixed(1) : '0.0';
+
+  const topConfirmedEmps = [...(D.employees||[])].sort((a, b) => (b.printed || b.confirmed_orders || 0) - (a.printed || a.confirmed_orders || 0)).slice(0, 10);
+  const topPhoneEmps = [...(D.employees||[])].sort((a, b) => (b.alt || b.added_phones || 0) - (a.alt || a.added_phones || 0)).slice(0, 10);
+
   const scorecard = `
-    <div class="panel">
+    <!-- Operational Evaluation KPI Cards -->
+    <div class="kpis">
+      ${kpiCard('✓', fmt(totalConfirmed), 'Confirmed Orders', `Team Total · Avg <b>${avgConfirmedTeam}</b> / agent`, GREEN)}
+      ${kpiCard('☎', fmt(totalAddedPhones), 'Added Phone Numbers', `Team Total · Avg <b>${avgAddedPhonesTeam}</b> / agent`, BLUE)}
+      ${kpiCard('⚠️', fmt(totalAlerts), 'Phone Match Alerts', `Exact Phone A === Phone B matches`, totalAlerts > 0 ? RED : GREEN)}
+      ${kpiCard('%', overallAlertRate + '%', 'Phone Match Rate', `Alerts ÷ Confirmed Orders`, totalAlerts > 0 ? AMBER : GREEN)}
+    </div>
+
+    <!-- Side-by-Side Comparison Leaderboards -->
+    <div class="grid g2">
+      <div class="panel">
+        <div class="hd">
+          <div>
+            <h3>✓ Confirmed Orders by Employee</h3>
+            <p>Direct operational output (Printed / Confirmed status transitions)</p>
+          </div>
+        </div>
+        ${barList(topConfirmedEmps.map(e => ({ name: e.name, value: e.printed || e.confirmed_orders || 0 })), null, GREEN)}
+      </div>
+
+      <div class="panel">
+        <div class="hd">
+          <div>
+            <h3>☎ Added Phone Numbers by Employee</h3>
+            <p>Alternate customer phone numbers added to orders</p>
+          </div>
+        </div>
+        ${barList(topPhoneEmps.map(e => ({ name: e.name, value: e.alt || e.added_phones || 0 })), null, BLUE)}
+      </div>
+    </div>
+
+    <!-- Master Employee Operational Evaluation Table -->
+    <div class="panel" style="margin-top:20px">
       <div class="hd">
         <div>
-          <h3>★ Executive Scorecard</h3>
-          <p>Ranked strictly by Performance Score (Avoids double-counting)</p>
+          <h3>👥 Operational Employee Evaluation & Comparison</h3>
+          <p>Real confirmed orders, added phone numbers, and phone duplication alerts per agent</p>
         </div>
       </div>
       <div class="tbl-scroll">
         <table>
           <thead>
             <tr>
-              <th>Rank</th>
+              <th style="width:50px">Rank</th>
               <th>Employee</th>
-              <th>Score</th>
-              <th>Grade</th>
-              <th>Segment</th>
-              <th>Real Actions</th>
-              <th>Printed %</th>
-              <th>Pending %</th>
-              <th>Cancel %</th>
-              <th>Risk Tier</th>
+              <th style="text-align:right;color:#15803D">Confirmed Orders</th>
+              <th style="text-align:right;color:var(--slate)">vs Team Avg</th>
+              <th style="text-align:right;color:#0284C7">Added Phones</th>
+              <th style="text-align:right;color:var(--slate)">vs Team Avg</th>
+              <th style="text-align:right;color:#DC2626">Phone Alerts</th>
+              <th style="text-align:right">Match Rate %</th>
+              <th style="text-align:right">Real Actions</th>
+              <th style="text-align:right">Cancel %</th>
             </tr>
           </thead>
           <tbody>
-            ${(D.employees||[]).map(e=>`
-              <tr>
-                <td><span class="rk ${e.rank<=3?'g'+e.rank:''}">${e.rank}</span></td>
-                <td class="nm-cell">${e.name}</td>
-                <td>${scoreCell(e.performance_score)}</td>
-                <td><span class="grade gr-${(e.grade||'N')[0]}">${e.grade || 'N/A'}</span></td>
-                <td><span class="seg seg-${segClass(e.segment)}">${e.segment}</span></td>
-                <td><b>${fmt(e.actions)}</b></td>
-                <td><span style="color:${GREEN};font-weight:700">${e.own_printed_rate}%</span></td>
-                <td><span style="color:${PURPLE};font-weight:600">${e.own_pending_rate}%</span></td>
-                <td><b style="color:${e.own_cancel_rate>=D.team_cancel_rate*1.5?RED:'var(--slate)'}">${e.own_cancel_rate}%</b></td>
-                <td><span class="risk risk-${riskClass(e.cancel_risk)}">${e.cancel_risk}</span></td>
-              </tr>
-            `).join('')}
+            ${(D.employees||[]).map((e, idx) => {
+              const conf = e.printed || e.confirmed_orders || 0;
+              const phones = e.alt || e.added_phones || 0;
+              const alertsCount = e.phone_match_alerts || 0;
+              const matchRate = conf > 0 ? ((alertsCount / conf) * 100).toFixed(1) : '0.0';
+              const confDiff = (conf - parseFloat(avgConfirmedTeam)).toFixed(1);
+              const phoneDiff = (phones - parseFloat(avgAddedPhonesTeam)).toFixed(1);
+
+              return `
+                <tr>
+                  <td><span class="rk ${idx < 3 ? 'g' + (idx + 1) : ''}">${idx + 1}</span></td>
+                  <td class="nm-cell"><b>${escapeHtml(e.name)}</b></td>
+                  <td style="text-align:right;color:#15803D;font-weight:800;font-size:13.5px">${fmt(conf)}</td>
+                  <td style="text-align:right;font-size:12px;font-weight:600;color:${parseFloat(confDiff) >= 0 ? '#15803D' : '#DC2626'}">
+                    ${parseFloat(confDiff) >= 0 ? '+' + confDiff : confDiff}
+                  </td>
+                  <td style="text-align:right;color:#0284C7;font-weight:700">${fmt(phones)}</td>
+                  <td style="text-align:right;font-size:12px;font-weight:600;color:${parseFloat(phoneDiff) >= 0 ? '#0284C7' : '#DC2626'}">
+                    ${parseFloat(phoneDiff) >= 0 ? '+' + phoneDiff : phoneDiff}
+                  </td>
+                  <td style="text-align:right;font-weight:700">
+                    ${alertsCount > 0 
+                      ? `<span class="tag" style="background:#FEE2E2;color:#DC2626;font-weight:800">⚠️ ${alertsCount}</span>` 
+                      : '<span style="color:var(--slate)">0</span>'}
+                  </td>
+                  <td style="text-align:right;font-weight:700;color:${parseFloat(matchRate) > 5 ? '#DC2626' : 'var(--slate)'}">${matchRate}%</td>
+                  <td style="text-align:right"><b>${fmt(e.actions || 0)}</b></td>
+                  <td style="text-align:right"><b style="color:${e.own_cancel_rate >= D.team_cancel_rate * 1.5 ? RED : 'var(--slate)'}">${e.own_cancel_rate || 0}%</b></td>
+                </tr>
+              `;
+            }).join('')}
           </tbody>
         </table>
       </div>
@@ -9253,11 +9312,12 @@ const MAIN_PAGES_CONFIG = {
   },
   reports: {
     title: 'Reports & Analytics',
-    sub: 'Multi-Period Operational Reports, CS Performance, Allocation, Merchant & Marketer Audits',
+    sub: 'Multi-Period Operational Reports, CS Performance, Allocation, Merchant, Marketer & Phone Alerts',
     defaultTab: 'executive',
     tabs: [
       { id: 'executive', label: 'Executive Summary', icon: '📊' },
       { id: 'employee', label: 'CS Performance', icon: '👤' },
+      { id: 'phone_alerts', label: 'Phone Match Alerts', icon: '🚨' },
       { id: 'merchants', label: 'Merchants', icon: '🏪' },
       { id: 'marketers', label: 'Marketers / Affiliates', icon: '📣' },
       { id: 'allocation', label: 'Work Allocation', icon: '⚡' },
@@ -9526,8 +9586,8 @@ async function loadReportsView(tab = 'executive') {
         <div class="panel">
           <div class="hd">
             <div>
-              <h3>👤 CS Operational Employee Performance (${r.total_employees || (r.rows || []).length} CS Agents)</h3>
-              <p>Performance profiles, rates, and workload capacity strictly filtered for Customer Service</p>
+              <h3>👤 CS Operational Employee Evaluation (${r.total_employees || (r.rows || []).length} CS Agents)</h3>
+              <p>Confirmed orders, added phone numbers, and phone duplication alerts strictly audited for Customer Service</p>
             </div>
           </div>
           <div class="tbl-scroll">
@@ -9536,12 +9596,11 @@ async function loadReportsView(tab = 'executive') {
                 <tr>
                   <th>Employee Name</th>
                   <th>Team</th>
+                  <th style="text-align:right;color:#15803D">Confirmed Orders</th>
+                  <th style="text-align:right;color:#0284C7">Added Phones</th>
+                  <th style="text-align:right;color:#DC2626">Phone Alerts</th>
+                  <th style="text-align:right">Match Rate %</th>
                   <th style="text-align:center">Working Days</th>
-                  <th style="text-align:right">Rate / 10m</th>
-                  <th style="text-align:right">Assigned Orders</th>
-                  <th style="text-align:right">Unique Worked</th>
-                  <th style="text-align:right">Completed</th>
-                  <th style="text-align:right">Completion %</th>
                   <th style="text-align:right">Capacity</th>
                   <th>Status</th>
                 </tr>
@@ -9551,16 +9610,70 @@ async function loadReportsView(tab = 'executive') {
                   <tr>
                     <td><b>${escapeHtml(row.employee_name)}</b></td>
                     <td><span class="tag">${escapeHtml(row.team_membership || 'STANDARD')}</span></td>
+                    <td style="text-align:right;color:#15803D;font-weight:800;font-size:13.5px">${fmt(row.confirmed_orders || 0)}</td>
+                    <td style="text-align:right;color:#0284C7;font-weight:700">${fmt(row.added_phone_numbers || 0)}</td>
+                    <td style="text-align:right;font-weight:700">
+                      ${row.phone_match_alerts > 0 
+                        ? `<span class="tag" style="background:#FEE2E2;color:#DC2626;font-weight:800">⚠️ ${row.phone_match_alerts}</span>` 
+                        : '<span style="color:var(--slate)">0</span>'}
+                    </td>
+                    <td style="text-align:right;font-weight:700;color:${row.phone_match_rate > 5 ? '#DC2626' : 'var(--slate)'}">${row.phone_match_rate || 0}%</td>
                     <td style="text-align:center">${row.working_days}</td>
-                    <td style="text-align:right;font-weight:700">${(row.typical_orders_10m || 0).toFixed(1)}</td>
-                    <td style="text-align:right">${fmt(row.total_assigned)}</td>
-                    <td style="text-align:right">${fmt(row.unique_orders_worked)}</td>
-                    <td style="text-align:right;color:#16A34A;font-weight:700">${fmt(row.completed_orders)}</td>
-                    <td style="text-align:right;font-weight:700">${row.completion_pct}%</td>
                     <td style="text-align:right">${fmt(row.remaining_capacity)}</td>
                     <td>
                       <span class="tag" style="background:${row.operational_status === 'ACTIVE_WORKING' ? '#DCFCE7;color:#15803D' : '#F1F5F9;color:#64748B'}">
                         ${row.operational_status}
+                      </span>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    } else if (tab === 'phone_alerts' || tab === 'phone_match_alerts') {
+      const res = await apiFetch(`/api/reports/phone-alerts${queryParams}`);
+      const r = (res && res.data) ? res.data : res;
+
+      viewContainer.innerHTML = `
+        <div class="panel">
+          <div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+            <div>
+              <h3>🚨 Phone Number Duplication Alerts (${r.total_alerts || (r.rows || []).length} Alerts)</h3>
+              <p>Orders where Phone Field A matches Phone Field B after exact normalization — Review Required</p>
+            </div>
+            <div>
+              <input type="text" id="phoneAlertSearch" placeholder="Filter order or employee..." onkeyup="filterGenericTable('phoneAlertsTable', this.value)" style="padding:6px 12px;border:1px solid #CBD5E1;border-radius:6px;font-size:12px;width:240px">
+            </div>
+          </div>
+          <div class="tbl-scroll">
+            <table id="phoneAlertsTable">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Employee</th>
+                  <th>Order Code</th>
+                  <th>Phone Field A (Primary)</th>
+                  <th>Phone Field B (Alternate)</th>
+                  <th>Normalized Value</th>
+                  <th>Alert Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(r.rows || []).length === 0 ? `
+                  <tr><td colspan="7" style="text-align:center;padding:32px;color:var(--slate)">No phone match alerts recorded for this period.</td></tr>
+                ` : (r.rows || []).map(row => `
+                  <tr>
+                    <td><b>${escapeHtml(row.work_date)}</b></td>
+                    <td><span class="nm-cell" style="font-weight:700">${escapeHtml(row.employee_name || 'Unassigned')}</span></td>
+                    <td><a style="color:var(--blue);cursor:pointer;font-weight:700;text-decoration:underline" onclick="show('tracking', 'orders');setTimeout(()=>loadOrderTrackingView('${escapeHtml(row.order_code)}'),100)">#${escapeHtml(row.order_code)}</a></td>
+                    <td><span style="font-family:monospace;font-weight:600;color:var(--navy)">${escapeHtml(row.phone_a_raw || '—')}</span></td>
+                    <td><span style="font-family:monospace;font-weight:600;color:var(--navy)">${escapeHtml(row.phone_b_raw || '—')}</span></td>
+                    <td><span class="tag" style="background:#FEF3C7;color:#92400E;font-family:monospace;font-weight:700">${escapeHtml(row.phone_a_normalized || row.phone_b_normalized || '—')}</span></td>
+                    <td>
+                      <span class="tag" style="background:#FEE2E2;color:#DC2626;font-weight:800;border:1px solid #FECACA">
+                        ⚠️ REVIEW REQUIRED
                       </span>
                     </td>
                   </tr>
@@ -9663,7 +9776,7 @@ async function loadReportsView(tab = 'executive') {
           <div class="card" style="padding:16px;border-left:4px solid #8B5CF6">
             <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Active Marketers / Affiliates</div>
             <div style="font-size:24px;font-weight:900;color:var(--navy);margin-top:4px">${fmt(s.total_marketers || (r.rows || []).length)}</div>
-            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">Period: ${r.start_date} → ${r.end_date}</div>
+            <div style="font-size:11.5px;color:var(--mut);margin-top:2px">Named: ${fmt(s.marketers_with_name || 0)} | With Code: ${fmt((r.rows || []).filter(x => x.affiliate_code).length)}</div>
           </div>
           <div class="card" style="padding:16px;border-left:4px solid #16A34A">
             <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Total Generated Orders</div>
@@ -9685,19 +9798,19 @@ async function loadReportsView(tab = 'executive') {
         <div class="panel">
           <div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
             <div>
-              <h3>📣 Marketers & Affiliates Intelligence (${r.total_marketers || (r.rows || []).length} Affiliates)</h3>
-              <p>Direct affiliate code tracking, order throughput by promoter, promoted merchant accounts and lifecycle cancellation</p>
+              <h3>📣 Marketers & Affiliates Intelligence (${r.total_marketers || (r.rows || []).length} Marketers)</h3>
+              <p>Direct tracking from Vendoor 'اسم المسوق' and affiliate codes, promoter order volumes, and lifecycle metrics</p>
             </div>
             <div>
-              <input type="text" id="marketerSearchInput" placeholder="Filter affiliate code or name..." onkeyup="filterMarketerTable()" style="padding:6px 12px;border:1px solid #CBD5E1;border-radius:6px;font-size:12px;width:220px">
+              <input type="text" id="marketerSearchInput" placeholder="Filter marketer name or affiliate code..." onkeyup="filterMarketerTable()" style="padding:6px 12px;border:1px solid #CBD5E1;border-radius:6px;font-size:12px;width:240px">
             </div>
           </div>
           <div class="tbl-scroll">
             <table id="marketersReportTable">
               <thead>
                 <tr>
-                  <th>Affiliate / Marketer Code</th>
-                  <th>Affiliate Name</th>
+                  <th>Marketer Name (اسم المسوق)</th>
+                  <th>Affiliate Code</th>
                   <th>Promoted Merchants</th>
                   <th style="text-align:right">Total Orders</th>
                   <th style="text-align:right">New</th>
@@ -9711,12 +9824,20 @@ async function loadReportsView(tab = 'executive') {
               <tbody>
                 ${(r.rows || []).map(row => `
                   <tr>
-                    <td><span class="tag" style="background:#F3E8FF;color:#7E22CE;font-weight:800;font-family:monospace;font-size:12.5px">${escapeHtml(row.affiliate_code)}</span></td>
-                    <td style="color:var(--slate);font-size:12px">${escapeHtml(row.affiliate_name || 'N/A')}</td>
+                    <td>
+                      ${row.marketer_name 
+                        ? `<b style="color:var(--navy);font-size:13px">${escapeHtml(row.marketer_name)}</b>` 
+                        : `<span class="tag" style="background:#F1F5F9;color:var(--slate);font-style:italic">No Name in Source</span>`}
+                    </td>
+                    <td>
+                      ${row.affiliate_code 
+                        ? `<span class="tag" style="background:#F3E8FF;color:#7E22CE;font-weight:800;font-family:monospace;font-size:12px">${escapeHtml(row.affiliate_code)}</span>` 
+                        : `<span style="color:var(--mut);font-size:12px">—</span>`}
+                    </td>
                     <td>
                       <span title="${escapeHtml((row.linked_merchants || []).join(', '))}">
                         <b>${row.merchants_count || (row.linked_merchants || []).length}</b> merchant(s)
-                        <span style="color:var(--mut);font-size:11px">(${(row.linked_merchants || []).slice(0, 3).join(', ')}${(row.linked_merchants || []).length > 3 ? '...' : ''})</span>
+                        <span style="color:var(--mut);font-size:11px">(${(row.linked_merchants || []).slice(0, 2).join(', ')}${(row.linked_merchants || []).length > 2 ? '...' : ''})</span>
                       </span>
                     </td>
                     <td style="text-align:right;font-weight:800">${fmt(row.total_orders)}</td>

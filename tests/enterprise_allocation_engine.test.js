@@ -741,5 +741,114 @@ describe('Enterprise Allocation Engine - Complete Specification Verification', (
         return err.code === ALLOCATION_ERROR_CODES.PREVIEW_STALE;
       });
     });
+
+    test('Account Exceptions: allow_only, block, and force_assign enforcement in Enterprise Allocation', () => {
+      const emps = db.prepare("SELECT id, name FROM employees WHERE department = 'CS' AND active = 1 LIMIT 3").all();
+      assert.ok(emps.length >= 3, 'Need at least 3 CS employees for exceptions test');
+      const [emp1, emp2, emp3] = emps;
+
+      // Seed daily working team for TEST_DATE
+      for (const e of [emp1, emp2, emp3]) {
+        db.prepare(`
+          INSERT OR REPLACE INTO daily_working_team (work_date, employee_id, is_working, updated_at)
+          VALUES (?, ?, 1, datetime('now'))
+        `).run(TEST_DATE, e.id);
+        db.prepare(`
+          INSERT OR REPLACE INTO employee_capacities (employee_id, max_orders, updated_at)
+          VALUES (?, 50, datetime('now'))
+        `).run(e.id);
+      }
+
+      // 1. Test force_assign exception
+      const forceAcc = 'EXC_FORCE_ACC';
+      db.prepare('DELETE FROM account_exceptions WHERE account_name = ?').run(forceAcc);
+      db.prepare(`
+        INSERT INTO account_exceptions (account_name, work_date, status_type, exception_type, employee_id, employee_name)
+        VALUES (?, ?, 'Both', 'force_assign', ?, ?)
+      `).run(forceAcc, TEST_DATE, emp2.id, emp2.name);
+
+      const forceCode = `ORD_FORCE_${Date.now()}`;
+      db.prepare(`
+        INSERT INTO current_work_orders (work_date, order_code, account, status, source_type, work_state)
+        VALUES (?, ?, ?, 'Pending', 'PENDING', 'UNASSIGNED')
+      `).run(TEST_DATE, forceCode, forceAcc);
+
+      const planForce = planEnterpriseAllocation(TEST_DATE, 'PREVIEW', {
+        orders: [{ order_code: forceCode, account: forceAcc, status: 'Pending', source_type: 'PENDING' }]
+      });
+
+      const forceAssigned = planForce.assignments.find(a => a.order_code === forceCode);
+      assert.ok(forceAssigned, 'Force assign order must be planned');
+      assert.equal(forceAssigned.employee_id, emp2.id, 'Must be assigned to forced employee');
+
+      // 2. Test block exception
+      const blockAcc = 'EXC_BLOCK_ACC';
+      db.prepare('DELETE FROM account_exceptions WHERE account_name = ?').run(blockAcc);
+      db.prepare(`
+        INSERT INTO account_exceptions (account_name, work_date, status_type, exception_type, employee_id, employee_name)
+        VALUES (?, ?, 'Both', 'block', ?, ?)
+      `).run(blockAcc, TEST_DATE, emp1.id, emp1.name);
+
+      const blockCode = `ORD_BLOCK_${Date.now()}`;
+      const planBlock = planEnterpriseAllocation(TEST_DATE, 'PREVIEW', {
+        orders: [{ order_code: blockCode, account: blockAcc, status: 'Pending', source_type: 'PENDING' }]
+      });
+      const blockAssigned = planBlock.assignments.find(a => a.order_code === blockCode);
+      assert.ok(blockAssigned, 'Block order must be planned to an unblocked employee');
+      assert.notEqual(blockAssigned.employee_id, emp1.id, 'Blocked employee must NEVER be chosen');
+
+      // 3. Test allow_only exception
+      const allowAcc = 'EXC_ALLOW_ACC';
+      db.prepare('DELETE FROM account_exceptions WHERE account_name = ?').run(allowAcc);
+      db.prepare(`
+        INSERT INTO account_exceptions (account_name, work_date, status_type, exception_type, employee_id, employee_name)
+        VALUES (?, ?, 'Both', 'allow_only', ?, ?)
+      `).run(allowAcc, TEST_DATE, emp3.id, emp3.name);
+
+      const allowCode = `ORD_ALLOW_${Date.now()}`;
+      const planAllow = planEnterpriseAllocation(TEST_DATE, 'PREVIEW', {
+        orders: [{ order_code: allowCode, account: allowAcc, status: 'Pending', source_type: 'PENDING' }]
+      });
+      const allowAssigned = planAllow.assignments.find(a => a.order_code === allowCode);
+      assert.ok(allowAssigned, 'Allow-only order must be planned');
+      assert.equal(allowAssigned.employee_id, emp3.id, 'Only allowed employee must be assigned');
+    });
+
+    test('PENDING Sequence: P1 -> P2 -> P3 -> NEW -> P4 state machine progression', () => {
+      const emp = db.prepare("SELECT id, name FROM employees WHERE department = 'CS' AND active = 1 LIMIT 1").get();
+      const empId = emp.id;
+
+      // Seed clean daily state
+      db.prepare(`
+        INSERT OR REPLACE INTO employee_daily_allocation_states (work_date, employee_id, pending_sequence, new_event_consumed, daily_mode, rescue_state)
+        VALUES (?, ?, 0, 0, 'NORMAL', 'NONE')
+      `).run(TEST_DATE, empId);
+
+      // Initially P1 (pending_sequence = 0)
+      let state = getEmployeeDailyAllocationState(empId, TEST_DATE);
+      let elig = evaluateEmployeeAllocationEligibility(empId, TEST_DATE);
+      assert.equal(state.pending_sequence, 0);
+      assert.equal(elig.next_event_due, 'PENDING', 'P1: Next event must be PENDING');
+
+      // After P1, advances to P2
+      db.prepare(`UPDATE employee_daily_allocation_states SET pending_sequence = 1 WHERE work_date = ? AND employee_id = ?`).run(TEST_DATE, empId);
+      elig = evaluateEmployeeAllocationEligibility(empId, TEST_DATE);
+      assert.equal(elig.next_event_due, 'PENDING', 'P2: Next event must be PENDING');
+
+      // After P2, advances to P3
+      db.prepare(`UPDATE employee_daily_allocation_states SET pending_sequence = 2 WHERE work_date = ? AND employee_id = ?`).run(TEST_DATE, empId);
+      elig = evaluateEmployeeAllocationEligibility(empId, TEST_DATE);
+      assert.equal(elig.next_event_due, 'PENDING', 'P3: Next event must be PENDING');
+
+      // After P3 (pending_sequence = 3), next event is NEW milestone
+      db.prepare(`UPDATE employee_daily_allocation_states SET pending_sequence = 3 WHERE work_date = ? AND employee_id = ?`).run(TEST_DATE, empId);
+      elig = evaluateEmployeeAllocationEligibility(empId, TEST_DATE);
+      assert.equal(elig.next_event_due, 'NEW', 'After P3: Next event must be NEW milestone');
+
+      // After consuming NEW milestone (new_event_consumed = 1), sequence does NOT reset to 0, next event is P4
+      db.prepare(`UPDATE employee_daily_allocation_states SET new_event_consumed = 1 WHERE work_date = ? AND employee_id = ?`).run(TEST_DATE, empId);
+      elig = evaluateEmployeeAllocationEligibility(empId, TEST_DATE);
+      assert.equal(elig.next_event_due, 'PENDING', 'After NEW milestone: Next event moves to P4 and stays PENDING');
+    });
   });
 });

@@ -114,6 +114,13 @@ export class MockVendoorDataSource extends VendoorDataSource {
     // Accounts and cities for realistic pool generation
     const accounts = ['Vendoor Express', 'Alpha Merchant', 'Beta Logistics', 'Delta Direct', 'Gamma Trade'];
     const cities = ['Cairo', 'Giza', 'Alexandria', 'Mansoura', 'Tanta', 'Suez'];
+    const mockMarketers = [
+      { name: 'محمد طارق', code: 'AFF-MT01' },
+      { name: 'سارة السيد', code: 'AFF-SS02' },
+      { name: 'أحمد خالد', code: 'AFF-AK03' },
+      { name: 'كريم حسن', code: 'AFF-KH04' },
+      { name: 'نور مصطفى', code: 'AFF-NM05' }
+    ];
 
     // Generate pool matching required pagination test scenario:
     // 350 NEW orders, 620 PENDING orders (970 total)
@@ -125,10 +132,18 @@ export class MockVendoorDataSource extends VendoorDataSource {
       const acc = accounts[(i - 1) % accounts.length];
       const city = cities[(i - 1) % cities.length];
       const d = (i % 2 === 0) ? toDate : fromDate;
+      const mkt = mockMarketers[(i - 1) % mockMarketers.length];
       mockPool.push({
         order_code: `VD-NEW-${padId}`,
         status: 'New',
         account: acc,
+        merchant_name: acc,
+        merchant_code: `MERC-${100 + ((i - 1) % accounts.length)}`,
+        'اسم المسوق': mkt.name,
+        'الافيليت كود': mkt.code,
+        marketer_name: mkt.name,
+        affiliate_code: mkt.code,
+        affiliate_name: mkt.name,
         date: d,
         city,
         total_price: 120 + ((i * 19) % 650)
@@ -141,10 +156,18 @@ export class MockVendoorDataSource extends VendoorDataSource {
       const acc = accounts[(i - 1) % accounts.length];
       const city = cities[(i - 1) % cities.length];
       const d = (i % 2 === 0) ? toDate : fromDate;
+      const mkt = mockMarketers[(i - 1) % mockMarketers.length];
       mockPool.push({
         order_code: `VD-PEN-${padId}`,
         status: 'Pending',
         account: acc,
+        merchant_name: acc,
+        merchant_code: `MERC-${100 + ((i - 1) % accounts.length)}`,
+        'اسم المسوق': mkt.name,
+        'الافيليت كود': mkt.code,
+        marketer_name: mkt.name,
+        affiliate_code: mkt.code,
+        affiliate_name: mkt.name,
         date: d,
         city,
         total_price: 150 + ((i * 23) % 750)

@@ -269,10 +269,10 @@ export async function syncVendoorOrders(options = {}) {
     const insertOrderStmt = db.prepare(`
       INSERT INTO vendoor_orders (
         order_code, status, active_status, account, merchant_code, merchant_name,
-        affiliate_code, affiliate_name, source_date,
+        affiliate_code, affiliate_name, marketer_name, source_date,
         created_at_original, business_date, is_active, last_synced_at, city,
         total_price, raw_payload_json, sync_run_id, imported_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(order_code) DO UPDATE SET
         status = excluded.status,
         active_status = excluded.active_status,
@@ -281,6 +281,7 @@ export async function syncVendoorOrders(options = {}) {
         merchant_name = COALESCE(excluded.merchant_name, vendoor_orders.merchant_name),
         affiliate_code = COALESCE(excluded.affiliate_code, vendoor_orders.affiliate_code),
         affiliate_name = COALESCE(excluded.affiliate_name, vendoor_orders.affiliate_name),
+        marketer_name = COALESCE(excluded.marketer_name, vendoor_orders.marketer_name),
         source_date = COALESCE(vendoor_orders.source_date, excluded.source_date),
         created_at_original = COALESCE(vendoor_orders.created_at_original, excluded.created_at_original),
         business_date = excluded.business_date,
@@ -296,8 +297,8 @@ export async function syncVendoorOrders(options = {}) {
     const insertCwoStmt = db.prepare(`
       INSERT INTO current_work_orders (
         work_date, order_code, account, status, order_date, source_file_slot, source_type,
-        merchant_code, merchant_name, affiliate_code
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        merchant_code, merchant_name, affiliate_code, marketer_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(work_date, order_code) DO UPDATE SET
         account = excluded.account,
         status = excluded.status,
@@ -307,6 +308,7 @@ export async function syncVendoorOrders(options = {}) {
         merchant_code = COALESCE(excluded.merchant_code, current_work_orders.merchant_code),
         merchant_name = COALESCE(excluded.merchant_name, current_work_orders.merchant_name),
         affiliate_code = COALESCE(excluded.affiliate_code, current_work_orders.affiliate_code),
+        marketer_name = COALESCE(excluded.marketer_name, current_work_orders.marketer_name),
         updated_at = datetime('now')
     `);
 
@@ -319,10 +321,11 @@ export async function syncVendoorOrders(options = {}) {
     `);
 
     const upsertMarketerStmt = db.prepare(`
-      INSERT INTO marketers (affiliate_code, affiliate_name, updated_at)
-      VALUES (?, ?, datetime('now'))
+      INSERT INTO marketers (affiliate_code, marketer_name, affiliate_name, updated_at)
+      VALUES (?, ?, ?, datetime('now'))
       ON CONFLICT(affiliate_code) DO UPDATE SET
-        affiliate_name = COALESCE(excluded.affiliate_name, marketers.affiliate_name),
+        marketer_name = CASE WHEN excluded.marketer_name IS NOT NULL AND excluded.marketer_name != '' THEN excluded.marketer_name ELSE marketers.marketer_name END,
+        affiliate_name = CASE WHEN excluded.affiliate_name IS NOT NULL AND excluded.affiliate_name != '' THEN excluded.affiliate_name ELSE marketers.affiliate_name END,
         updated_at = datetime('now')
     `);
 
@@ -409,7 +412,7 @@ export async function syncVendoorOrders(options = {}) {
             const mCode = ord.merchant_code || null;
             const mName = ord.merchant_name || ord.account || 'Unassigned';
             const affCode = ord.affiliate_code || null;
-            const affName = ord.affiliate_name || null;
+            const mktName = ord.marketer_name || ord.affiliate_name || null;
 
             insertOrderStmt.run(
               ord.order_code,
@@ -419,7 +422,8 @@ export async function syncVendoorOrders(options = {}) {
               mCode,
               mName,
               affCode,
-              affName,
+              mktName,
+              mktName,
               originalSourceDate,
               originalCreatedAt,
               operationalBusinessDate,
@@ -437,7 +441,7 @@ export async function syncVendoorOrders(options = {}) {
               }
             }
             if (affCode) {
-              try { upsertMarketerStmt.run(affCode, affName); } catch (_) {}
+              try { upsertMarketerStmt.run(affCode, mktName, mktName); } catch (_) {}
             }
 
             if (isOrderActive && !isHistoricalSync) {
@@ -455,7 +459,8 @@ export async function syncVendoorOrders(options = {}) {
                   sourceType,
                   mCode,
                   mName,
-                  affCode
+                  affCode,
+                  mktName
                 );
               } catch (_) {}
             } else if (!isHistoricalSync) {

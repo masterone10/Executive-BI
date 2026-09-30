@@ -464,8 +464,25 @@ export function mergeSpecificOrdersPool(workDate) {
   // Save to database
   const insertOrder = db.prepare(`
     INSERT INTO current_work_orders (
-      source_file_id, work_date, order_code, account, status, order_date, source_file_slot, merchant_code, file_name, source_type, tracking_id, priority, work_state
-    ) VALUES (null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      source_file_id, work_date, order_code, account, status, order_date, source_file_slot, merchant_code, file_name, source_type, tracking_id, priority, work_state, merchant_name, affiliate_code, marketer_name
+    ) VALUES (null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const upsertMerchant = db.prepare(`
+    INSERT INTO merchants (merchant_code, merchant_name, updated_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(merchant_code) DO UPDATE SET
+      merchant_name = excluded.merchant_name,
+      updated_at = datetime('now')
+  `);
+
+  const upsertMarketer = db.prepare(`
+    INSERT INTO marketers (affiliate_code, marketer_name, affiliate_name, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(affiliate_code) DO UPDATE SET
+      marketer_name = CASE WHEN excluded.marketer_name IS NOT NULL AND excluded.marketer_name != '' THEN excluded.marketer_name ELSE marketers.marketer_name END,
+      affiliate_name = CASE WHEN excluded.affiliate_name IS NOT NULL AND excluded.affiliate_name != '' THEN excluded.affiliate_name ELSE marketers.affiliate_name END,
+      updated_at = datetime('now')
   `);
 
   const tx = db.transaction(() => {
@@ -476,6 +493,11 @@ export function mergeSpecificOrdersPool(workDate) {
       const ord = uniqueOrders[i];
       const trackingId = ord.tracking_id || generateTrackingId(ord.order_code, workDate, i + 1);
       const prio = ord.priority || (String(ord.priority || '').toUpperCase().includes('FAST') ? 'FAST_TRACK' : 'REGULAR');
+      const mName = ord.merchant_name || ord.account || null;
+      const mCode = ord.merchant_code || null;
+      const affCode = ord.affiliate_code || null;
+      const mktName = ord.marketer_name || null;
+
       insertOrder.run(
         workDate,
         ord.order_code,
@@ -483,13 +505,23 @@ export function mergeSpecificOrdersPool(workDate) {
         ord.status,
         ord.order_date || null,
         ord.source_file_slot || 1,
-        ord.merchant_code || null,
+        mCode,
         ord.file_name || null,
         ord.status === 'Pending' ? 'PENDING' : 'NEW',
         trackingId,
         prio,
-        ord.work_state || 'UNASSIGNED'
+        ord.work_state || 'UNASSIGNED',
+        mName,
+        affCode,
+        mktName
       );
+
+      if (mCode && mName) {
+        try { upsertMerchant.run(mCode, mName); } catch (_) {}
+      }
+      if (affCode) {
+        try { upsertMarketer.run(affCode, mktName, mktName); } catch (_) {}
+      }
     }
 
     const insertSummary = db.prepare(`
@@ -620,8 +652,10 @@ export function saveCurrentWorkOrders(workDate, orders, fileName) {
   const fileId = fileRes.lastInsertRowid;
 
   const insertOrder = db.prepare(`
-    INSERT INTO current_work_orders (source_file_id, work_date, order_code, account, status, order_date, tracking_id, priority, work_state)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO current_work_orders (
+      source_file_id, work_date, order_code, account, status, order_date, tracking_id, priority, work_state,
+      merchant_code, merchant_name, affiliate_code, marketer_name
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(work_date, order_code) DO UPDATE SET
       account = excluded.account,
       status = excluded.status,
@@ -629,6 +663,27 @@ export function saveCurrentWorkOrders(workDate, orders, fileName) {
       tracking_id = COALESCE(excluded.tracking_id, current_work_orders.tracking_id),
       priority = COALESCE(excluded.priority, current_work_orders.priority),
       work_state = COALESCE(excluded.work_state, current_work_orders.work_state),
+      merchant_code = COALESCE(excluded.merchant_code, current_work_orders.merchant_code),
+      merchant_name = COALESCE(excluded.merchant_name, current_work_orders.merchant_name),
+      affiliate_code = COALESCE(excluded.affiliate_code, current_work_orders.affiliate_code),
+      marketer_name = COALESCE(excluded.marketer_name, current_work_orders.marketer_name),
+      updated_at = datetime('now')
+  `);
+
+  const upsertMerchant = db.prepare(`
+    INSERT INTO merchants (merchant_code, merchant_name, updated_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(merchant_code) DO UPDATE SET
+      merchant_name = excluded.merchant_name,
+      updated_at = datetime('now')
+  `);
+
+  const upsertMarketer = db.prepare(`
+    INSERT INTO marketers (affiliate_code, marketer_name, affiliate_name, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(affiliate_code) DO UPDATE SET
+      marketer_name = CASE WHEN excluded.marketer_name IS NOT NULL AND excluded.marketer_name != '' THEN excluded.marketer_name ELSE marketers.marketer_name END,
+      affiliate_name = CASE WHEN excluded.affiliate_name IS NOT NULL AND excluded.affiliate_name != '' THEN excluded.affiliate_name ELSE marketers.affiliate_name END,
       updated_at = datetime('now')
   `);
 
@@ -638,6 +693,11 @@ export function saveCurrentWorkOrders(workDate, orders, fileName) {
       const ord = orders[i];
       const tid = ord.tracking_id || generateTrackingId(ord.order_code, workDate, i + 1);
       const prio = ord.priority || (String(ord.priority || '').toUpperCase().includes('FAST') ? 'FAST_TRACK' : 'REGULAR');
+      const mName = ord.merchant_name || ord.account || null;
+      const mCode = ord.merchant_code || null;
+      const affCode = ord.affiliate_code || null;
+      const mktName = ord.marketer_name || null;
+
       insertOrder.run(
         fileId,
         workDate,
@@ -647,8 +707,19 @@ export function saveCurrentWorkOrders(workDate, orders, fileName) {
         ord.order_date,
         tid,
         prio,
-        ord.work_state || 'UNASSIGNED'
+        ord.work_state || 'UNASSIGNED',
+        mCode,
+        mName,
+        affCode,
+        mktName
       );
+
+      if (mCode && mName) {
+        try { upsertMerchant.run(mCode, mName); } catch (_) {}
+      }
+      if (affCode) {
+        try { upsertMarketer.run(affCode, mktName, mktName); } catch (_) {}
+      }
     }
   });
 
