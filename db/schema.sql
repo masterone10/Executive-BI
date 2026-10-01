@@ -562,6 +562,36 @@ CREATE TABLE IF NOT EXISTS vendoor_bootstrap_state (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Operational Review & Phone Duplicate Monitoring Alerts Table
+CREATE TABLE IF NOT EXISTS phone_match_alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_date TEXT NOT NULL,
+  order_code TEXT NOT NULL,
+  phone_a_raw TEXT,
+  phone_b_raw TEXT,
+  phone_a_normalized TEXT,
+  phone_b_normalized TEXT,
+  match_status TEXT DEFAULT 'MATCH',
+  alert_type TEXT DEFAULT 'PHONE_DUPLICATE_CURRENT', -- 'PHONE_DUPLICATE_CURRENT', 'PHONE_DUPLICATE_CREATED_BY_EMPLOYEE', 'PHONE_DUPLICATE_RESOLVED'
+  employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+  employee_name TEXT NOT NULL DEFAULT 'Unresolved',
+  raw_actor_name TEXT,
+  source_event_timestamp TEXT,
+  source_action TEXT,
+  attribution_status TEXT DEFAULT 'UNRESOLVED', -- 'PROVEN_CS_PHONE_EDIT', 'UNRESOLVED'
+  status TEXT DEFAULT 'ACTIVE',                 -- 'ACTIVE', 'RESOLVED'
+  source TEXT DEFAULT 'VENDOOR_SYNC',
+  details_json TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_phone_alerts_date ON phone_match_alerts(work_date);
+CREATE INDEX IF NOT EXISTS idx_phone_alerts_order ON phone_match_alerts(order_code);
+CREATE INDEX IF NOT EXISTS idx_phone_alerts_emp ON phone_match_alerts(employee_name);
+CREATE INDEX IF NOT EXISTS idx_phone_alerts_status ON phone_match_alerts(status);
+CREATE INDEX IF NOT EXISTS idx_phone_alerts_type ON phone_match_alerts(alert_type);
+
 -- High-performance lookup & analytics indexes
 CREATE INDEX IF NOT EXISTS idx_raw_logs_lookup ON raw_log_records(work_date, order_code, employee_name, event_datetime);
 CREATE INDEX IF NOT EXISTS idx_raw_logs_workdate ON raw_log_records(work_date);
@@ -716,6 +746,7 @@ CREATE TABLE IF NOT EXISTS employee_capacities (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   employee_id INTEGER NOT NULL UNIQUE REFERENCES employees(id) ON DELETE CASCADE,
   max_orders INTEGER NOT NULL DEFAULT 40,
+  per_distribution_limit INTEGER DEFAULT NULL,
   config_version INTEGER DEFAULT 1,
   updated_at TEXT DEFAULT (datetime('now')),
   updated_by TEXT DEFAULT 'Supervisor'

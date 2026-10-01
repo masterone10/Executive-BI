@@ -20,6 +20,7 @@ import { computePerformanceFromRecords, savePerformanceSnapshotToDB } from '../p
 import { isCsEmployee } from '../parser.js';
 import { attachEligibleArrivedOrders, getDispatcherConfig } from './dispatcher.js';
 import { syncAndRestoreObservedTeam } from '../working_team_ops.js';
+import { evaluateAndRecordOrderPhoneDuplicate, isQualifyingPhoneMutationAction } from '../employee_evaluation.js';
 
 /**
  * Generate a unique run ID for the sync batch
@@ -345,7 +346,7 @@ export async function syncVendoorOrders(options = {}) {
       WHERE work_date = ? AND order_code = ?
     `);
 
-    const checkExistingStmt = db.prepare('SELECT id, status, account, source_date FROM vendoor_orders WHERE order_code = ?');
+    const checkExistingStmt = db.prepare('SELECT id, status, account, source_date, raw_payload_json FROM vendoor_orders WHERE order_code = ?');
 
     for (const currentStatus of statusesToFetch) {
       let reportedTotal = null;
@@ -433,6 +434,15 @@ export async function syncVendoorOrders(options = {}) {
               JSON.stringify(ord),
               syncRunId
             );
+
+            // Operational Review: Evaluate exact phone vs phone2 duplicate state
+            try {
+              let prevOrderData = null;
+              if (existing && existing.raw_payload_json) {
+                try { prevOrderData = JSON.parse(existing.raw_payload_json); } catch (_) {}
+              }
+              evaluateAndRecordOrderPhoneDuplicate(ord, prevOrderData, db);
+            } catch (_) {}
 
             if (mCode) {
               try { upsertMerchantStmt.run(mCode, mName); } catch (_) {}

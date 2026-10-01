@@ -3,6 +3,7 @@ import { db } from '../db/index.js';
 import { parseDailyLogBuffer, parseDate, matchEmployeeInMaster, normalizeEmployeeName, isCSName, isCsEmployee, isOperationallyActiveCsEmployee } from './parser.js';
 import { computePerformanceFromRecords } from './performance.js';
 import { extractCanonicalStatus } from './vendoor/actions.js';
+import { compareOrderPhoneNumbers, getPhoneMatchAlertHistory } from './employee_evaluation.js';
 import {
   getCairoBusinessDate,
   isTodayBusinessDate,
@@ -15,6 +16,7 @@ import {
   normalizeTimeToSeconds,
   extractCairoDateTimeComponents
 } from './time_utils.js';
+import { executeEnterpriseAllocation } from './enterprise_allocation.js';
 
 /**
  * ============================================================
@@ -476,6 +478,40 @@ export function getOrderTracking(workDate, orderCode) {
     isAssignedWork = actualEmployees.some(emp => assignedEmployees.includes(emp));
   }
 
+  // Fetch Phone Details & Duplication State
+  let primaryPhone = null;
+  let additionalPhone = null;
+  let phoneComparison = null;
+  let phoneAlert = null;
+
+  try {
+    const vo = db.prepare('SELECT raw_payload_json FROM vendoor_orders WHERE order_code = ?').get(cleanCode);
+    if (vo && vo.raw_payload_json) {
+      const p = JSON.parse(vo.raw_payload_json);
+      primaryPhone = p.phone || (p.raw_source && p.raw_source.phone) || null;
+      additionalPhone = p.phone2 || p.alt_phone || (p.raw_source && (p.raw_source.phone2 || p.raw_source.alt_phone)) || null;
+    }
+  } catch (_) {}
+
+  try {
+    const alertRow = db.prepare(`
+      SELECT * FROM phone_match_alerts
+      WHERE order_code = ?
+      ORDER BY id DESC LIMIT 1
+    `).get(cleanCode);
+    if (alertRow) {
+      phoneAlert = alertRow;
+      if (!primaryPhone) primaryPhone = alertRow.phone_a_raw;
+      if (!additionalPhone) additionalPhone = alertRow.phone_b_raw;
+    }
+  } catch (_) {}
+
+  if (primaryPhone || additionalPhone) {
+    phoneComparison = compareOrderPhoneNumbers(primaryPhone, additionalPhone);
+  }
+
+  const phoneAlertsList = getPhoneMatchAlertHistory(cleanCode, db);
+
   return {
     order_code: cleanCode,
     tracking_id: trackingId,
@@ -498,6 +534,13 @@ export function getOrderTracking(workDate, orderCode) {
     current_status: currentFinalStatus,
     is_assigned_work: isAssignedWork,
     is_worked_outside_allocation: ordersWorked && !isAssignedWork,
+    primary_phone: primaryPhone,
+    additional_phone: additionalPhone,
+    phone_comparison: phoneComparison,
+    phone_match_alert: phoneAlert,
+    is_phone_duplicate: phoneComparison ? phoneComparison.is_match : false,
+    phone_duplicate_status: (phoneComparison && phoneComparison.is_match) ? 'DUPLICATE' : 'UNIQUE',
+    phone_alerts: phoneAlertsList,
     timeline,
   };
 }
@@ -3110,6 +3153,38 @@ export function getOrderFullHistory(workDate, orderCodeOrTrackingId) {
     ORDER BY event_datetime ASC, id ASC
   `).all(workDate, orderCode);
 
+  // Fetch Phone Details & Duplication State
+  let primaryPhone = null;
+  let additionalPhone = null;
+  let phoneComparison = null;
+  let phoneAlert = null;
+
+  try {
+    const vo = db.prepare('SELECT raw_payload_json FROM vendoor_orders WHERE order_code = ?').get(orderCode);
+    if (vo && vo.raw_payload_json) {
+      const p = JSON.parse(vo.raw_payload_json);
+      primaryPhone = p.phone || (p.raw_source && p.raw_source.phone) || null;
+      additionalPhone = p.phone2 || p.alt_phone || (p.raw_source && (p.raw_source.phone2 || p.raw_source.alt_phone)) || null;
+    }
+  } catch (_) {}
+
+  try {
+    const alertRow = db.prepare(`
+      SELECT * FROM phone_match_alerts
+      WHERE order_code = ?
+      ORDER BY id DESC LIMIT 1
+    `).get(orderCode);
+    if (alertRow) {
+      phoneAlert = alertRow;
+      if (!primaryPhone) primaryPhone = alertRow.phone_a_raw;
+      if (!additionalPhone) additionalPhone = alertRow.phone_b_raw;
+    }
+  } catch (_) {}
+
+  if (primaryPhone || additionalPhone) {
+    phoneComparison = compareOrderPhoneNumbers(primaryPhone, additionalPhone);
+  }
+
   return {
     order_code: orderCode,
     tracking_id: trackingId || (events[0] ? events[0].tracking_id : null),
@@ -3120,6 +3195,11 @@ export function getOrderFullHistory(workDate, orderCodeOrTrackingId) {
     account: ord ? ord.account : null,
     assigned_employee: ord ? ord.assigned_employee_name : null,
     total_events: events.length + rawLogs.length,
+    primary_phone: primaryPhone,
+    additional_phone: additionalPhone,
+    phone_comparison: phoneComparison,
+    phone_match_alert: phoneAlert,
+    is_phone_duplicate: phoneComparison ? phoneComparison.is_match : false,
     timeline: events,
     lifecycle_events: events,
     raw_logs: rawLogs
@@ -3378,6 +3458,42 @@ export function completeOrder(workDate, orderCode, employeeId) {
       timestamp: now
     });
   })();
+
+  // Immediate Refill Hook (Sections 28, 29, 30, 107)
+  // When employee finishes their active batch (current workload = 0), trigger immediate refill if unassigned work remains
+  try {
+    const activeRow = db.prepare(`
+      SELECT COUNT(*) as c FROM current_work_orders 
+      WHERE work_date = ? AND assigned_employee_id = ? 
+        AND (work_state IS NULL OR work_state NOT IN ('COMPLETED', 'CANCELLED'))
+    `).get(date, emp.id);
+
+    if (activeRow && activeRow.c === 0) {
+      const unassignedRow = db.prepare(`
+        SELECT COUNT(*) as c FROM current_work_orders 
+        WHERE work_date = ? AND (assigned_employee_id IS NULL OR work_state = 'UNASSIGNED')
+      `).get(date);
+
+      if (unassignedRow && unassignedRow.c > 0) {
+        const capRow = db.prepare('SELECT max_orders FROM employee_capacities WHERE employee_id = ?').get(emp.id);
+        const maxCap = capRow ? capRow.max_orders : 40;
+        const completedRow = db.prepare(`
+          SELECT COUNT(*) as c FROM current_work_orders 
+          WHERE work_date = ? AND assigned_employee_id = ? AND work_state = 'COMPLETED'
+        `).get(date, emp.id);
+
+        if (completedRow && completedRow.c < maxCap) {
+          try {
+            executeEnterpriseAllocation(date, {
+              mode: 'ACTIVE',
+              trigger: 'IMMEDIATE_COMPLETION_REFILL',
+              targetEmployeeId: emp.id
+            });
+          } catch (_) {}
+        }
+      }
+    }
+  } catch (_) {}
 
   return { success: true, work_state: 'COMPLETED', order_code: cleanCode };
 }

@@ -163,7 +163,9 @@ import {
 import {
   getEmployeeEvaluation,
   getPhoneMatchAlerts,
-  getEmployeeEvaluationDetail
+  getEmployeeEvaluationDetail,
+  getPhoneMatchAlertHistory,
+  resolvePhoneMatchAlertById
 } from './services/employee_evaluation.js';
 import {
   getEmployeeLifecycleProfile,
@@ -3505,6 +3507,33 @@ app.get('/api/phone-match-alerts', (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/phone-match-alerts/history/:orderCode', (req, res) => {
+  try {
+    const history = getPhoneMatchAlertHistory(req.params.orderCode);
+    res.json({
+      success: true,
+      order_code: req.params.orderCode,
+      total_records: history.length,
+      history
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/phone-match-alerts/:id/resolve', (req, res) => {
+  try {
+    const resolved = resolvePhoneMatchAlertById(req.params.id);
+    res.json({
+      success: resolved,
+      id: req.params.id,
+      status: resolved ? 'RESOLVED' : 'NOT_FOUND_OR_ALREADY_RESOLVED'
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

@@ -7288,6 +7288,43 @@ async function loadOrderTrackingView(orderCodeToSearch) {
             <b style="color:var(--blue);font-size:14px">${fmt(orderData.real_actions_count)}</b>
           </div>
         </div>
+
+        <!-- Phone Numbers & Duplicate Comparison Section -->
+        <div style="margin-top:14px;padding:14px;background:#fff;border-radius:10px;border:1px solid #E2E8F0">
+          <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
+            <span>☎ Phone Numbers & Comparison</span>
+            ${orderData.is_phone_duplicate ? '<span class="tag" style="background:#FEE2E2;color:#DC2626;font-weight:800;font-size:11.5px">⚠️ DUPLICATE PHONE</span>' : '<span class="tag" style="background:#DCFCE7;color:#15803D;font-weight:700;font-size:11.5px">✓ Valid Numbers</span>'}
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px">
+            <div>
+              <span style="font-size:11px;color:var(--mut);display:block">Primary Phone (phone)</span>
+              <span style="font-family:monospace;font-size:13px;font-weight:700;color:var(--navy)">${escapeHtml(orderData.primary_phone || '—')}</span>
+            </div>
+            <div>
+              <span style="font-size:11px;color:var(--mut);display:block">Additional Phone (phone2)</span>
+              <span style="font-family:monospace;font-size:13px;font-weight:700;color:var(--navy)">${escapeHtml(orderData.additional_phone || '—')}</span>
+            </div>
+            <div>
+              <span style="font-size:11px;color:var(--mut);display:block">Phone Comparison</span>
+              <span style="font-size:12.5px;font-weight:700;color:${orderData.is_phone_duplicate ? '#DC2626' : '#15803D'}">
+                ${orderData.is_phone_duplicate ? '⚠️ Normalized Match (Duplicate)' : (orderData.primary_phone && orderData.additional_phone ? '✓ Numbers Differ' : '—')}
+              </span>
+            </div>
+          </div>
+
+          ${orderData.is_phone_duplicate ? `
+            <div style="margin-top:12px;padding:10px 14px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px">
+              <div style="font-size:12.5px;font-weight:800;color:#DC2626;margin-bottom:4px">⚠️ DUPLICATE PHONE DETECTED</div>
+              <div style="font-size:12px;color:#7F1D1D;line-height:1.5">
+                <div><b>Alert Type:</b> ${escapeHtml(orderData.phone_match_alert?.alert_type || 'PHONE_DUPLICATE_CURRENT')}</div>
+                <div><b>Employee:</b> ${escapeHtml(orderData.phone_match_alert?.employee_name || 'Unresolved')} (${escapeHtml(orderData.phone_match_alert?.attribution_status || 'UNRESOLVED')})</div>
+                ${orderData.phone_match_alert?.source_action ? `<div><b>Source Action:</b> ${escapeHtml(orderData.phone_match_alert.source_action)}</div>` : ''}
+                ${orderData.phone_match_alert?.source_event_timestamp ? `<div><b>Date / Time:</b> ${escapeHtml(orderData.phone_match_alert.source_event_timestamp)}</div>` : ''}
+                ${(!orderData.phone_match_alert?.employee_id || orderData.phone_match_alert?.employee_name === 'Unresolved') ? '<div style="margin-top:4px;font-size:11.5px;color:#991B1B"><i>Reason: Duplicate exists but no employee phone-edit event was proven.</i></div>' : ''}
+              </div>
+            </div>
+          ` : ''}
+        </div>
       </div>
 
       <!-- Chronological Audit Timeline -->

@@ -67,7 +67,7 @@ export function getEnterpriseAllocationConfig(workDate = null) {
     ORDER BY version DESC LIMIT 1
   `).get();
 
-  const currentVersion = activeVer ? activeVer.version : 1;
+  const currentVersion = activeVer ? activeVer.version : 0;
   const publishedAt = activeVer ? activeVer.published_at : new Date().toISOString();
   const publishedBy = activeVer ? activeVer.published_by : 'System Initializer';
 
@@ -138,15 +138,17 @@ export function getEnterpriseAllocationConfig(workDate = null) {
     ORDER BY name ASC
   `).all().filter(e => isCsEmployee(e));
 
-  const empCapRows = db.prepare('SELECT employee_id, max_orders FROM employee_capacities').all();
-  const empCapMap = new Map(empCapRows.map(r => [r.employee_id, r.max_orders]));
+  const empCapRows = db.prepare('SELECT employee_id, max_orders, per_distribution_limit FROM employee_capacities').all();
+  const empCapMap = new Map(empCapRows.map(r => [r.employee_id, { max_orders: r.max_orders, per_distribution_limit: r.per_distribution_limit }]));
 
   // Current workload calculation for target date
   const targetDate = workDate || getCairoBusinessDate();
   const workloads = getEmployeesWorkloadMap(targetDate);
 
   const employeeCapacityList = activeCsEmployees.map(emp => {
-    const configuredMax = empCapMap.has(emp.id) ? empCapMap.get(emp.id) : 40;
+    const capInfo = empCapMap.get(emp.id) || { max_orders: 40, per_distribution_limit: null };
+    const configuredMax = capInfo.max_orders !== undefined ? capInfo.max_orders : 40;
+    const perDistLimit = capInfo.per_distribution_limit !== undefined ? capInfo.per_distribution_limit : null;
     const currentLoad = workloads.get(emp.id) || 0;
     const remainingCap = Math.max(0, configuredMax - currentLoad);
 
@@ -156,6 +158,7 @@ export function getEnterpriseAllocationConfig(workDate = null) {
       department: emp.department,
       team_membership: emp.team_membership || 'Both',
       max_orders: configuredMax,
+      per_distribution_limit: perDistLimit,
       current_workload: currentLoad,
       remaining_capacity: remainingCap
     };
@@ -502,10 +505,11 @@ export function saveEnterpriseAllocationConfig(draftConfig, operator = 'Supervis
 
     // C. Persist Employee Capacities
     const upsertCap = db.prepare(`
-      INSERT INTO employee_capacities (employee_id, max_orders, config_version, updated_at, updated_by)
-      VALUES (?, ?, ?, datetime('now'), ?)
+      INSERT INTO employee_capacities (employee_id, max_orders, per_distribution_limit, config_version, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, datetime('now'), ?)
       ON CONFLICT(employee_id) DO UPDATE SET
         max_orders = excluded.max_orders,
+        per_distribution_limit = excluded.per_distribution_limit,
         config_version = excluded.config_version,
         updated_at = datetime('now'),
         updated_by = excluded.updated_by
@@ -515,17 +519,22 @@ export function saveEnterpriseAllocationConfig(draftConfig, operator = 'Supervis
     for (const emp of employees) {
       const empId = Number(emp.employee_id || emp.id);
       const maxOrders = Number(emp.max_orders);
-      const existing = db.prepare('SELECT max_orders FROM employee_capacities WHERE employee_id = ?').get(empId);
-      if (!existing || existing.max_orders !== maxOrders) {
+      const perDistLimit = (emp.per_distribution_limit !== undefined && emp.per_distribution_limit !== null && !isNaN(parseInt(emp.per_distribution_limit, 10)))
+        ? parseInt(emp.per_distribution_limit, 10)
+        : null;
+      const existing = db.prepare('SELECT max_orders, per_distribution_limit FROM employee_capacities WHERE employee_id = ?').get(empId);
+      if (!existing || existing.max_orders !== maxOrders || existing.per_distribution_limit !== perDistLimit) {
         employeesChangedCount++;
         diffSummary.employees.push({
           employee_id: empId,
           employee_name: emp.employee_name || emp.name,
           old_max: existing ? existing.max_orders : null,
-          new_max: maxOrders
+          new_max: maxOrders,
+          old_per_distribution_limit: existing ? existing.per_distribution_limit : null,
+          new_per_distribution_limit: perDistLimit
         });
       }
-      upsertCap.run(empId, maxOrders, newVersion, operator);
+      upsertCap.run(empId, maxOrders, perDistLimit, newVersion, operator);
     }
 
     // D. Mark prior versions inactive and record new version
@@ -872,11 +881,37 @@ export function evaluateEmployeeAllocationEligibility(employeeId, workDate, opti
     }
   }
 
-  // 5. Individual Capacity Hard Cap
-  const capRow = db.prepare('SELECT max_orders FROM employee_capacities WHERE employee_id = ?').get(employeeId);
+  // 5. Individual Capacity Hard Cap & Per-Distribution Limit
+  const capRow = db.prepare('SELECT max_orders, per_distribution_limit FROM employee_capacities WHERE employee_id = ?').get(employeeId);
   const configuredMax = capRow ? capRow.max_orders : 40;
+  const perDistLimit = (capRow && capRow.per_distribution_limit !== null && capRow.per_distribution_limit !== undefined)
+    ? Number(capRow.per_distribution_limit)
+    : (options.per_distribution_limits && options.per_distribution_limits[employeeId] !== undefined ? Number(options.per_distribution_limits[employeeId]) : null);
   const currentWorkload = options.currentWorkload !== undefined ? options.currentWorkload : getEmployeeCurrentWorkload(employeeId, workDate);
-  const remainingCapacity = Math.max(0, configuredMax - currentWorkload);
+  let totalWorked = currentWorkload;
+  try {
+    const totalWorkedRow = db.prepare(`
+      SELECT COUNT(*) as cnt FROM current_work_orders 
+      WHERE work_date = ? AND assigned_employee_id = ? AND (work_state IS NULL OR work_state != 'CANCELLED')
+    `).get(workDate, employeeId);
+    if (totalWorkedRow && totalWorkedRow.cnt !== undefined) {
+      totalWorked = Math.max(currentWorkload, totalWorkedRow.cnt);
+    }
+  } catch (_) {}
+  const remainingCapacity = Math.max(0, configuredMax - totalWorked);
+
+  // 5b. Read Historical Completion Speed / Actions from verified performance snapshots
+  let historicalActions = 0;
+  let efficiencyScore = 0;
+  try {
+    const snap = db.prepare(`
+      SELECT AVG(real_actions) as avg_act, AVG(efficiency_score) as avg_eff
+      FROM performance_snapshots
+      WHERE (employee_id = ? OR employee_name = ?) AND date <= ?
+    `).get(emp.id, emp.name, workDate);
+    if (snap && snap.avg_act) historicalActions = Math.round(snap.avg_act);
+    if (snap && snap.avg_eff) efficiencyScore = Math.round(snap.avg_eff);
+  } catch (_) {}
 
   if (remainingCapacity <= 0) {
     exclusionReasons.push(ALLOCATION_ERROR_CODES.EMPLOYEE_CAPACITY_EXHAUSTED);
@@ -913,8 +948,11 @@ export function evaluateEmployeeAllocationEligibility(employeeId, workDate, opti
       department: emp.department,
       team_membership: emp.team_membership || 'Both',
       configured_max: configuredMax,
+      per_distribution_limit: perDistLimit,
       current_workload: currentWorkload,
       remaining_capacity: remainingCapacity,
+      historical_actions: historicalActions,
+      efficiency_score: efficiencyScore,
       last_activity_time: lastActivityTimeStr
     },
     daily_state: dailyState,
@@ -1032,6 +1070,103 @@ export function evaluatePendingRescueOperation(workDate, planningContext = null)
     eligible_rescue_participants: eligibleRescueParticipants,
     eligible_support_orders: eligibleNewSupportOrders.slice(0, boundedSupportQuantity),
     status: rescueTriggered ? 'TRIGGERED' : (pendingPressureUnits > 0 ? 'PRESSURE_DETECTED_BELOW_THRESHOLD' : 'NORMAL')
+  };
+}
+
+/**
+ * Evaluates the 2x Status Pressure Ratio (Section 8-12):
+ * - Checks if larger_status_count >= 2 * smaller_status_count
+ * - Direction is NEW -> PENDING if PENDING >= 2 * NEW
+ * - Direction is PENDING -> NEW if NEW >= 2 * PENDING
+ * - If larger < 2 * smaller: trigger = false
+ * - Handles zero-cases safely without division by zero.
+ */
+export function evaluateStatusPressureRatio(newCount, pendingCount) {
+  const newC = Math.max(0, Number(newCount) || 0);
+  const pendC = Math.max(0, Number(pendingCount) || 0);
+
+  let ratio = 1;
+  let trigger = false;
+  let direction = 'NONE';
+  let largerStatus = 'BALANCED';
+  let smallerStatus = 'BALANCED';
+  let largerCount = Math.max(newC, pendC);
+  let smallerCount = Math.min(newC, pendC);
+
+  if (newC === 0 && pendC === 0) {
+    return {
+      new_count: 0,
+      pending_count: 0,
+      ratio: 1,
+      trigger: false,
+      direction: 'NONE',
+      larger_status: 'BALANCED',
+      smaller_status: 'BALANCED',
+      reason: 'Both NEW and PENDING queues are empty (0/0)'
+    };
+  }
+
+  if (newC === 0 && pendC > 0) {
+    return {
+      new_count: 0,
+      pending_count: pendC,
+      ratio: Infinity,
+      trigger: true,
+      direction: 'NEW_TO_PENDING',
+      larger_status: 'PENDING',
+      smaller_status: 'NEW',
+      larger_count: pendC,
+      smaller_count: 0,
+      reason: `Zero NEW orders; ${pendC} PENDING orders trigger PENDING pressure direction (NEW -> PENDING)`
+    };
+  }
+
+  if (pendC === 0 && newC > 0) {
+    return {
+      new_count: newC,
+      pending_count: 0,
+      ratio: Infinity,
+      trigger: true,
+      direction: 'PENDING_TO_NEW',
+      larger_status: 'NEW',
+      smaller_status: 'PENDING',
+      larger_count: newC,
+      smaller_count: 0,
+      reason: `Zero PENDING orders; ${newC} NEW orders trigger NEW pressure direction (PENDING -> NEW)`
+    };
+  }
+
+  if (pendC >= newC) {
+    ratio = pendC / newC;
+    largerStatus = 'PENDING';
+    smallerStatus = 'NEW';
+    if (pendC >= 2 * newC) {
+      trigger = true;
+      direction = 'NEW_TO_PENDING';
+    }
+  } else {
+    ratio = newC / pendC;
+    largerStatus = 'NEW';
+    smallerStatus = 'PENDING';
+    if (newC >= 2 * pendC) {
+      trigger = true;
+      direction = 'PENDING_TO_NEW';
+    }
+  }
+
+  return {
+    new_count: newC,
+    pending_count: pendC,
+    ratio: parseFloat(ratio.toFixed(4)),
+    trigger,
+    direction,
+    larger_status: largerStatus,
+    smaller_status: smallerStatus,
+    larger_count: largerCount,
+    smaller_count: smallerCount,
+    reason: trigger
+      ? `${largerStatus} count (${largerCount}) is >= 2x ${smallerStatus} count (${smallerCount}) [Ratio: ${ratio.toFixed(2)}x]. Direction: ${direction === 'NEW_TO_PENDING' ? 'NEW -> PENDING' : 'PENDING -> NEW'}`
+      : `${largerStatus} count (${largerCount}) is < 2x ${smallerStatus} count (${smallerCount}) [Ratio: ${ratio.toFixed(2)}x]. Imbalance threshold not met.`
   };
 }
 
@@ -1245,8 +1380,13 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
   }
 
   // Cross-Stream Disambiguation in Preserved Orders (Rule 4: Zero mixed streams per employee)
+  const cleanPreservedOrders = [];
   const empPreservedMap = new Map();
   for (const p of preservedOrders) {
+    if (String(p.work_state || '').toUpperCase() === 'COMPLETED') {
+      cleanPreservedOrders.push(p);
+      continue;
+    }
     if (!empPreservedMap.has(p.assigned_employee_id)) {
       empPreservedMap.set(p.assigned_employee_id, { newOrders: [], pendingOrders: [] });
     }
@@ -1255,7 +1395,6 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     else bucket.pendingOrders.push(p);
   }
 
-  const cleanPreservedOrders = [];
   const disambiguatedUnassignedCodes = [];
   for (const [empId, bucket] of empPreservedMap.entries()) {
     if (bucket.newOrders.length > 0 && bucket.pendingOrders.length > 0) {
@@ -1302,10 +1441,10 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     };
   }
 
-  // Compute active workload per employee based strictly on preserved orders
+  // Compute active workload per employee based strictly on active preserved orders
   const presWorkloadMap = new Map();
   for (const p of preservedOrders) {
-    if (p.assigned_employee_id) {
+    if (p.assigned_employee_id && String(p.work_state || '').toUpperCase() !== 'COMPLETED') {
       presWorkloadMap.set(p.assigned_employee_id, (presWorkloadMap.get(p.assigned_employee_id) || 0) + 1);
     }
   }
@@ -1335,12 +1474,14 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     });
 
     if (elig.is_eligible) {
-      eligibleCandidates.push({
-        ...elig.employee,
-        daily_state: elig.daily_state,
-        next_event_due: elig.next_event_due,
-        assigned_in_this_run: 0
-      });
+      if (options.targetEmployeeId === undefined || options.targetEmployeeId === null || emp.employee_id === Number(options.targetEmployeeId)) {
+        eligibleCandidates.push({
+          ...elig.employee,
+          daily_state: elig.daily_state,
+          next_event_due: elig.next_event_due,
+          assigned_in_this_run: 0
+        });
+      }
     } else {
       excludedCandidates.push({
         employee_id: emp.employee_id,
@@ -1433,11 +1574,198 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     }
   }
 
-  // 7. Order-Level Prioritized Queue
+  // 6c. Dynamic Team Sizing & 2x Status Pressure Evaluation (Contract Section 8-27, 35-56)
+  const unassignedNewCount = unassignedOrders.filter(o => !(o.status || '').toLowerCase().includes('pending') && o.source_type !== 'PENDING').length;
+  const unassignedPendingCount = unassignedOrders.filter(o => (o.status || '').toLowerCase().includes('pending') || o.source_type === 'PENDING').length;
+  const pressureRatioEval = evaluateStatusPressureRatio(unassignedNewCount, unassignedPendingCount);
+
+  // Classify Free vs Busy candidates
+  const freeCandidates = eligibleCandidates.filter(c => c.current_workload === 0);
+  const busyCandidates = eligibleCandidates.filter(c => c.current_workload > 0);
+  const rebalancingRequired = pressureRatioEval.trigger;
+  const movedCandidates = [];
+  const unselectedFreeCandidates = [];
+  const protectedCandidates = busyCandidates.map(c => ({
+    employee_id: c.id,
+    employee_name: c.name,
+    current_workload: c.current_workload,
+    capacity: c.configured_max,
+    remaining_capacity: c.remaining_capacity,
+    decision: 'PROTECTED',
+    reason: 'Employee has active current workload > 0; cannot be moved from current stream'
+  }));
+
+  let requiredSupportQuantity = 0;
+
+  if (rebalancingRequired) {
+    if (pressureRatioEval.direction === 'NEW_TO_PENDING') {
+      // PENDING pressure: compute dedicated PENDING capacity
+      const dedicatedPendingCap = eligibleCandidates
+        .filter(c => {
+          const mem = String(c.team_membership || 'Both').trim().toLowerCase();
+          return mem === 'pending' || mem === 'both';
+        })
+        .reduce((sum, c) => sum + c.remaining_capacity, 0);
+
+      const pendingDeficit = Math.max(0, unassignedPendingCount - dedicatedPendingCap);
+      requiredSupportQuantity = pendingDeficit > 0 ? pendingDeficit : Math.min(unassignedPendingCount, 40);
+
+      // Select minimum sufficient free NEW-only candidates
+      const freeNewCandidates = freeCandidates
+        .filter(c => String(c.team_membership || 'Both').trim().toLowerCase() === 'new')
+        .sort((a, b) => {
+          if ((b.historical_actions || 0) !== (a.historical_actions || 0)) {
+            return (b.historical_actions || 0) - (a.historical_actions || 0);
+          }
+          if (b.remaining_capacity !== a.remaining_capacity) {
+            return b.remaining_capacity - a.remaining_capacity;
+          }
+          return a.id - b.id;
+        });
+
+      let accumulatedCap = 0;
+      for (const c of freeNewCandidates) {
+        if (accumulatedCap < requiredSupportQuantity || movedCandidates.length === 0) {
+          accumulatedCap += c.remaining_capacity;
+          c.temporary_support_lane = 'PENDING';
+          movedCandidates.push({
+            employee_id: c.id,
+            employee_name: c.name,
+            from: 'NEW',
+            to: 'PENDING',
+            capacity: c.configured_max,
+            current_workload: c.current_workload,
+            remaining_capacity: c.remaining_capacity,
+            decision: 'TEMPORARY_SUPPORT',
+            reason: `Free employee selected for minimum sufficient pressure support (Need: ${requiredSupportQuantity}, Cap: ${c.remaining_capacity})`
+          });
+        } else {
+          unselectedFreeCandidates.push({
+            employee_id: c.id,
+            employee_name: c.name,
+            from: 'NEW',
+            capacity: c.configured_max,
+            current_workload: c.current_workload,
+            remaining_capacity: c.remaining_capacity,
+            decision: 'UNSELECTED_FREE',
+            reason: 'Employee is free but not required for current pressure deficit (Minimum Sufficient Support Rule)'
+          });
+        }
+      }
+    } else if (pressureRatioEval.direction === 'PENDING_TO_NEW') {
+      // NEW pressure: compute dedicated NEW capacity
+      const dedicatedNewCap = eligibleCandidates
+        .filter(c => {
+          const mem = String(c.team_membership || 'Both').trim().toLowerCase();
+          return mem === 'new' || mem === 'both';
+        })
+        .reduce((sum, c) => sum + c.remaining_capacity, 0);
+
+      const newDeficit = Math.max(0, unassignedNewCount - dedicatedNewCap);
+      requiredSupportQuantity = newDeficit > 0 ? newDeficit : Math.min(unassignedNewCount, 40);
+
+      // Select minimum sufficient free PENDING-only candidates
+      const freePendingCandidates = freeCandidates
+        .filter(c => String(c.team_membership || 'Both').trim().toLowerCase() === 'pending')
+        .sort((a, b) => {
+          if ((b.historical_actions || 0) !== (a.historical_actions || 0)) {
+            return (b.historical_actions || 0) - (a.historical_actions || 0);
+          }
+          if (b.remaining_capacity !== a.remaining_capacity) {
+            return b.remaining_capacity - a.remaining_capacity;
+          }
+          return a.id - b.id;
+        });
+
+      let accumulatedCap = 0;
+      for (const c of freePendingCandidates) {
+        if (accumulatedCap < requiredSupportQuantity || movedCandidates.length === 0) {
+          accumulatedCap += c.remaining_capacity;
+          c.temporary_support_lane = 'NEW';
+          movedCandidates.push({
+            employee_id: c.id,
+            employee_name: c.name,
+            from: 'PENDING',
+            to: 'NEW',
+            capacity: c.configured_max,
+            current_workload: c.current_workload,
+            remaining_capacity: c.remaining_capacity,
+            decision: 'TEMPORARY_SUPPORT',
+            reason: `Free employee selected for minimum sufficient pressure support (Need: ${requiredSupportQuantity}, Cap: ${c.remaining_capacity})`
+          });
+        } else {
+          unselectedFreeCandidates.push({
+            employee_id: c.id,
+            employee_name: c.name,
+            from: 'PENDING',
+            capacity: c.configured_max,
+            current_workload: c.current_workload,
+            remaining_capacity: c.remaining_capacity,
+            decision: 'UNSELECTED_FREE',
+            reason: 'Employee is free but not required for current pressure deficit (Minimum Sufficient Support Rule)'
+          });
+        }
+      }
+    }
+  }
+
+  const teamSizingDecision = {
+    work_date: workDate,
+    new_orders_count: unassignedNewCount,
+    pending_orders_count: unassignedPendingCount,
+    pressure_ratio: pressureRatioEval.ratio,
+    pressure_trigger: pressureRatioEval.trigger,
+    pressure_direction: pressureRatioEval.direction,
+    larger_status: pressureRatioEval.larger_status,
+    smaller_status: pressureRatioEval.smaller_status,
+    rebalancing_required: rebalancingRequired,
+    required_support_quantity: requiredSupportQuantity,
+    free_employees_count: freeCandidates.length,
+    busy_employees_count: busyCandidates.length,
+    selected_support_count: movedCandidates.length,
+    selected_support_capacity: movedCandidates.reduce((s, m) => s + m.remaining_capacity, 0),
+    moved_employees: movedCandidates,
+    unselected_free_employees: unselectedFreeCandidates,
+    protected_employees: protectedCandidates,
+    reason: pressureRatioEval.reason
+  };
+
+  // 6d. NEW Policy (Sections 16, 17, 18, 35, 36, 37, 108):
+  // When eligible distributable NEW count <= 100: exactly 1 employee -> NEW, rest of team -> PENDING
+  // When NEW > 100: expansion trigger active
+  const isSingleNewEmployeePolicyActive = unassignedNewCount > 0 && unassignedNewCount <= 100;
+  let designatedSingleNewEmployeeId = null;
+  // 7. Order-Level Prioritized Queue with PENDING Account-First & NEW FIFO
   const scheduledAccountsMap = new Map();
   const auditRecords = [];
   const proposedAssignments = [];
-  const eligibleOrdersQueue = [];
+  const eligibleNewOrders = [];
+  const pendingOrdersByAccount = new Map();
+
+  if (isSingleNewEmployeePolicyActive) {
+    const newCapableCandidates = eligibleCandidates.filter(c => {
+      const mem = String(c.team_membership || 'Both').trim().toLowerCase();
+      return mem === 'new' || mem === 'both';
+    }).sort((a, b) => {
+      const aPres = a.has_preserved_new ? 1 : 0;
+      const bPres = b.has_preserved_new ? 1 : 0;
+      if (bPres !== aPres) return bPres - aPres;
+      if (a.current_workload !== b.current_workload) return a.current_workload - b.current_workload;
+      return (b.historical_actions || 0) - (a.historical_actions || 0);
+    });
+
+    if (newCapableCandidates.length > 0) {
+      designatedSingleNewEmployeeId = newCapableCandidates[0].id;
+    }
+  } else if (unassignedNewCount > 100) {
+    auditRecords.push({
+      entity_type: 'WORKLOAD_STREAM',
+      entity_id: 'NEW',
+      decision: 'EXPANSION_TRIGGERED',
+      reason_code: 'NEW_EXPANSION_DYNAMIC_UNPROVEN_SIZING',
+      reason_details: `NEW count (${unassignedNewCount}) exceeds 100 expansion threshold. Dynamic staffing active across free CS capacity (Headcount multiplier formula unproven).`
+    });
+  }
 
   for (const ord of unassignedOrders) {
     const isPend = (ord.status || '').toLowerCase().includes('pending') || ord.source_type === 'PENDING';
@@ -1464,21 +1792,27 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     const isDelayed = isDelayedNewOrder(ord, workDate, canonicalNowStr);
     const priorityRank = isDelayed ? 1 : (isPend ? 3 : 2); // 1: Delayed NEW, 2: Normal NEW, 3: PENDING
 
-    eligibleOrdersQueue.push({
+    const orderRecord = {
       ...ord,
       work_type: workType,
       is_delayed: isDelayed,
       priority_rank: priorityRank,
       time_priority_rank: schedStatus.time_priority_rank
-    });
+    };
+
+    if (workType === 'NEW') {
+      eligibleNewOrders.push(orderRecord);
+    } else {
+      const accKey = ord.account || 'Unassigned';
+      if (!pendingOrdersByAccount.has(accKey)) {
+        pendingOrdersByAccount.set(accKey, []);
+      }
+      pendingOrdersByAccount.get(accKey).push(orderRecord);
+    }
   }
 
-  // Sort Orders strictly by Priority:
-  // 1. Time priority rank (scheduled windows)
-  // 2. Priority rank (1: Delayed NEW -> 2: Normal NEW -> 3: PENDING)
-  // 3. Oldest order date / created_at ASC
-  // 4. Order code ASC
-  eligibleOrdersQueue.sort((a, b) => {
+  // NEW Queue: Strictly FIFO by canonical Vendoor arrival time inside active schedule
+  eligibleNewOrders.sort((a, b) => {
     if (a.time_priority_rank !== b.time_priority_rank) return a.time_priority_rank - b.time_priority_rank;
     if (a.priority_rank !== b.priority_rank) return a.priority_rank - b.priority_rank;
     const dateA = a.order_date || a.created_at || workDate;
@@ -1487,6 +1821,25 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     return (a.order_code || '').localeCompare(b.order_code || '');
   });
 
+  // PENDING Queue: Grouped by Account, Largest Eligible Account First (Sections 48, 49, 50, 110)
+  const sortedPendingAccounts = Array.from(pendingOrdersByAccount.entries()).sort((a, b) => {
+    if (b[1].length !== a[1].length) return b[1].length - a[1].length;
+    return a[0].localeCompare(b[0]);
+  });
+
+  const flattenedPendingOrders = [];
+  for (const [_, accOrders] of sortedPendingAccounts) {
+    accOrders.sort((a, b) => {
+      const dateA = a.order_date || a.created_at || workDate;
+      const dateB = b.order_date || b.created_at || workDate;
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      return (a.order_code || '').localeCompare(b.order_code || '');
+    });
+    flattenedPendingOrders.push(...accOrders);
+  }
+
+  const eligibleOrdersQueue = [...eligibleNewOrders, ...flattenedPendingOrders];
+
   // 8. Initialize candidate work-lane locks
   for (const c of eligibleCandidates) {
     c.assigned_in_this_run = 0;
@@ -1494,24 +1847,43 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     c.assigned_pending = 0;
     c.assigned_accounts = new Set();
 
-    const presNew = preservedOrders.filter(o => o.assigned_employee_id === c.id && o.work_type === 'NEW').length;
-    const presPend = preservedOrders.filter(o => o.assigned_employee_id === c.id && (o.work_type === 'PENDING' || o.source_type === 'PENDING')).length;
+    const presNew = preservedOrders.filter(o => o.assigned_employee_id === c.id && o.work_type === 'NEW' && String(o.work_state || '').toUpperCase() !== 'COMPLETED').length;
+    const presPend = preservedOrders.filter(o => o.assigned_employee_id === c.id && (o.work_type === 'PENDING' || o.source_type === 'PENDING') && String(o.work_state || '').toUpperCase() !== 'COMPLETED').length;
 
     c.has_preserved_new = presNew > 0;
     c.has_preserved_pending = presPend > 0;
 
     const configuredTeam = String(c.team_membership || 'Both').trim().toLowerCase();
-    if (configuredTeam === 'new') {
+
+    if (isSingleNewEmployeePolicyActive) {
+      if (c.id === designatedSingleNewEmployeeId) {
+        c.locked_lane = 'NEW';
+      } else if (!c.has_preserved_new) {
+        c.locked_lane = 'PENDING';
+      } else {
+        c.locked_lane = configuredTeam === 'new' ? 'NEW' : 'PENDING';
+      }
+    } else if (c.temporary_support_lane) {
+      c.locked_lane = c.temporary_support_lane;
+    } else if (configuredTeam === 'new') {
       c.locked_lane = 'NEW';
     } else if (configuredTeam === 'pending') {
       c.locked_lane = 'PENDING';
     } else if (presNew > 0 && presPend === 0) {
-      c.locked_lane = 'NEW';
-      c.has_preserved_new = true;
-      c.has_preserved_pending = false;
+      if (eligibleCandidates.length === 1 && c.next_event_due === 'PENDING' && unassignedNewCount === 0) {
+        c.locked_lane = 'PENDING';
+        c.has_preserved_pending = true;
+        c.has_preserved_new = false;
+      } else {
+        c.locked_lane = 'NEW';
+        c.has_preserved_new = true;
+        c.has_preserved_pending = false;
+      }
     } else if (presPend > 0 && presNew === 0) {
       if (eligibleCandidates.length === 1 && c.next_event_due === 'NEW' && c.daily_state?.new_event_consumed === 0) {
         c.locked_lane = 'NEW';
+        c.has_preserved_new = true;
+        c.has_preserved_pending = false;
       } else {
         c.locked_lane = 'PENDING';
         c.has_preserved_pending = true;
@@ -1543,23 +1915,27 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     const allowOnlyExceptions = accExceptions.filter(e => e.exception_type === 'allow_only');
     const blockExceptions = accExceptions.filter(e => e.exception_type === 'block');
 
-    // Filter available candidates with strict stream separation, capacity check, and PENDING State Machine
+    // Filter available candidates with strict stream separation, capacity check, per_distribution_limit, and PENDING State Machine
     const available = eligibleCandidates.filter(c => {
-      const remaining = c.remaining_capacity - c.assigned_in_this_run;
+      const runCapLimit = (c.per_distribution_limit !== null && c.per_distribution_limit !== undefined)
+        ? Math.min(c.remaining_capacity, c.per_distribution_limit)
+        : c.remaining_capacity;
+      const remaining = runCapLimit - c.assigned_in_this_run;
       if (remaining <= 0) return false;
 
       // Invariant: Employee must NEVER receive both NEW and PENDING
       if (streamType === 'NEW') {
+        if (isSingleNewEmployeePolicyActive && designatedSingleNewEmployeeId && c.id !== designatedSingleNewEmployeeId) return false;
         if (c.assigned_pending > 0) return false;
         if (c.has_preserved_pending && (eligibleCandidates.length > 1 || c.locked_lane !== 'NEW')) return false;
         if (c.locked_lane && c.locked_lane !== 'NEW') return false;
         const mem = String(c.team_membership || 'Both').trim().toLowerCase();
-        return mem === 'new' || mem === 'both';
+        return mem === 'new' || mem === 'both' || c.temporary_support_lane === 'NEW';
       } else { // PENDING
         if (c.assigned_new > 0 || c.has_preserved_new) return false;
         if (c.locked_lane && c.locked_lane !== 'PENDING') return false;
         const mem = String(c.team_membership || 'Both').trim().toLowerCase();
-        return mem === 'pending' || mem === 'both';
+        return mem === 'pending' || mem === 'both' || c.temporary_support_lane === 'PENDING';
       }
     });
 
@@ -1651,7 +2027,8 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
         // Sort candidates:
         // 1. Prefer candidate already locked to this stream (fills committed candidates)
         // 2. Lowest total load (current_workload + assigned_in_this_run) for balanced workload
-        // 3. Stable tie-breaker
+        // 3. Historical completion speed from performance snapshots (Section 54, 113)
+        // 4. Stable tie-breaker
         filteredByRules.sort((a, b) => {
           const aLocked = a.locked_lane === streamType ? 1 : 0;
           const bLocked = b.locked_lane === streamType ? 1 : 0;
@@ -1660,6 +2037,10 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
           const aLoad = a.current_workload + a.assigned_in_this_run;
           const bLoad = b.current_workload + b.assigned_in_this_run;
           if (aLoad !== bLoad) return aLoad - bLoad;
+
+          const aSpeed = a.historical_actions || 0;
+          const bSpeed = b.historical_actions || 0;
+          if (bSpeed !== aSpeed) return bSpeed - aSpeed;
 
           return a.id - b.id;
         });
@@ -1822,6 +2203,8 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     fingerprint,
     is_rescue_active: isRescueActive,
     rescue_evaluation: rescueEval,
+    pressure_ratio_eval: pressureRatioEval,
+    team_sizing_decision: teamSizingDecision,
     total_orders_input: orders.length,
     assigned_count: proposedAssignments.length,
     unassigned_count: orders.length - proposedAssignments.length - preservedOrders.length,
@@ -1862,7 +2245,10 @@ function regenerateDistributionPlan(orders, eligibleCandidates, isRescueActive, 
     const streamType = isPendingOrder ? 'PENDING' : 'NEW';
 
     const match = reversedCandidates.find(c => {
-      const remaining = c.remaining_capacity - c.assigned_in_this_run;
+      const runCapLimit = (c.per_distribution_limit !== null && c.per_distribution_limit !== undefined)
+        ? Math.min(c.remaining_capacity, c.per_distribution_limit)
+        : c.remaining_capacity;
+      const remaining = runCapLimit - c.assigned_in_this_run;
       if (remaining <= 0) return false;
 
       // Strict work-lane lock

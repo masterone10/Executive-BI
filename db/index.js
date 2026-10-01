@@ -130,23 +130,47 @@ export function runMigrations(database = db) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         work_date TEXT NOT NULL,
         order_code TEXT NOT NULL,
-        employee_id INTEGER,
-        employee_name TEXT NOT NULL,
         phone_a_raw TEXT,
         phone_b_raw TEXT,
         phone_a_normalized TEXT,
         phone_b_normalized TEXT,
-        alert_type TEXT DEFAULT 'PHONE_DUPLICATED_IN_BOTH_FIELDS',
-        status TEXT DEFAULT 'REVIEW_REQUIRED',
+        match_status TEXT DEFAULT 'MATCH',
+        alert_type TEXT DEFAULT 'PHONE_DUPLICATE_CURRENT',
+        employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+        employee_name TEXT NOT NULL DEFAULT 'Unresolved',
+        raw_actor_name TEXT,
+        source_event_timestamp TEXT,
+        source_action TEXT,
+        attribution_status TEXT DEFAULT 'UNRESOLVED',
+        status TEXT DEFAULT 'ACTIVE',
         source TEXT DEFAULT 'VENDOOR_SYNC',
         details_json TEXT,
         created_at TEXT DEFAULT (datetime('now')),
-        UNIQUE(work_date, order_code, employee_name, alert_type)
+        updated_at TEXT DEFAULT (datetime('now')),
+        resolved_at TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_phone_alerts_date ON phone_match_alerts(work_date);
       CREATE INDEX IF NOT EXISTS idx_phone_alerts_emp ON phone_match_alerts(employee_name);
       CREATE INDEX IF NOT EXISTS idx_phone_alerts_order ON phone_match_alerts(order_code);
+      CREATE INDEX IF NOT EXISTS idx_phone_alerts_status ON phone_match_alerts(status);
+      CREATE INDEX IF NOT EXISTS idx_phone_alerts_type ON phone_match_alerts(alert_type);
     `);
+
+    // Safe column migrations for existing tables
+    const phoneCols = [
+      { name: 'raw_actor_name', type: 'TEXT' },
+      { name: 'match_status', type: "TEXT DEFAULT 'MATCH'" },
+      { name: 'attribution_status', type: "TEXT DEFAULT 'UNRESOLVED'" },
+      { name: 'source_action', type: 'TEXT' },
+      { name: 'source_event_timestamp', type: 'TEXT' },
+      { name: 'updated_at', type: "TEXT DEFAULT (datetime('now'))" },
+      { name: 'resolved_at', type: 'TEXT' }
+    ];
+    for (const col of phoneCols) {
+      try {
+        database.exec(`ALTER TABLE phone_match_alerts ADD COLUMN ${col.name} ${col.type}`);
+      } catch (_) {}
+    }
   } catch (e) {
     console.warn('Migration for employee_lifecycle_audit, order_review_queue & phone_match_alerts:', e.message);
   }
@@ -1197,6 +1221,7 @@ export function runMigrations(database = db) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         employee_id INTEGER NOT NULL UNIQUE REFERENCES employees(id) ON DELETE CASCADE,
         max_orders INTEGER NOT NULL DEFAULT 40,
+        per_distribution_limit INTEGER DEFAULT NULL,
         config_version INTEGER DEFAULT 1,
         updated_at TEXT DEFAULT (datetime('now')),
         updated_by TEXT DEFAULT 'Supervisor'
@@ -1337,6 +1362,14 @@ export function runMigrations(database = db) {
       const schedCols = database.prepare("PRAGMA table_info(account_schedules)").all();
       if (schedCols.length > 0 && !schedCols.some(c => c.name === 'day_schedules_json')) {
         database.exec("ALTER TABLE account_schedules ADD COLUMN day_schedules_json TEXT");
+      }
+    } catch (_) {}
+
+    // Ensure employee_capacities has per_distribution_limit column
+    try {
+      const capCols = database.prepare("PRAGMA table_info(employee_capacities)").all();
+      if (capCols.length > 0 && !capCols.some(c => c.name === 'per_distribution_limit')) {
+        database.exec("ALTER TABLE employee_capacities ADD COLUMN per_distribution_limit INTEGER DEFAULT NULL");
       }
     } catch (_) {}
 

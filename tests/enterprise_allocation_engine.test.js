@@ -403,6 +403,11 @@ describe('Enterprise Allocation Engine - Complete Specification Verification', (
         // Execute commit
         const res = executeEnterpriseAllocation(plan);
         assert.equal(res.success, true);
+
+        // Simulate employee completing active batch before next event is dispatched (Sections 34, 35)
+        db.prepare(`UPDATE current_work_orders SET work_state = 'COMPLETED' WHERE work_date = ? AND assigned_employee_id = ?`).run(TEST_DATE, empId);
+        db.prepare(`UPDATE order_level_allocations SET work_state = 'COMPLETED' WHERE allocation_date = ? AND employee_id = ?`).run(TEST_DATE, empId);
+
         return res;
       }
 

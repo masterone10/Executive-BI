@@ -235,9 +235,12 @@ export function normalizeVendoorOrder(rawOrder) {
   const cleanStatusLower = (status || '').toLowerCase();
   const isOrderActive = ['new', 'pending', 'جديد', 'معلق'].includes(cleanStatusLower);
 
-  // Extract customer and destination
+  // Extract customer, phone numbers and destination
   const city = String(rawOrder.governrate_name || rawOrder.city || rawOrder.governorate || rawOrder.zone || '').trim();
   const totalPrice = parseFloat(rawOrder.grand_total || rawOrder.total || rawOrder.price || rawOrder.total_price || 0) || 0;
+  const primaryPhone = rawOrder.phone || (rawOrder.raw_source && rawOrder.raw_source.phone) || rawOrder.customer_phone || rawOrder['الهاتف'] || rawOrder['رقم الهاتف'] || rawOrder['التليفون'] || rawOrder['الموبايل'] || null;
+  const additionalPhone = rawOrder.phone2 || rawOrder.alt_phone || rawOrder.secondary_phone || (rawOrder.raw_source && (rawOrder.raw_source.phone2 || rawOrder.raw_source.alt_phone)) || rawOrder['الهاتف البديل'] || rawOrder['رقم بديل'] || rawOrder['تليفون بديل'] || null;
+  const clientName = rawOrder.full_name || rawOrder.client_name || rawOrder.customer_name || rawOrder['اسم العميل'] || (rawOrder.raw_source && rawOrder.raw_source.client_name) || null;
 
   return {
     order_code: orderCode,
@@ -255,10 +258,13 @@ export function normalizeVendoorOrder(rawOrder) {
     is_active: isOrderActive ? 1 : 0,
     city,
     total_price: totalPrice,
+    phone: primaryPhone ? String(primaryPhone) : null,
+    phone2: additionalPhone ? String(additionalPhone) : null,
+    customer_name: clientName ? String(clientName) : null,
     raw_source: {
-      client_name: rawOrder.full_name || rawOrder.client_name || rawOrder.customer_name || null,
-      phone: rawOrder.phone || null,
-      alt_phone: rawOrder.alt_phone || null
+      client_name: clientName ? String(clientName) : null,
+      phone: primaryPhone ? String(primaryPhone) : null,
+      alt_phone: additionalPhone ? String(additionalPhone) : null
     }
   };
 }

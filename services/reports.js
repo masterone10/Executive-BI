@@ -1347,15 +1347,22 @@ export function generatePhoneAlertsReport(opts = {}) {
       order_code,
       employee_id,
       employee_name,
+      raw_actor_name,
       phone_a_raw,
       phone_b_raw,
       phone_a_normalized,
       phone_b_normalized,
+      match_status,
       alert_type,
+      attribution_status,
+      source_action,
+      source_event_timestamp,
       status,
       source,
       details_json,
-      created_at
+      created_at,
+      updated_at,
+      resolved_at
     FROM phone_match_alerts
     WHERE work_date IN (${placeholders})
   `;
@@ -1373,6 +1380,14 @@ export function generatePhoneAlertsReport(opts = {}) {
     query += ' AND order_code LIKE ?';
     params.push(`%${filters.order_code}%`);
   }
+  if (filters.status && filters.status !== 'ALL') {
+    query += ' AND status = ?';
+    params.push(filters.status);
+  }
+  if (filters.alert_type && filters.alert_type !== 'ALL') {
+    query += ' AND alert_type = ?';
+    params.push(filters.alert_type);
+  }
 
   query += ' ORDER BY work_date DESC, id DESC LIMIT 500';
 
@@ -1387,17 +1402,24 @@ export function generatePhoneAlertsReport(opts = {}) {
       order_code: r.order_code,
       employee_id: r.employee_id,
       employee_name: r.employee_name,
+      raw_actor_name: r.raw_actor_name,
       phone_a_raw: r.phone_a_raw,
       phone_b_raw: r.phone_b_raw,
       phone_a_normalized: r.phone_a_normalized,
       phone_b_normalized: r.phone_b_normalized,
+      match_status: r.match_status || 'MATCH',
       alert_type: r.alert_type,
-      status: r.status || 'REVIEW_REQUIRED',
-      source: r.source,
+      attribution_status: r.attribution_status || (r.employee_id ? 'PROVEN_CS_PHONE_EDIT' : 'UNRESOLVED'),
+      source_action: r.source_action,
+      source_event_timestamp: r.source_event_timestamp,
+      status: r.status || 'ACTIVE',
+      source: r.source || 'VENDOOR_SYNC',
       customer_name: details.customer_name || '',
       account: details.account || '',
       total_price: details.total_price || 0,
-      created_at: r.created_at
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      resolved_at: r.resolved_at
     };
   });
 

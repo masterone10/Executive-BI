@@ -220,7 +220,7 @@ describe('CS Executive BI — Employee Operational Evaluation & Phone Comparison
       VALUES ('Ali Hamada CS', 'ORD-501', 'أضاف رقم هاتف بديل', 'Action Recorded', '2026-09-30', '2026-09-30 14:00:00', 1)
     `).run();
 
-    // Order ORD-502 has duplicate phones and edit order action by EMAN CS
+    // Order ORD-502 has duplicate phones and edit phone action by EMAN CS
     db.prepare(`
       INSERT INTO vendoor_orders (order_code, account, business_date, raw_payload_json)
       VALUES ('ORD-502', 'Test Acc', '2026-09-30', '{"order_code":"ORD-502","phone":"01233334444","phone2":"01233334444"}')
@@ -228,7 +228,7 @@ describe('CS Executive BI — Employee Operational Evaluation & Phone Comparison
 
     db.prepare(`
       INSERT INTO raw_log_records (employee_name, order_code, action, status, work_date, event_datetime, is_cs)
-      VALUES ('EMAN CS', 'ORD-502', 'عدل في بيانات الاوردر', 'Action Recorded', '2026-09-30', '2026-09-30 14:30:00', 1)
+      VALUES ('EMAN CS', 'ORD-502', 'تعديل رقم الهاتف البديل', 'Action Recorded', '2026-09-30', '2026-09-30 14:30:00', 1)
     `).run();
 
     // Scan and record
@@ -246,7 +246,7 @@ describe('CS Executive BI — Employee Operational Evaluation & Phone Comparison
     assert.equal(alert502.employee_id, 1);
   });
 
-  test('7. Anti-Fallback Rule: duplicate phones without causal CS action remain Unassigned', () => {
+  test('7. Anti-Fallback Rule: duplicate phones without causal CS action remain Unresolved', () => {
     // Order ORD-601 has duplicate phones, is assigned in current_work_orders to EMAN CS, but has NO causal CS action
     db.prepare(`
       INSERT INTO vendoor_orders (order_code, account, business_date, raw_payload_json)
@@ -262,8 +262,9 @@ describe('CS Executive BI — Employee Operational Evaluation & Phone Comparison
 
     const alert601 = db.prepare("SELECT * FROM phone_match_alerts WHERE order_code = 'ORD-601'").get();
     assert.ok(alert601);
-    // MUST remain Unassigned; MUST NOT falsely accuse EMAN CS based on current assignment alone
-    assert.equal(alert601.employee_name, 'Unassigned');
+    // MUST remain Unresolved; MUST NOT falsely accuse EMAN CS based on current assignment alone
+    assert.equal(alert601.employee_name, 'Unresolved');
     assert.equal(alert601.employee_id, null);
+    assert.equal(alert601.attribution_status, 'UNRESOLVED');
   });
 });
