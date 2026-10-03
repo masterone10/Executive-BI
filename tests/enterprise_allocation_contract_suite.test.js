@@ -62,8 +62,8 @@ describe('MASTER ZERO-ASSUMPTION ALLOCATION CONTRACT SUITE (48 Core Verification
 
       db.prepare(`
         INSERT INTO employee_activity_log (work_date, employee_id, employee_name_snapshot, action, timestamp)
-        VALUES (?, ?, ?, 'LOGIN', datetime('now'))
-      `).run(TEST_DATE, e.id, e.name);
+        VALUES (?, ?, ?, 'LOGIN', ?)
+      `).run(TEST_DATE, e.id, e.name, `${TEST_DATE} 12:00:00`);
     }
   });
 
@@ -439,6 +439,12 @@ describe('MASTER ZERO-ASSUMPTION ALLOCATION CONTRACT SUITE (48 Core Verification
   // SECTION 87: 25 NEW POLICY & PENDING LARGEST ACCOUNT TESTS
   // ============================================================
   describe('10. 25 NEW Policy & PENDING Largest Account Contract Tests', () => {
+    beforeEach(() => {
+      db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(TEST_DATE);
+      db.prepare('DELETE FROM distribution_fingerprints WHERE work_date = ?').run(TEST_DATE);
+      db.prepare('DELETE FROM order_level_allocations WHERE allocation_date = ?').run(TEST_DATE);
+    });
+
     test('Test 49 & 50: 25 NEW Policy: Exactly 1 CS employee assigned to NEW, rest work PENDING', () => {
       // Insert 25 NEW orders and 40 PENDING orders
       for (let i = 0; i < 25; i++) {
@@ -523,10 +529,10 @@ describe('MASTER ZERO-ASSUMPTION ALLOCATION CONTRACT SUITE (48 Core Verification
 
     test('Case B: NEW < 25 (e.g. 10 orders) applies same buffer policy (1 NEW employee)', () => {
       for (let i = 0; i < 10; i++) {
-        db.prepare(`INSERT INTO current_work_orders (work_date, order_code, account, status, source_type) VALUES (?, ?, 'ACC_NEW', 'New', 'NEW')`).run(TEST_DATE, `CASE_B_N_${i}`);
+        db.prepare(`INSERT INTO current_work_orders (work_date, order_code, account, status, source_type, order_date) VALUES (?, ?, 'ACC_NEW', 'New', 'NEW', '2031-06-15 08:00:00')`).run(TEST_DATE, `CASE_B_N_${i}`);
       }
       for (let i = 0; i < 30; i++) {
-        db.prepare(`INSERT INTO current_work_orders (work_date, order_code, account, status, source_type) VALUES (?, ?, 'ACC_PEND', 'Pending', 'PENDING')`).run(TEST_DATE, `CASE_B_P_${i}`);
+        db.prepare(`INSERT INTO current_work_orders (work_date, order_code, account, status, source_type, order_date) VALUES (?, ?, 'ACC_PEND', 'Pending', 'PENDING', '2031-06-15 08:00:00')`).run(TEST_DATE, `CASE_B_P_${i}`);
       }
 
       const plan = planEnterpriseAllocation(TEST_DATE, 'PREVIEW');

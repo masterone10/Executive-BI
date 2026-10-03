@@ -20,6 +20,8 @@ import { isCsEmployee } from './parser.js';
 import { getCairoBusinessDate, getCairoNow, parseCairoTimestamp } from './time_utils.js';
 import { generateTrackingId, recordOrderLifecycleEvent, logEmployeeActivity } from './tracking.js';
 import { getWorkingTeam } from './allocation.js';
+import { isProtectedWorkState, PROTECTED_WORK_STATES } from './work_state_guard.js';
+import { getNewExpansionThreshold, getDelayedNewThresholdHours } from './config_constants.js';
 
 // ============================================================
 // CONSTANTS & ERROR CODES
@@ -50,8 +52,43 @@ export const ALLOCATION_ERROR_CODES = {
   ALLOCATION_CONFLICT: 'ALLOCATION_CONFLICT',
   ALLOCATION_ALREADY_EXECUTED: 'ALLOCATION_ALREADY_EXECUTED',
   PREVIEW_STALE: 'PREVIEW_STALE',
-  CONFIGURATION_CONFLICT: 'CONFIGURATION_CONFLICT'
+  CONFIGURATION_CONFLICT: 'CONFIGURATION_CONFLICT',
+  ALLOCATION_MODE_OFF: 'ALLOCATION_MODE_OFF',
+  ALLOCATION_MODE_WRITE_BLOCKED: 'ALLOCATION_MODE_WRITE_BLOCKED'
 };
+
+/**
+ * Central Guard: Enforces that allocation writes are strictly permitted.
+ * If global allocation_mode is OFF, throws ALLOCATION_MODE_WRITE_BLOCKED to guarantee zero mutation.
+ * If PREVIEW, throws PREVIEW_MUTATION_FORBIDDEN to guarantee zero DB mutation.
+ * Flags like enterprise=true or forceMode cannot bypass global OFF.
+ */
+export function assertAllocationWriteAllowed(options = {}) {
+  let globalMode = 'ACTIVE';
+  try {
+    const row = db.prepare("SELECT value FROM allocation_global_settings WHERE key = 'allocation_mode'").get();
+    if (row && row.value) globalMode = String(row.value).trim().toUpperCase();
+  } catch (_) {
+    globalMode = 'ACTIVE';
+  }
+
+  // Global mode is supreme: if global mode is OFF, no flag can override it to ACTIVE
+  if (globalMode === 'OFF' || options.mode === 'OFF' || options.forceMode === 'OFF') {
+    const err = new Error('ALLOCATION_MODE_WRITE_BLOCKED: Allocation mode is configured as OFF. No allocation writes, updates, overrides or state changes are permitted.');
+    err.code = ALLOCATION_ERROR_CODES.ALLOCATION_MODE_WRITE_BLOCKED;
+    err.status = 403;
+    throw err;
+  }
+
+  if (globalMode === 'PREVIEW' || options.mode === 'PREVIEW' || options.isPreview === true) {
+    const err = new Error('ALLOCATION_MODE_WRITE_BLOCKED: Preview mode is active. Allocation calculations are strictly zero-mutation.');
+    err.code = 'PREVIEW_MUTATION_FORBIDDEN';
+    err.status = 400;
+    throw err;
+  }
+
+  return true;
+}
 
 // ============================================================
 // 1. CONFIGURATION CENTER MANAGEMENT (Section 133A)
@@ -93,19 +130,36 @@ export function getEnterpriseAllocationConfig(workDate = null) {
   // 2. Account Schedules
   // Get all known accounts from current orders, account rules, account schedules
   const accountRows = db.prepare('SELECT * FROM account_schedules ORDER BY account ASC').all();
-  const knownAccountsSet = new Set(accountRows.map(r => r.account));
+  const knownAccountsMap = new Map(); // lowercase -> canonical name
+  for (const r of accountRows) {
+    if (r.account && r.account.trim()) {
+      knownAccountsMap.set(r.account.trim().toLowerCase(), r.account.trim());
+    }
+  }
 
   try {
     const orderAccs = db.prepare("SELECT DISTINCT account FROM current_work_orders WHERE account IS NOT NULL AND TRIM(account) != ''").all();
-    for (const oa of orderAccs) knownAccountsSet.add(oa.account.trim());
+    for (const oa of orderAccs) {
+      const trimmed = oa.account.trim();
+      const lower = trimmed.toLowerCase();
+      if (!knownAccountsMap.has(lower)) {
+        knownAccountsMap.set(lower, trimmed);
+      }
+    }
   } catch (_) {}
   try {
     const ruleAccs = db.prepare("SELECT DISTINCT account_name FROM account_rules WHERE account_name IS NOT NULL AND TRIM(account_name) != ''").all();
-    for (const ra of ruleAccs) knownAccountsSet.add(ra.account_name.trim());
+    for (const ra of ruleAccs) {
+      const trimmed = ra.account_name.trim();
+      const lower = trimmed.toLowerCase();
+      if (!knownAccountsMap.has(lower)) {
+        knownAccountsMap.set(lower, trimmed);
+      }
+    }
   } catch (_) {}
 
-  const accountSchedMap = new Map(accountRows.map(r => [r.account.toLowerCase(), r]));
-  const allAccountsList = Array.from(knownAccountsSet).sort((a, b) => a.localeCompare(b)).map(acc => {
+  const accountSchedMap = new Map(accountRows.map(r => [r.account.trim().toLowerCase(), r]));
+  const allAccountsList = Array.from(knownAccountsMap.values()).sort((a, b) => a.localeCompare(b)).map(acc => {
     const existing = accountSchedMap.get(acc.toLowerCase());
     const newStart = existing?.new_start_time ? existing.new_start_time.trim() : '';
     const newEnd = existing?.new_end_time ? existing.new_end_time.trim() : '';
@@ -475,15 +529,68 @@ export function saveEnterpriseAllocationConfig(draftConfig, operator = 'Supervis
     const accounts = Array.isArray(draftConfig.accounts) ? draftConfig.accounts : [];
     for (const acc of accounts) {
       const cleanAcc = String(acc.account).trim();
-      const ns = (acc.new_start_time || '').trim() || null;
-      const ne = (acc.new_end_time || '').trim() || null;
-      const ps = (acc.pending_start_time || '').trim() || null;
-      const pe = (acc.pending_end_time || '').trim() || null;
-      const daySchedJson = acc.day_schedules && typeof acc.day_schedules === 'object' && Object.keys(acc.day_schedules).length > 0
-        ? JSON.stringify(acc.day_schedules)
-        : (acc.day_schedules_json || null);
+      const existing = db.prepare('SELECT * FROM account_schedules WHERE account = ? COLLATE NOCASE').get(cleanAcc);
+      const targetAccountName = existing ? existing.account : cleanAcc;
 
-      const existing = db.prepare('SELECT * FROM account_schedules WHERE account = ?').get(cleanAcc);
+      const ns = (acc.new_start_time !== undefined && acc.new_start_time !== null)
+        ? ((String(acc.new_start_time).trim()) || null)
+        : (existing ? existing.new_start_time : null);
+      const ne = (acc.new_end_time !== undefined && acc.new_end_time !== null)
+        ? ((String(acc.new_end_time).trim()) || null)
+        : (existing ? existing.new_end_time : null);
+      const ps = (acc.pending_start_time !== undefined && acc.pending_start_time !== null)
+        ? ((String(acc.pending_start_time).trim()) || null)
+        : (existing ? existing.pending_start_time : null);
+      const pe = (acc.pending_end_time !== undefined && acc.pending_end_time !== null)
+        ? ((String(acc.pending_end_time).trim()) || null)
+        : (existing ? existing.pending_end_time : null);
+
+      // Deep merge incoming day_schedules with existing SQLite day_schedules_json
+      let mergedDaySchedules = {};
+      if (existing && existing.day_schedules_json) {
+        try {
+          const parsed = JSON.parse(existing.day_schedules_json);
+          if (parsed && typeof parsed === 'object') {
+            mergedDaySchedules = { ...parsed };
+          }
+        } catch (_) {}
+      }
+
+      if (acc.day_schedules && typeof acc.day_schedules === 'object') {
+        for (const [dayKey, dayVal] of Object.entries(acc.day_schedules)) {
+          const normDay = String(dayKey).toLowerCase().trim();
+          if (dayVal === null) {
+            delete mergedDaySchedules[normDay];
+          } else if (typeof dayVal === 'object') {
+            mergedDaySchedules[normDay] = {
+              ...(mergedDaySchedules[normDay] || {}),
+              ...dayVal
+            };
+          }
+        }
+      } else if (acc.day_schedules_json) {
+        try {
+          const parsed = JSON.parse(acc.day_schedules_json);
+          if (parsed && typeof parsed === 'object') {
+            for (const [dayKey, dayVal] of Object.entries(parsed)) {
+              const normDay = String(dayKey).toLowerCase().trim();
+              if (dayVal === null) {
+                delete mergedDaySchedules[normDay];
+              } else if (typeof dayVal === 'object') {
+                mergedDaySchedules[normDay] = {
+                  ...(mergedDaySchedules[normDay] || {}),
+                  ...dayVal
+                };
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      const daySchedJson = Object.keys(mergedDaySchedules).length > 0
+        ? JSON.stringify(mergedDaySchedules)
+        : null;
+
       const changed = !existing || 
         existing.new_start_time !== ns || existing.new_end_time !== ne ||
         existing.pending_start_time !== ps || existing.pending_end_time !== pe ||
@@ -492,7 +599,7 @@ export function saveEnterpriseAllocationConfig(draftConfig, operator = 'Supervis
       if (changed) {
         accountsChangedCount++;
         diffSummary.accounts.push({
-          account: cleanAcc,
+          account: targetAccountName,
           old_new: existing ? `${existing.new_start_time || 'ALL'} - ${existing.new_end_time || 'ALL'}` : 'NEW',
           new_new: `${ns || 'ALL'} - ${ne || 'ALL'}`,
           old_pending: existing ? `${existing.pending_start_time || 'ALL'} - ${existing.pending_end_time || 'ALL'}` : 'NEW',
@@ -500,7 +607,7 @@ export function saveEnterpriseAllocationConfig(draftConfig, operator = 'Supervis
         });
       }
 
-      upsertSchedule.run(cleanAcc, ns, ne, ps, pe, daySchedJson, newVersion, operator);
+      upsertSchedule.run(targetAccountName, ns, ne, ps, pe, daySchedJson, newVersion, operator);
     }
 
     // C. Persist Employee Capacities
@@ -594,6 +701,171 @@ export function getEnterpriseConfigurationHistory(limit = 20) {
   }));
 }
 
+/**
+ * Saves or updates schedule for a specific (account, status, day) tuple atomically in SQLite.
+ * Deeply merges day schedules so other days are NEVER wiped.
+ * Case-insensitive account lookup preserves canonical name and avoids duplicates.
+ */
+export function saveAccountDaySchedule({
+  account,
+  status = 'NEW',
+  day = 'all',
+  start = null,
+  end = null,
+  new_start_time = null,
+  new_end_time = null,
+  pending_start_time = null,
+  pending_end_time = null,
+  operator = 'Supervisor'
+}) {
+  const cleanAcc = String(account || '').trim();
+  if (!cleanAcc) throw new Error('Account name is required');
+  const normDay = String(day || 'all').toLowerCase().trim();
+  const normStatus = String(status || 'NEW').trim().toUpperCase();
+
+  const validDays = ['all', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  if (!validDays.includes(normDay)) {
+    throw new Error(`Invalid day: ${day}. Must be one of: ${validDays.join(', ')}`);
+  }
+
+  // Find canonical account in SQLite
+  const existing = db.prepare('SELECT * FROM account_schedules WHERE account = ? COLLATE NOCASE').get(cleanAcc);
+  const targetAccountName = existing ? existing.account : cleanAcc;
+
+  // Resolve start and end times
+  let finalNewStart = new_start_time !== null && new_start_time !== undefined ? (String(new_start_time).trim() || null) : null;
+  let finalNewEnd = new_end_time !== null && new_end_time !== undefined ? (String(new_end_time).trim() || null) : null;
+  let finalPendStart = pending_start_time !== null && pending_start_time !== undefined ? (String(pending_start_time).trim() || null) : null;
+  let finalPendEnd = pending_end_time !== null && pending_end_time !== undefined ? (String(pending_end_time).trim() || null) : null;
+
+  if (start !== null && start !== undefined) {
+    const cleanStart = String(start).trim() || null;
+    if (normStatus.includes('PENDING')) finalPendStart = cleanStart;
+    else finalNewStart = cleanStart;
+  }
+  if (end !== null && end !== undefined) {
+    const cleanEnd = String(end).trim() || null;
+    if (normStatus.includes('PENDING')) finalPendEnd = cleanEnd;
+    else finalNewEnd = cleanEnd;
+  }
+
+  // Load existing day_schedules_json from SQLite
+  let daySchedules = {};
+  if (existing && existing.day_schedules_json) {
+    try {
+      const parsed = JSON.parse(existing.day_schedules_json);
+      if (parsed && typeof parsed === 'object') {
+        daySchedules = { ...parsed };
+      }
+    } catch (_) {}
+  }
+
+  // Increment configuration version
+  const lastVer = db.prepare('SELECT MAX(version) as max_v FROM allocation_configuration_versions').get();
+  const newVersion = (lastVer?.max_v || 0) + 1;
+
+  if (normDay === 'all') {
+    // Updating Default Schedule
+    const ns = finalNewStart !== null ? finalNewStart : (existing ? existing.new_start_time : null);
+    const ne = finalNewEnd !== null ? finalNewEnd : (existing ? existing.new_end_time : null);
+    const ps = finalPendStart !== null ? finalPendStart : (existing ? existing.pending_start_time : null);
+    const pe = finalPendEnd !== null ? finalPendEnd : (existing ? existing.pending_end_time : null);
+
+    db.prepare(`
+      INSERT INTO account_schedules (
+        account, new_start_time, new_end_time, pending_start_time, pending_end_time,
+        day_schedules_json, config_version, updated_at, updated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+      ON CONFLICT(account) DO UPDATE SET
+        new_start_time = excluded.new_start_time,
+        new_end_time = excluded.new_end_time,
+        pending_start_time = excluded.pending_start_time,
+        pending_end_time = excluded.pending_end_time,
+        config_version = excluded.config_version,
+        updated_at = datetime('now'),
+        updated_by = excluded.updated_by
+    `).run(targetAccountName, ns, ne, ps, pe, existing?.day_schedules_json || null, newVersion, operator);
+  } else {
+    // Updating Specific Day Schedule
+    const currentDayEntry = daySchedules[normDay] || {};
+    const updatedDayEntry = {
+      new_start_time: finalNewStart !== null ? finalNewStart : (currentDayEntry.new_start_time || ''),
+      new_end_time: finalNewEnd !== null ? finalNewEnd : (currentDayEntry.new_end_time || ''),
+      pending_start_time: finalPendStart !== null ? finalPendStart : (currentDayEntry.pending_start_time || ''),
+      pending_end_time: finalPendEnd !== null ? finalPendEnd : (currentDayEntry.pending_end_time || '')
+    };
+
+    daySchedules[normDay] = updatedDayEntry;
+    const daySchedJson = JSON.stringify(daySchedules);
+
+    const ns = existing ? existing.new_start_time : null;
+    const ne = existing ? existing.new_end_time : null;
+    const ps = existing ? existing.pending_start_time : null;
+    const pe = existing ? existing.pending_end_time : null;
+
+    db.prepare(`
+      INSERT INTO account_schedules (
+        account, new_start_time, new_end_time, pending_start_time, pending_end_time,
+        day_schedules_json, config_version, updated_at, updated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+      ON CONFLICT(account) DO UPDATE SET
+        day_schedules_json = excluded.day_schedules_json,
+        config_version = excluded.config_version,
+        updated_at = datetime('now'),
+        updated_by = excluded.updated_by
+    `).run(targetAccountName, ns, ne, ps, pe, daySchedJson, newVersion, operator);
+  }
+
+  return {
+    success: true,
+    account: targetAccountName,
+    day: normDay,
+    status: normStatus,
+    version: newVersion,
+    day_schedules: daySchedules
+  };
+}
+
+/**
+ * Resets a specific day override for an account, returning it to default schedule.
+ * Other days remain completely preserved in SQLite.
+ */
+export function resetAccountDayScheduleInDb(account, day, operator = 'Supervisor') {
+  const cleanAcc = String(account || '').trim();
+  if (!cleanAcc) throw new Error('Account name is required');
+  const normDay = String(day || '').toLowerCase().trim();
+
+  const existing = db.prepare('SELECT * FROM account_schedules WHERE account = ? COLLATE NOCASE').get(cleanAcc);
+  if (!existing) return { success: true, message: 'Account not found, nothing to reset' };
+
+  let daySchedules = {};
+  if (existing.day_schedules_json) {
+    try {
+      daySchedules = JSON.parse(existing.day_schedules_json) || {};
+    } catch (_) {}
+  }
+
+  delete daySchedules[normDay];
+  const daySchedJson = Object.keys(daySchedules).length > 0 ? JSON.stringify(daySchedules) : null;
+
+  const lastVer = db.prepare('SELECT MAX(version) as max_v FROM allocation_configuration_versions').get();
+  const newVersion = (lastVer?.max_v || 0) + 1;
+
+  db.prepare(`
+    UPDATE account_schedules
+    SET day_schedules_json = ?, config_version = ?, updated_at = datetime('now'), updated_by = ?
+    WHERE account = ? COLLATE NOCASE
+  `).run(daySchedJson, newVersion, operator, cleanAcc);
+
+  return {
+    success: true,
+    account: existing.account,
+    day: normDay,
+    version: newVersion,
+    day_schedules: daySchedules
+  };
+}
+
 // ============================================================
 // 2. ACCOUNT + STATUS SCHEDULE EVALUATION (Sections 43-49, 176)
 // ============================================================
@@ -622,14 +894,18 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
 
   if (sched) {
     // Resolve day of week if workDate is provided (or defaulting to Cairo date)
-    const targetDateStr = workDate || getCairoNow().slice(0, 10);
     const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    try {
-      const dt = new Date(targetDateStr + 'T12:00:00Z');
-      if (!isNaN(dt.getTime())) {
-        dayName = dayNames[dt.getUTCDay()];
-      }
-    } catch (_) {}
+    if (workDate && dayNames.includes(String(workDate).toLowerCase().trim())) {
+      dayName = String(workDate).toLowerCase().trim();
+    } else {
+      const targetDateStr = workDate || getCairoBusinessDate();
+      try {
+        const dt = new Date(targetDateStr + 'T12:00:00Z');
+        if (!isNaN(dt.getTime())) {
+          dayName = dayNames[dt.getUTCDay()];
+        }
+      } catch (_) {}
+    }
 
     let daySchedules = null;
     if (sched.day_schedules_json) {
@@ -642,19 +918,19 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
     if (specificDaySched && typeof specificDaySched === 'object') {
       dayOverrideApplied = true;
       if (isPending) {
-        start = specificDaySched.pending_start_time !== undefined && specificDaySched.pending_start_time !== null ? String(specificDaySched.pending_start_time).trim() : null;
-        end = specificDaySched.pending_end_time !== undefined && specificDaySched.pending_end_time !== null ? String(specificDaySched.pending_end_time).trim() : null;
+        start = specificDaySched.pending_start_time !== undefined && specificDaySched.pending_start_time !== null ? (String(specificDaySched.pending_start_time).trim() || null) : null;
+        end = specificDaySched.pending_end_time !== undefined && specificDaySched.pending_end_time !== null ? (String(specificDaySched.pending_end_time).trim() || null) : null;
       } else {
-        start = specificDaySched.new_start_time !== undefined && specificDaySched.new_start_time !== null ? String(specificDaySched.new_start_time).trim() : null;
-        end = specificDaySched.new_end_time !== undefined && specificDaySched.new_end_time !== null ? String(specificDaySched.new_end_time).trim() : null;
+        start = specificDaySched.new_start_time !== undefined && specificDaySched.new_start_time !== null ? (String(specificDaySched.new_start_time).trim() || null) : null;
+        end = specificDaySched.new_end_time !== undefined && specificDaySched.new_end_time !== null ? (String(specificDaySched.new_end_time).trim() || null) : null;
       }
     } else {
       if (isPending) {
-        start = sched.pending_start_time ? sched.pending_start_time.trim() : null;
-        end = sched.pending_end_time ? sched.pending_end_time.trim() : null;
+        start = sched.pending_start_time ? (sched.pending_start_time.trim() || null) : null;
+        end = sched.pending_end_time ? (sched.pending_end_time.trim() || null) : null;
       } else {
-        start = sched.new_start_time ? sched.new_start_time.trim() : null;
-        end = sched.new_end_time ? sched.new_end_time.trim() : null;
+        start = sched.new_start_time ? (sched.new_start_time.trim() || null) : null;
+        end = sched.new_end_time ? (sched.new_end_time.trim() || null) : null;
       }
     }
   }
@@ -675,7 +951,7 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
   }
 
   // Exact boundary comparison
-  if (nowTime < start) {
+  if (start && nowTime < start) {
     return {
       account,
       work_type: isPending ? 'PENDING' : 'NEW',
@@ -690,7 +966,7 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
     };
   }
 
-  if (nowTime >= end) {
+  if (end && nowTime >= end) {
     return {
       account,
       work_type: isPending ? 'PENDING' : 'NEW',
@@ -1232,8 +1508,8 @@ export function isDelayedNewOrder(ord, workDate, canonicalNowStr = null) {
   if (ord.created_at || ord.order_date) {
     const ordMs = parseEpochNormalized(ord.created_at || ord.order_date);
     const nowMs = canonicalNowStr ? parseEpochNormalized(canonicalNowStr) : Date.now();
-    // 5 Hours Threshold = 5 * 60 * 60 * 1000 = 18,000,000 ms
-    if (ordMs && nowMs && (nowMs - ordMs >= 5 * 60 * 60 * 1000)) return true;
+    const thresholdHours = getDelayedNewThresholdHours();
+    if (ordMs && nowMs && (nowMs - ordMs >= thresholdHours * 60 * 60 * 1000)) return true;
   }
   return false;
 }
@@ -1249,11 +1525,38 @@ export function isDelayedNewOrder(ord, workDate, canonicalNowStr = null) {
 export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}) {
   const cairoToday = getCairoBusinessDate();
   const cairoNow = getCairoNow();
-  const canonicalNowStr = options.currentTime || (workDate === cairoToday ? cairoNow : `${workDate}T12:05:00Z`);
+  const canonicalNowStr = options.currentTime || options.currentTimeStr || options.time || options.now || (workDate === cairoToday ? cairoNow : `${workDate}T12:05:00Z`);
   const currentTimeHHMM = extractTimeHHMM(canonicalNowStr);
   const runId = options.runId || `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const globalMode = getGlobalSettingStr('allocation_mode', 'ACTIVE');
-  const effectiveMode = options.forceMode || (globalMode === 'OFF' ? 'OFF' : mode);
+  const effectiveMode = (globalMode === 'OFF' || mode === 'OFF' || options.forceMode === 'OFF' || options.mode === 'OFF') ? 'OFF' : (options.mode || mode);
+
+  if (effectiveMode === 'OFF') {
+    return {
+      plan_id: `plan_off_${Date.now()}`,
+      run_id: runId,
+      work_date: workDate,
+      mode: 'OFF',
+      status: 'OFF',
+      message: 'Allocation mode is configured as OFF. No allocation planning or execution permitted.',
+      configuration_version: configVersion,
+      total_orders_input: 0,
+      assigned_count: 0,
+      assigned_orders: 0,
+      unassigned_count: 0,
+      unassigned_orders: 0,
+      preserved_count: 0,
+      assignments: [],
+      raw_allocations: [],
+      allocations: [],
+      orderLevelAllocations: [],
+      by_employee: [],
+      account_owners: [],
+      unassigned_orders_list: [],
+      candidate_decisions: [],
+      audit_records: []
+    };
+  }
 
   // 1. Fetch current active configuration version
   const config = getEnterpriseAllocationConfig();
@@ -1278,27 +1581,29 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     `).all(workDate, workDate);
 
     if (vOrders.length > 0) {
-      const insertStmt = db.prepare(`
-        INSERT OR IGNORE INTO current_work_orders (work_date, order_code, account, status, order_date, source_file_slot, source_type, tracking_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      db.transaction(() => {
-        for (let i = 0; i < vOrders.length; i++) {
-          const vo = vOrders[i];
-          const isPending = (vo.status || '').toLowerCase().includes('pending');
-          const slot = isPending ? 2 : 1;
-          const srcType = isPending ? 'PENDING' : 'NEW';
-          const trkId = generateTrackingId(vo.order_code, workDate, i + 1);
-          insertStmt.run(workDate, vo.order_code, vo.account || 'Unassigned', vo.status || 'New', vo.order_date || workDate, slot, srcType, trkId);
-        }
-      })();
-
-      orders = db.prepare(`
-        SELECT id, order_code, account, status, source_type, tracking_id, work_state, priority, assigned_employee_id, assigned_employee_name, order_date, created_at
-        FROM current_work_orders
-        WHERE work_date = ?
-        ORDER BY account ASC, order_code ASC
-      `).all(workDate);
+      // STRICT ZERO MUTATION: Always map virtual orders in-memory.
+      // Planner NEVER inserts or updates database records.
+      orders = vOrders.map((vo, i) => {
+        const isPending = (vo.status || '').toLowerCase().includes('pending');
+        const slot = isPending ? 2 : 1;
+        const srcType = isPending ? 'PENDING' : 'NEW';
+        const trkId = generateTrackingId(vo.order_code, workDate, i + 1);
+        return {
+          id: -(i + 1),
+          order_code: vo.order_code,
+          account: vo.account || 'Unassigned',
+          status: vo.status || 'New',
+          order_date: vo.order_date || workDate,
+          source_file_slot: slot,
+          source_type: srcType,
+          tracking_id: trkId,
+          work_state: 'NEW',
+          priority: 'REGULAR',
+          assigned_employee_id: null,
+          assigned_employee_name: null,
+          created_at: new Date().toISOString()
+        };
+      });
     }
   }
 
@@ -1325,9 +1630,9 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
     };
   }
 
-  // 3. Separate Preserved Orders (CLAIMED, IN_PROGRESS, COMPLETED)
+  // 3. Separate Preserved Orders (CLAIMED, IN_PROGRESS, PRINTED, COMPLETED)
   const isRegenerate = options.regenerate === true;
-  const PRESERVED_STATES = new Set(isRegenerate ? ['CLAIMED', 'IN_PROGRESS', 'COMPLETED'] : ['ASSIGNED', 'CLAIMED', 'IN_PROGRESS', 'COMPLETED']);
+  const PRESERVED_STATES = new Set(isRegenerate ? ['CLAIMED', 'IN_PROGRESS', 'PRINTED', 'COMPLETED'] : ['ASSIGNED', 'CLAIMED', 'IN_PROGRESS', 'PRINTED', 'COMPLETED']);
   const preservedOrders = [];
   const unassignedOrders = [];
 
@@ -1744,12 +2049,20 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
 
   if (isSingleNewEmployeePolicyActive) {
     const newCapableCandidates = eligibleCandidates.filter(c => {
+      if (c.temporary_support_lane && c.temporary_support_lane !== 'NEW') return false;
+      const presPend = preservedOrders.filter(o => o.assigned_employee_id === c.id && (o.work_type === 'PENDING' || o.source_type === 'PENDING') && String(o.work_state || '').toUpperCase() !== 'COMPLETED').length;
+      if (presPend > 0) return false;
       const mem = String(c.team_membership || 'Both').trim().toLowerCase();
-      return mem === 'new' || mem === 'both';
+      return mem === 'new' || mem === 'both' || c.temporary_support_lane === 'NEW';
     }).sort((a, b) => {
       const aPres = a.has_preserved_new ? 1 : 0;
       const bPres = b.has_preserved_new ? 1 : 0;
       if (bPres !== aPres) return bPres - aPres;
+
+      const aCanFit = a.remaining_capacity >= unassignedNewCount ? 1 : 0;
+      const bCanFit = b.remaining_capacity >= unassignedNewCount ? 1 : 0;
+      if (bCanFit !== aCanFit) return bCanFit - aCanFit;
+
       if (a.current_workload !== b.current_workload) return a.current_workload - b.current_workload;
       return (b.historical_actions || 0) - (a.historical_actions || 0);
     });
@@ -1855,15 +2168,7 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
 
     const configuredTeam = String(c.team_membership || 'Both').trim().toLowerCase();
 
-    if (isSingleNewEmployeePolicyActive) {
-      if (c.id === designatedSingleNewEmployeeId) {
-        c.locked_lane = 'NEW';
-      } else if (!c.has_preserved_new) {
-        c.locked_lane = 'PENDING';
-      } else {
-        c.locked_lane = configuredTeam === 'new' ? 'NEW' : 'PENDING';
-      }
-    } else if (c.temporary_support_lane) {
+    if (c.temporary_support_lane) {
       c.locked_lane = c.temporary_support_lane;
     } else if (configuredTeam === 'new') {
       c.locked_lane = 'NEW';
@@ -1899,9 +2204,11 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
   }
 
   // 9. Order-Level Fair Allocation Loop (One-Click NEW + PENDING, Zero Cross-Stream Violation)
+  const runAccountStreamOwnerMap = new Map(); // Key: account|stream -> chosen candidate for this run
   for (const ord of eligibleOrdersQueue) {
     const streamType = ord.work_type; // 'NEW' or 'PENDING'
     const accKey = (ord.account || '').trim().toLowerCase();
+    const accStreamKey = `${accKey}|${streamType}`;
 
     // Fetch account rules and exceptions for this order
     const ruleObj = accountRulesMap.get(accKey) || { new_eligible: [], pending_eligible: [], blocked: [] };
@@ -1925,7 +2232,24 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
 
       // Invariant: Employee must NEVER receive both NEW and PENDING
       if (streamType === 'NEW') {
-        if (isSingleNewEmployeePolicyActive && designatedSingleNewEmployeeId && c.id !== designatedSingleNewEmployeeId) return false;
+        if (isSingleNewEmployeePolicyActive && designatedSingleNewEmployeeId && c.id !== designatedSingleNewEmployeeId) {
+          const accOwner = stickyOwnerMap.get(accKey);
+          const isAccountStickyOwner = accOwner && accOwner.employee_id === c.id;
+          if (!isAccountStickyOwner) {
+            const primaryCand = eligibleCandidates.find(cand => cand.id === designatedSingleNewEmployeeId);
+            const isPrimaryValidForNew = primaryCand &&
+              !primaryCand.assigned_pending &&
+              (!primaryCand.temporary_support_lane || primaryCand.temporary_support_lane === 'NEW') &&
+              (!primaryCand.locked_lane || primaryCand.locked_lane === 'NEW');
+            if (isPrimaryValidForNew) {
+              const primaryCap = (primaryCand.per_distribution_limit !== null && primaryCand.per_distribution_limit !== undefined)
+                ? Math.min(primaryCand.remaining_capacity, primaryCand.per_distribution_limit)
+                : primaryCand.remaining_capacity;
+              const primaryAvail = primaryCap - (primaryCand.assigned_in_this_run || 0);
+              if (primaryAvail > 0) return false;
+            }
+          }
+        }
         if (c.assigned_pending > 0) return false;
         if (c.has_preserved_pending && (eligibleCandidates.length > 1 || c.locked_lane !== 'NEW')) return false;
         if (c.locked_lane && c.locked_lane !== 'NEW') return false;
@@ -2013,13 +2337,22 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
         continue;
       }
 
-      // Check Sticky Ownership
-      const accOwner = stickyOwnerMap.get(accKey);
-      if (accOwner && accOwner.employee_id) {
-        const stickyCand = filteredByRules.find(c => c.id === accOwner.employee_id);
-        if (stickyCand) {
-          chosen = stickyCand;
-          assignmentNote = 'Preserved Account Owner';
+      // 1. Check Account-Centric Single-Agent Stickiness for this account's stream in this run
+      const activeStreamOwner = runAccountStreamOwnerMap.get(accStreamKey);
+      if (activeStreamOwner && filteredByRules.some(c => c.id === activeStreamOwner.id)) {
+        chosen = filteredByRules.find(c => c.id === activeStreamOwner.id);
+        assignmentNote = 'Account Stream Single-Agent Batch';
+      }
+
+      if (!chosen) {
+        // 2. Check Sticky Ownership from prior runs / overrides
+        const accOwner = stickyOwnerMap.get(accKey);
+        if (accOwner && accOwner.employee_id) {
+          const stickyCand = filteredByRules.find(c => c.id === accOwner.employee_id);
+          if (stickyCand) {
+            chosen = stickyCand;
+            assignmentNote = 'Preserved Account Owner';
+          }
         }
       }
 
@@ -2058,6 +2391,13 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
       chosen.has_preserved_pending = true;
     }
     chosen.assigned_accounts.add((ord.account || '').toLowerCase());
+    runAccountStreamOwnerMap.set(accStreamKey, chosen);
+    stickyOwnerMap.set(accKey, {
+      account: ord.account,
+      employee_id: chosen.id,
+      employee_name: chosen.name,
+      is_override: 0
+    });
 
     proposedAssignments.push({
       order_code: ord.order_code,
@@ -2307,11 +2647,55 @@ function regenerateDistributionPlan(orders, eligibleCandidates, isRescueActive, 
  * Advances PENDING sequence and marks NEW consumed ONLY after successful commit (Section 102)
  */
 export function executeEnterpriseAllocation(planOrContext, options = {}) {
+  const executionMode = options.forceMode || options.mode || (typeof planOrContext === 'object' && planOrContext ? planOrContext.mode : null) || 'ACTIVE';
+
+  if (executionMode === 'OFF') {
+    return {
+      success: false,
+      mode: 'OFF',
+      status: 'OFF',
+      message: 'Enterprise Allocation Engine is configured as OFF. No production changes were committed.',
+      run_id: (typeof planOrContext === 'object' && planOrContext ? planOrContext.run_id : null) || `run_off_${Date.now()}`,
+      assigned_orders: 0,
+      assigned_count: 0,
+      total_orders: 0,
+      unassigned_orders: 0,
+      unassigned_count: 0,
+      raw_allocations: [],
+      allocations: [],
+      orderLevelAllocations: [],
+      by_employee: [],
+      account_owners: [],
+      unassigned_orders_list: []
+    };
+  }
+
   let plan = planOrContext;
 
   // If workDate string passed, plan allocation first
   if (typeof planOrContext === 'string') {
-    plan = planEnterpriseAllocation(planOrContext, options.mode || 'ACTIVE', options);
+    plan = planEnterpriseAllocation(planOrContext, options.forceMode || options.mode || 'ACTIVE', options);
+  }
+
+  if (plan.status === 'OFF' || plan.mode === 'OFF') {
+    return {
+      success: false,
+      mode: 'OFF',
+      status: 'OFF',
+      message: 'Enterprise Allocation Engine is configured as OFF. No production changes were committed.',
+      run_id: plan.run_id,
+      assigned_orders: 0,
+      assigned_count: 0,
+      total_orders: 0,
+      unassigned_orders: 0,
+      unassigned_count: 0,
+      raw_allocations: [],
+      allocations: [],
+      orderLevelAllocations: [],
+      by_employee: [],
+      account_owners: [],
+      unassigned_orders_list: []
+    };
   }
 
   if (plan.status === 'UP_TO_DATE' || plan.status === 'CAPACITY_REACHED') {
@@ -2447,8 +2831,6 @@ export function executeEnterpriseAllocation(planOrContext, options = {}) {
       unassigned_orders_list: []
     };
   }
-
-  const executionMode = options.mode || plan.mode || 'ACTIVE';
 
   // Check Mode
   if (executionMode === 'OFF') {
@@ -3509,7 +3891,7 @@ export function undoLastAllocation(workDate, options = {}) {
       const preStatus = (pre.status || '').toUpperCase();
 
       // Rule 6, 8, 13.3-13.6: Protected states (CLAIMED, IN_PROGRESS, PRINTED, COMPLETED, CANCELLED)
-      if (['CLAIMED', 'IN_PROGRESS', 'COMPLETED'].includes(currState) && currState !== preState) {
+      if (['CLAIMED', 'IN_PROGRESS', 'PRINTED', 'COMPLETED', 'CANCELLED'].includes(currState) && currState !== preState) {
         isProtected = true;
         protectReason = `State progressed to ${currState} after allocation`;
       } else if (['PRINTED', 'COMPLETED', 'CANCELLED', 'REFUNDED'].includes(currStatus) && currStatus !== preStatus) {

@@ -18,7 +18,8 @@ import { getOperationalBusinessDate } from './normalize.js';
 import { resolveEmployeeIdentity } from './identity.js';
 import { computePerformanceFromRecords, savePerformanceSnapshotToDB } from '../performance.js';
 import { isCsEmployee } from '../parser.js';
-import { attachEligibleArrivedOrders, getDispatcherConfig } from './dispatcher.js';
+import { attachEligibleArrivedOrders, getDispatcherConfig, getEffectiveWorkDate } from './dispatcher.js';
+import { getCairoBusinessDate } from '../time_utils.js';
 import { syncAndRestoreObservedTeam } from '../working_team_ops.js';
 import { evaluateAndRecordOrderPhoneDuplicate, isQualifyingPhoneMutationAction } from '../employee_evaluation.js';
 
@@ -125,7 +126,7 @@ export function recordReconciliationAudit({
   }
 }
 
-export function computeLiveReconciliation(businessDate = new Date().toISOString().slice(0, 10)) {
+export function computeLiveReconciliation(businessDate = (getEffectiveWorkDate() || getCairoBusinessDate())) {
   const localNew = db.prepare(`SELECT COUNT(*) as c FROM current_work_orders WHERE work_date = ? AND status = 'New'`).get(businessDate)?.c || 0;
   const localPending = db.prepare(`SELECT COUNT(*) as c FROM current_work_orders WHERE work_date = ? AND status = 'Pending'`).get(businessDate)?.c || 0;
   const localTotal = db.prepare(`SELECT COUNT(DISTINCT order_code) as c FROM current_work_orders WHERE work_date = ?`).get(businessDate)?.c || 0;
@@ -173,7 +174,7 @@ export function computeLiveReconciliation(businessDate = new Date().toISOString(
   };
 }
 
-export function getLatestReconciliationAudit(businessDate = new Date().toISOString().slice(0, 10)) {
+export function getLatestReconciliationAudit(businessDate = (getEffectiveWorkDate() || getCairoBusinessDate())) {
   const row = db.prepare(`
     SELECT * FROM vendoor_reconciliation_audit
     WHERE business_date = ?
@@ -244,7 +245,7 @@ export async function syncVendoorOrders(options = {}) {
   const isStatusDriven = options.statusDriven === true || (!options.fromDate && !options.toDate);
   const fromDate = isStatusDriven ? '' : (options.fromDate || '');
   const toDate = isStatusDriven ? '' : (options.toDate || fromDate || '');
-  const operationalBusinessDate = options.businessDate || options.workDate || options.operationalDate || options.fromDate || new Date().toISOString().slice(0, 10);
+  const operationalBusinessDate = options.businessDate || options.workDate || options.operationalDate || options.fromDate || getEffectiveWorkDate() || getCairoBusinessDate();
 
   const pageSize = Math.min(300, Math.max(10, parseInt(options.pageSize, 10) || 300));
   const maxPages = Math.min(1000, Math.max(1, parseInt(options.maxPages, 10) || 50));
@@ -688,7 +689,7 @@ export async function syncVendoorLogs(options = {}) {
   const startTime = Date.now();
   const ds = getVendoorDataSource(options.forceMode);
 
-  const startDate = options.startDate || options.start_date || new Date().toISOString().slice(0, 10);
+  const startDate = options.startDate || options.start_date || getEffectiveWorkDate() || getCairoBusinessDate();
   const endDate = options.endDate || options.end_date || startDate;
 
   let totalFetched = 0;
@@ -1085,7 +1086,7 @@ async function executeAutonomousOrdersCycle(forceMode) {
   pollerState.orders.status = 'RUNNING';
 
   try {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = getEffectiveWorkDate() || getCairoBusinessDate();
     const ordersRes = await syncVendoorOrders({
       businessDate: todayStr,
       forceMode,
@@ -1126,7 +1127,7 @@ async function executeAutonomousLogsCycle(forceMode) {
   pollerState.logs.status = 'RUNNING';
 
   try {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = getEffectiveWorkDate() || getCairoBusinessDate();
     const logsRes = await syncVendoorLogs({
       startDate: todayStr,
       endDate: todayStr,
@@ -1191,10 +1192,16 @@ export function startAutonomousVendoorPoller(options = {}) {
   pollerState.orders.timerId = setInterval(() => {
     executeAutonomousOrdersCycle(options.forceMode).catch(() => {});
   }, ordersIntervalMs);
+  if (pollerState.orders.timerId && typeof pollerState.orders.timerId.unref === 'function') {
+    pollerState.orders.timerId.unref();
+  }
 
   pollerState.logs.timerId = setInterval(() => {
     executeAutonomousLogsCycle(options.forceMode).catch(() => {});
   }, logsIntervalMs);
+  if (pollerState.logs.timerId && typeof pollerState.logs.timerId.unref === 'function') {
+    pollerState.logs.timerId.unref();
+  }
 
   return {
     success: true,

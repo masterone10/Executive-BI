@@ -13,6 +13,7 @@
  */
 
 import { db } from '../db/index.js';
+import { getCairoBusinessDate } from './time_utils.js';
 import { getCompletedOrdersForDate } from './vendoor/completion.js';
 import { getFullEmployeeProductivityProfiles } from './vendoor/productivity.js';
 import { getEmployeeWorkloadAndRefillStates } from './vendoor/workload.js';
@@ -428,7 +429,7 @@ export function analyzeDepartureImpact(employeeId, workDate, options = {}) {
  */
 export function executeEmployeeDeparture(employeeId, options = {}) {
   const empId = parseInt(employeeId, 10);
-  const workDate = options.workDate || new Date().toISOString().slice(0, 10);
+  const workDate = options.workDate || getCairoBusinessDate();
   const departureDate = options.departureDate || workDate;
   const departureReason = norm(options.departureReason || options.reason || 'Left the team');
   const operator = norm(options.operator || 'Supervisor');
@@ -613,7 +614,7 @@ export function updateEmployeeStatus(employeeId, newStatus, options = {}) {
   const status = String(newStatus || '').toUpperCase();
   const operator = norm(options.operator || 'Supervisor');
   const reason = norm(options.reason || `Status updated to ${status}`);
-  const effectiveDate = options.effectiveDate || new Date().toISOString().slice(0, 10);
+  const effectiveDate = options.effectiveDate || getCairoBusinessDate();
 
   if (![LIFECYCLE_STATUS.ACTIVE, LIFECYCLE_STATUS.INACTIVE, LIFECYCLE_STATUS.DEPARTED].includes(status)) {
     throw new Error(`Invalid employee status: ${newStatus}. Must be ACTIVE, INACTIVE, or DEPARTED.`);

@@ -4,6 +4,7 @@ import { computePerformanceFromRecords, savePerformanceSnapshotToDB, getEmployee
 import { persistDailyLogRecords, generateTrackingId, recordOrderLifecycleEvent, logEmployeeActivity } from './tracking.js';
 import { syncAndRestoreObservedTeam } from './working_team_ops.js';
 import { getCapacityConfig, getEmployeeEffectiveCapacity } from './capacity_config.js';
+import { getHistoricalDayOverview, getHistoricalOrdersList } from './historical_dates.js';
 import {
   getEnterpriseAllocationConfig,
   validateEnterpriseAllocationConfig,
@@ -23,13 +24,17 @@ import {
   undoLastAllocation,
   getLatestUndoableAllocationRun,
   ALLOCATION_MODES,
-  ALLOCATION_ERROR_CODES
+  ALLOCATION_ERROR_CODES,
+  saveAccountDaySchedule,
+  resetAccountDayScheduleInDb
 } from './enterprise_allocation.js';
 
 export {
   getEnterpriseAllocationConfig,
   validateEnterpriseAllocationConfig,
   saveEnterpriseAllocationConfig,
+  saveAccountDaySchedule,
+  resetAccountDayScheduleInDb,
   getEnterpriseConfigurationHistory,
   evaluateAccountTimeStatus,
   evaluateEmployeeAllocationEligibility,
@@ -735,13 +740,33 @@ export function getCurrentAccounts(workDate, sortBy = 'alphabetical') {
   const orderClause = sortBy === 'orders'
     ? 'COUNT(*) DESC, account COLLATE NOCASE ASC'
     : 'account COLLATE NOCASE ASC';
-  const rows = db.prepare(`
+  let rows = db.prepare(`
     SELECT account, COUNT(*) as total_orders
     FROM current_work_orders
     WHERE work_date = ?
     GROUP BY account
     ORDER BY ${orderClause}
   `).all(workDate);
+
+  if (rows.length === 0) {
+    rows = db.prepare(`
+      SELECT account, COUNT(*) as total_orders
+      FROM order_level_allocations
+      WHERE allocation_date = ?
+      GROUP BY account
+      ORDER BY ${orderClause}
+    `).all(workDate);
+  }
+
+  if (rows.length === 0) {
+    rows = db.prepare(`
+      SELECT account, COUNT(*) as total_orders
+      FROM vendoor_orders
+      WHERE (business_date = ? OR source_date = ?) AND is_active = 1
+      GROUP BY account
+      ORDER BY ${orderClause}
+    `).all(workDate, workDate);
+  }
 
   return rows.map(r => r.account);
 }
@@ -751,7 +776,7 @@ export function getCurrentAccounts(workDate, sortBy = 'alphabetical') {
  * (Sorted by order count descending)
  */
 export function getCurrentAccountsWithCounts(workDate) {
-  const rows = db.prepare(`
+  let rows = db.prepare(`
     SELECT 
       cwo.account,
       COUNT(*) as total_orders,
@@ -767,6 +792,44 @@ export function getCurrentAccountsWithCounts(workDate) {
     GROUP BY cwo.account
     ORDER BY total_orders DESC, cwo.account COLLATE NOCASE ASC
   `).all(workDate);
+
+  if (rows.length === 0) {
+    // Try order_level_allocations
+    rows = db.prepare(`
+      SELECT 
+        ola.account,
+        COUNT(*) as total_orders,
+        SUM(CASE WHEN LOWER(TRIM(ola.status)) = 'new' THEN 1 ELSE 0 END) as new_orders,
+        SUM(CASE WHEN LOWER(TRIM(ola.status)) = 'pending' THEN 1 ELSE 0 END) as pending_orders,
+        ola.employee_id as owner_employee_id,
+        ola.employee_name as owner_employee_name,
+        ola.is_override,
+        null as owner_notes
+      FROM order_level_allocations ola
+      WHERE ola.allocation_date = ?
+      GROUP BY ola.account
+      ORDER BY total_orders DESC, ola.account COLLATE NOCASE ASC
+    `).all(workDate);
+  }
+
+  if (rows.length === 0) {
+    // Try vendoor_orders
+    rows = db.prepare(`
+      SELECT 
+        vo.account,
+        COUNT(*) as total_orders,
+        SUM(CASE WHEN LOWER(TRIM(COALESCE(vo.active_status, vo.status))) = 'new' THEN 1 ELSE 0 END) as new_orders,
+        SUM(CASE WHEN LOWER(TRIM(COALESCE(vo.active_status, vo.status))) = 'pending' THEN 1 ELSE 0 END) as pending_orders,
+        null as owner_employee_id,
+        'UNASSIGNED' as owner_employee_name,
+        0 as is_override,
+        null as owner_notes
+      FROM vendoor_orders vo
+      WHERE (vo.business_date = ? OR vo.source_date = ?) AND vo.is_active = 1
+      GROUP BY vo.account
+      ORDER BY total_orders DESC, vo.account COLLATE NOCASE ASC
+    `).all(workDate, workDate);
+  }
 
   // Fallback: If owner_employee_name is null in account_owners, check order_level_allocations
   const fallbackRows = db.prepare(`
@@ -900,143 +963,33 @@ export function getAvailableOrdersCount(workDate, account, status) {
 }
 
 /**
- * Get current work overview for a date
+ * Get current work overview for a date (Historical & Live Aware)
  */
 export function getCurrentWorkOverview(workDate) {
-  let orderRow = null;
   try {
-    orderRow = db.prepare(`
-      SELECT 
-        COUNT(*) as total_orders,
-        COUNT(DISTINCT account) as accounts_count,
-        SUM(CASE WHEN status = 'New' THEN 1 ELSE 0 END) as new_count,
-        SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) as pending_count
-      FROM current_work_orders
-      WHERE work_date = ?
-    `).get(workDate);
+    return getHistoricalDayOverview(workDate);
   } catch (err) {
-    console.warn('Warning in getCurrentWorkOverview order query:', err.message);
+    console.warn('Warning in getCurrentWorkOverview:', err.message);
+    return {
+      work_date: workDate,
+      total_orders: 0,
+      accounts_count: 0,
+      new_count: 0,
+      pending_count: 0,
+      working_team_count: 0,
+      working_team_source: 'SETUP_REQUIRED',
+      allocated_count: 0,
+      unallocated_count: 0,
+      completed_count: 0
+    };
   }
-
-  let teamCount = 0;
-  let teamSource = 'SETUP_REQUIRED';
-  try {
-    let teamRow = db.prepare(`
-      SELECT COUNT(*) as team_count
-      FROM daily_working_team
-      WHERE work_date = ? AND is_working = 1
-    `).get(workDate);
-
-    if (!teamRow || teamRow.team_count === 0) {
-      try {
-        syncAndRestoreObservedTeam(workDate);
-        teamRow = db.prepare(`
-          SELECT COUNT(*) as team_count
-          FROM daily_working_team
-          WHERE work_date = ? AND is_working = 1
-        `).get(workDate);
-      } catch (e) {}
-    }
-
-    teamCount = teamRow ? (teamRow.team_count || 0) : 0;
-
-    if (teamCount > 0) {
-      const sourceRow = db.prepare(`
-        SELECT source
-        FROM daily_working_team
-        WHERE work_date = ? AND is_working = 1
-        GROUP BY source
-        ORDER BY CASE WHEN source = 'MANUAL' THEN 1 ELSE 2 END ASC
-        LIMIT 1
-      `).get(workDate);
-      teamSource = sourceRow ? (sourceRow.source || 'MANUAL') : 'MANUAL';
-    }
-  } catch (err) {
-    try {
-      const fallbackRow = db.prepare(`
-        SELECT COUNT(*) as team_count
-        FROM daily_working_team
-        WHERE work_date = ?
-      `).get(workDate);
-      teamCount = fallbackRow ? (fallbackRow.team_count || 0) : 0;
-    } catch (e) {
-      console.warn('Warning in getCurrentWorkOverview team query:', e.message);
-    }
-  }
-
-  let allocatedCount = 0;
-  try {
-    const allocRow = db.prepare(`
-      SELECT COUNT(*) as c
-      FROM order_level_allocations
-      WHERE allocation_date = ? AND employee_name IS NOT NULL AND employee_name != 'UNASSIGNED'
-    `).get(workDate);
-    allocatedCount = allocRow ? (allocRow.c || 0) : 0;
-  } catch (err) {}
-
-  const totalOrders = orderRow ? (orderRow.total_orders || 0) : 0;
-  const unallocatedCount = Math.max(0, totalOrders - allocatedCount);
-
-  let completedCount = 0;
-  try {
-    const compRow = db.prepare(`
-      SELECT COUNT(DISTINCT order_code) as c
-      FROM raw_log_records
-      WHERE log_date = ? AND action_type IN ('PRINTED', 'STATUS_CHANGE', 'PROCESSING', 'DELIVERED')
-    `).get(workDate);
-    completedCount = compRow ? (compRow.c || 0) : 0;
-  } catch (err) {}
-
-  return {
-    work_date: workDate,
-    total_orders: totalOrders,
-    accounts_count: orderRow ? (orderRow.accounts_count || 0) : 0,
-    new_count: orderRow ? (orderRow.new_count || 0) : 0,
-    pending_count: orderRow ? (orderRow.pending_count || 0) : 0,
-    working_team_count: teamCount,
-    working_team_source: teamSource,
-    allocated_count: allocatedCount,
-    unallocated_count: unallocatedCount,
-    completed_count: completedCount,
-  };
 }
 
 /**
- * Query orders in current work pool with filtering & pagination
+ * Query orders in current work pool or historical repository with filtering & pagination
  */
 export function getCurrentOrders(workDate, options = {}) {
-  const { account, status, search, limit = 100, offset = 0 } = options;
-  let sql = 'SELECT id, order_code, account, status, order_date, source_file_slot FROM current_work_orders WHERE work_date = ?';
-  const params = [workDate];
-
-  if (account) {
-    sql += ' AND account = ?';
-    params.push(account);
-  }
-  if (status) {
-    sql += ' AND status = ?';
-    params.push(status);
-  }
-  if (search) {
-    sql += ' AND (order_code LIKE ? OR account LIKE ?)';
-    params.push(`%${search}%`, `%${search}%`);
-  }
-
-  const countSql = sql.replace('SELECT id, order_code, account, status, order_date, source_file_slot', 'SELECT COUNT(*) as total');
-  const total = db.prepare(countSql).get(...params).total;
-
-  sql += ' ORDER BY account ASC, order_code ASC LIMIT ? OFFSET ?';
-  params.push(limit, offset);
-
-  const orders = db.prepare(sql).all(...params);
-
-  return {
-    work_date: workDate,
-    total,
-    limit,
-    offset,
-    orders
-  };
+  return getHistoricalOrdersList(workDate, options);
 }
 
 /**
@@ -1244,7 +1197,7 @@ export function deleteAllocationForDate(workDate) {
           updated_at = datetime('now')
       WHERE work_date = ?
         AND (assigned_employee_id IS NOT NULL OR work_state = 'ASSIGNED' OR (assigned_employee_name IS NOT NULL AND assigned_employee_name != 'UNASSIGNED'))
-        AND (work_state NOT IN ('CLAIMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'))
+        AND (work_state NOT IN ('CLAIMED', 'IN_PROGRESS', 'PRINTED', 'COMPLETED', 'CANCELLED'))
         AND (status IS NULL OR LOWER(TRIM(status)) NOT IN ('printed', 'completed', 'cancelled', 'sealed', 'dispatched', 'delivered'))
         AND claimed_at IS NULL
         AND completed_at IS NULL
@@ -1256,7 +1209,7 @@ export function deleteAllocationForDate(workDate) {
       DELETE FROM order_level_allocations
       WHERE allocation_date = ?
         AND (work_state IS NULL OR work_state IN ('ASSIGNED', 'UNASSIGNED'))
-        AND (work_state NOT IN ('CLAIMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'))
+        AND (work_state NOT IN ('CLAIMED', 'IN_PROGRESS', 'PRINTED', 'COMPLETED', 'CANCELLED'))
         AND (status IS NULL OR LOWER(TRIM(status)) NOT IN ('printed', 'completed', 'cancelled', 'sealed', 'dispatched', 'delivered'))
     `).run(workDate);
 

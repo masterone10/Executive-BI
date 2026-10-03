@@ -15,6 +15,7 @@
 
 import { db } from '../db/index.js';
 import { isCsEmployee } from './parser.js';
+import { getCairoBusinessDate } from './time_utils.js';
 import { getCompletedOrdersForDate } from './vendoor/completion.js';
 import { getFullEmployeeProductivityProfiles } from './vendoor/productivity.js';
 import { getEmployeeWorkloadAndRefillStates } from './vendoor/workload.js';
@@ -57,7 +58,7 @@ export function formatRelativeTime(tsStr) {
  */
 export function syncAndRestoreObservedTeam(workDate) {
   if (!workDate) {
-    workDate = new Date().toISOString().slice(0, 10);
+    workDate = getCairoBusinessDate();
   }
 
   // 1. Check if a MANUAL working team already exists for this workDate
@@ -254,7 +255,7 @@ export function syncAndRestoreObservedTeam(workDate) {
  */
 export function resetToObservedWorkingTeam(workDate) {
   if (!workDate) {
-    workDate = new Date().toISOString().slice(0, 10);
+    workDate = getCairoBusinessDate();
   }
   db.prepare("DELETE FROM daily_working_team WHERE work_date = ? AND (source = 'MANUAL' OR source IS NULL)").run(workDate);
   return syncAndRestoreObservedTeam(workDate);
@@ -265,7 +266,7 @@ export function resetToObservedWorkingTeam(workDate) {
  */
 export function getComprehensiveWorkingTeamStatus(workDate) {
   if (!workDate) {
-    workDate = new Date().toISOString().slice(0, 10);
+    workDate = getCairoBusinessDate();
   }
 
   // 1. Check if a MANUAL working team exists for this date

@@ -280,6 +280,46 @@ export function isEventInTimeWindow(rawTimestamp, workDate, fromTime, toTime) {
 }
 
 /**
+ * Calculates the exact previous completed Cairo calendar week (Monday -> Sunday).
+ * For a given reference date (defaulting to current Cairo business date),
+ * finds the previous week's Monday and Sunday, plus the full list of 7 daily dates.
+ *
+ * Example: For Saturday 2026-10-03 -> Monday 2026-09-21 to Sunday 2026-09-27.
+ *
+ * @param {string|Date} [refDate]
+ * @returns {{ startDate: string, endDate: string, dates: string[], daysCount: number }}
+ */
+export function getPreviousCompletedWeekRange(refDate = new Date()) {
+  const cairoDateStr = typeof refDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(refDate)
+    ? refDate
+    : getCairoBusinessDate(refDate instanceof Date ? refDate : new Date(refDate));
+
+  // Parse as UTC date parts to avoid local machine timezone skew
+  const [y, m, d] = cairoDateStr.split('-').map(Number);
+  const anchorUtc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  
+  const dayOfWeek = anchorUtc.getUTCDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  const daysFromCurrentMonday = (dayOfWeek + 6) % 7; // Mon->0, Tue->1, ..., Sun->6
+  const daysToPreviousMonday = daysFromCurrentMonday + 7; // Mon->7, Tue->8, ..., Sun->13
+
+  const prevMondayMs = anchorUtc.getTime() - (daysToPreviousMonday * 86400000);
+  const prevMonday = new Date(prevMondayMs);
+
+  const dates = [];
+  for (let i = 0; i < 7; i++) {
+    const curDate = new Date(prevMonday.getTime() + (i * 86400000));
+    dates.push(curDate.toISOString().slice(0, 10));
+  }
+
+  return {
+    startDate: dates[0],
+    endDate: dates[6],
+    dates,
+    daysCount: 7
+  };
+}
+
+/**
  * Diagnostic payload for time configuration
  */
 export function getTimeDiagnostic() {

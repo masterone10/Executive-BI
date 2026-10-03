@@ -16,6 +16,7 @@
 import XLSX from 'xlsx';
 import { vendoorFetch, VendoorClientError } from './client.js';
 import { extractCsrfTokenFromHtml } from './auth.js';
+import { getCairoBusinessDate } from '../time_utils.js';
 
 /**
  * Map status filter to Vendoor category ID
@@ -277,7 +278,7 @@ export async function exportAndParseVendoorOrders(categoryId, options = {}) {
       merchant_name: merchantName,
       merchant_code: merchantCode,
       created_at_original: createdAtOriginal,
-      date: createdAtOriginal ? createdAtOriginal.slice(0, 10) : new Date().toISOString().slice(0, 10),
+      date: createdAtOriginal ? createdAtOriginal.slice(0, 10) : getCairoBusinessDate(),
       customer_name: customerName,
       phone,
       phone2,

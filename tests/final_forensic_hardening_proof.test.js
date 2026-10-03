@@ -30,6 +30,8 @@ describe('FINAL FORENSIC VERIFICATION & HARDENING SUITE', () => {
     db.prepare('DELETE FROM employee_activity_log WHERE work_date = ?').run(TEST_DATE);
     db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(TEST_DATE);
     db.prepare('DELETE FROM allocation_versions WHERE allocation_date = ?').run(TEST_DATE);
+    db.prepare("DELETE FROM performance_snapshots WHERE employee_id IN (201, 202, 203, 204) OR employee_name LIKE '%Farida%' OR employee_name LIKE '%Tarek%'").run();
+    db.prepare('DELETE FROM employee_capacities WHERE employee_id IN (201, 202, 203, 204)').run();
 
     // Insert controlled CS test employees
     // 201: Both streams
@@ -61,6 +63,8 @@ describe('FINAL FORENSIC VERIFICATION & HARDENING SUITE', () => {
     db.prepare('DELETE FROM employee_activity_log WHERE work_date = ?').run(TEST_DATE);
     db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(TEST_DATE);
     db.prepare('DELETE FROM allocation_versions WHERE allocation_date = ?').run(TEST_DATE);
+    db.prepare("DELETE FROM performance_snapshots WHERE employee_id IN (201, 202, 203, 204) OR employee_name LIKE '%Farida%' OR employee_name LIKE '%Tarek%'").run();
+    db.prepare('DELETE FROM employee_capacities WHERE employee_id IN (201, 202, 203, 204)').run();
   });
 
   // ============================================================

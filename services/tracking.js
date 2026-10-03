@@ -17,6 +17,9 @@ import {
   extractCairoDateTimeComponents
 } from './time_utils.js';
 import { executeEnterpriseAllocation } from './enterprise_allocation.js';
+import { getActionDeduplicationWindowMs } from './config_constants.js';
+
+const DEDUP_WINDOW_MS = getActionDeduplicationWindowMs();
 
 /**
  * ============================================================
@@ -1777,8 +1780,8 @@ export function getRangeTracking(startDate, endDate) {
  */
 
 export function getAccountsDirectory(workDate) {
-  // 1. Get all distinct accounts from current_work_orders and raw_log_records
-  const openingAccounts = db.prepare(`
+  // 1. Get all distinct accounts from current_work_orders, order_level_allocations, and raw_log_records
+  let openingAccounts = db.prepare(`
     SELECT 
       account,
       COUNT(id) as total_orders,
@@ -1789,6 +1792,34 @@ export function getAccountsDirectory(workDate) {
     WHERE work_date = ?
     GROUP BY account
   `).all(workDate);
+
+  if (openingAccounts.length === 0) {
+    openingAccounts = db.prepare(`
+      SELECT 
+        account,
+        COUNT(id) as total_orders,
+        SUM(CASE WHEN LOWER(TRIM(status)) = 'new' THEN 1 ELSE 0 END) as new_orders,
+        SUM(CASE WHEN LOWER(TRIM(status)) = 'pending' THEN 1 ELSE 0 END) as pending_orders,
+        0 as conflict_orders
+      FROM order_level_allocations
+      WHERE allocation_date = ?
+      GROUP BY account
+    `).all(workDate);
+  }
+
+  if (openingAccounts.length === 0) {
+    openingAccounts = db.prepare(`
+      SELECT 
+        account,
+        COUNT(id) as total_orders,
+        SUM(CASE WHEN LOWER(TRIM(COALESCE(active_status, status))) = 'new' THEN 1 ELSE 0 END) as new_orders,
+        SUM(CASE WHEN LOWER(TRIM(COALESCE(active_status, status))) = 'pending' THEN 1 ELSE 0 END) as pending_orders,
+        0 as conflict_orders
+      FROM vendoor_orders
+      WHERE (business_date = ? OR source_date = ?) AND is_active = 1
+      GROUP BY account
+    `).all(workDate, workDate);
+  }
 
   const accMap = new Map();
   for (const a of openingAccounts) {

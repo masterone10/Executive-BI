@@ -16,6 +16,7 @@ import { partitionDateRange } from './logs.js';
 import { syncVendoorLogs, syncVendoorOrders, createSyncRunId, recordSyncRun } from './orchestrator.js';
 import { computePerformanceFromRecords, savePerformanceSnapshotToDB, getEmployeePerformanceProfiles } from '../performance.js';
 import { getEffectiveWorkDate } from './dispatcher.js';
+import { getCairoBusinessDate } from '../time_utils.js';
 
 // Ensure bootstrap state table exists
 try {
@@ -41,7 +42,7 @@ try {
  * Current Business Date minus 2 calendar months through Current Business Date
  */
 export function getTwoCalendarMonthsRange(todayInput = null) {
-  const effectiveToday = todayInput || getEffectiveWorkDate() || new Date().toISOString().slice(0, 10);
+  const effectiveToday = todayInput || getEffectiveWorkDate() || getCairoBusinessDate();
   const endD = new Date(effectiveToday + 'T00:00:00Z');
   const startD = new Date(endD.getTime());
   startD.setUTCMonth(startD.getUTCMonth() - 2);

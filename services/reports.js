@@ -161,10 +161,13 @@ export function getDayWorkloadSummary(workDate) {
   }
 
   // If totalOrders was not found in inventory tables, fallback to states + unallocated
+  const unallocatedPool = getUnallocatedOrdersPool(workDate);
   if (totalOrders === 0) {
-    const unallocatedPool = getUnallocatedOrdersPool(workDate);
     totalOrders = assignedOrders + unallocatedPool.total_unallocated_orders;
     totalAccounts = accountsCount + unallocatedPool.unique_accounts_count;
+  } else if (totalOrders < assignedOrders) {
+    totalOrders = assignedOrders + unallocatedPool.total_unallocated_orders;
+    totalAccounts = Math.max(totalAccounts, accountsCount);
   }
 
   // Canonical Arithmetic: Total Orders = Allocated Orders + Unallocated Orders
@@ -222,10 +225,10 @@ export function generateExecutiveSummaryReport(opts = {}) {
       working_team_count: workload.working_employees_count,
       total_accounts: workload.total_accounts,
       allocation_coverage_pct: workload.total_orders > 0
-        ? Math.round((workload.assigned_orders / workload.total_orders) * 100)
+        ? Math.min(100, Math.round((workload.assigned_orders / workload.total_orders) * 100))
         : 0,
       completion_pct: workload.assigned_orders > 0
-        ? Math.round((workload.completed_orders / workload.assigned_orders) * 100)
+        ? Math.min(100, Math.round((workload.completed_orders / workload.assigned_orders) * 100))
         : 0,
       real_actions: actionsCount
     };
@@ -259,8 +262,8 @@ export function generateExecutiveSummaryReport(opts = {}) {
     completed_orders: aggregateCompleted,
     remaining_orders: aggregateRemaining,
     real_actions: aggregateActions,
-    allocation_coverage_pct: aggregateOrders > 0 ? Math.round((aggregateAssigned / aggregateOrders) * 100) : 0,
-    completion_pct: aggregateAssigned > 0 ? Math.round((aggregateCompleted / aggregateAssigned) * 100) : 0,
+    allocation_coverage_pct: aggregateOrders > 0 ? Math.min(100, Math.round((aggregateAssigned / aggregateOrders) * 100)) : 0,
+    completion_pct: aggregateAssigned > 0 ? Math.min(100, Math.round((aggregateCompleted / aggregateAssigned) * 100)) : 0,
     daily_breakdown: dailyBreakdown,
     system_health: {
       db_healthy: dbHealth.healthy,

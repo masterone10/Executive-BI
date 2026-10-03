@@ -56,6 +56,8 @@ import {
   getEnterpriseAllocationConfig,
   validateEnterpriseAllocationConfig,
   saveEnterpriseAllocationConfig,
+  saveAccountDaySchedule,
+  resetAccountDayScheduleInDb,
   getEnterpriseConfigurationHistory,
   evaluateAccountTimeStatus,
   evaluateEmployeeAllocationEligibility,
@@ -139,7 +141,9 @@ import {
   getHistoricalBootstrapStatus,
   getLatestReconciliationAudit,
   getReconciliationAuditHistory,
-  invalidateProductivityCache
+  invalidateProductivityCache,
+  importWeeklyVendoorLogs,
+  getWeeklyLogsImportStatus
 } from './services/vendoor/index.js';
 import {
   generateExecutiveSummaryReport,
@@ -184,6 +188,15 @@ import {
   syncAndRestoreObservedTeam,
   resetToObservedWorkingTeam
 } from './services/working_team_ops.js';
+import { requireRole, USER_ROLES } from './services/auth_guard.js';
+import {
+  getAvailableBusinessDates,
+  getHistoricalDayOverview,
+  getHistoricalOrdersList,
+  invalidateAvailableDatesCache
+} from './services/historical_dates.js';
+
+const requireSupervisor = requireRole([USER_ROLES.SUPERVISOR, USER_ROLES.MANAGER, USER_ROLES.ADMIN]);
 
 const app = express();
 const PORT = 3000;
@@ -919,9 +932,21 @@ app.post('/api/system/restore', (req, res) => {
 // -------------------------------------------------------------
 // 4. WORK ALLOCATION & CURRENT WORK (Parts 13 to 25, 39, 40)
 // -------------------------------------------------------------
+// Canonical Available Business Dates Discovery API (Historical Days First-Class Concept)
+app.get(['/api/work/available-dates', '/api/available-dates', '/api/dates/available'], (req, res) => {
+  try {
+    const forceFresh = req.query.fresh === 'true';
+    const data = getAvailableBusinessDates(forceFresh);
+    res.json(data);
+  } catch (err) {
+    console.error('Error fetching available business dates:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get('/api/global-context', (req, res) => {
   try {
-    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const date = req.query.date || getCairoBusinessDate();
     const cacheKey = `gctx_${date}`;
     const cached = getCachedApiResponse(cacheKey);
     if (cached) {
@@ -1081,7 +1106,7 @@ app.get('/api/system/trace/order-identity', (req, res) => {
 
 app.get('/api/work/current', (req, res) => {
   try {
-    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const date = req.query.date || getCairoBusinessDate();
     const overview = getCurrentWorkOverview(date);
     res.json(overview);
   } catch (err) {
@@ -1092,7 +1117,7 @@ app.get('/api/work/current', (req, res) => {
 
 app.get(['/api/work/accounts', '/api/accounts/current/:date'], (req, res) => {
   try {
-    const date = req.params.date || req.query.date || new Date().toISOString().split('T')[0];
+    const date = req.params.date || req.query.date || getCairoBusinessDate();
     if (req.query.detailed === 'true' || req.query.include_counts === 'true') {
       const accounts = getCurrentAccountsWithCounts(date);
       return res.json(accounts);
@@ -1107,7 +1132,7 @@ app.get(['/api/work/accounts', '/api/accounts/current/:date'], (req, res) => {
 
 app.get('/api/work/accounts-detailed', (req, res) => {
   try {
-    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const date = req.query.date || getCairoBusinessDate();
     const accounts = getCurrentAccountsWithCounts(date);
     res.json(accounts);
   } catch (err) {
@@ -1171,7 +1196,7 @@ app.post('/api/allocation/configuration/validate', (req, res) => {
 });
 
 // 3. POST Save All Configuration (Atomic, Versioned)
-app.post('/api/allocation/configuration/save', (req, res) => {
+app.post('/api/allocation/configuration/save', requireSupervisor, (req, res) => {
   try {
     const operator = req.body.operator || req.headers['x-user'] || 'Supervisor';
     const expectedVersion = req.body.expected_version !== undefined ? req.body.expected_version : null;
@@ -1180,6 +1205,47 @@ app.post('/api/allocation/configuration/save', (req, res) => {
   } catch (err) {
     const status = err.code === 'CONFIGURATION_CONFLICT' ? 409 : 400;
     res.status(status).json({ success: false, error: err.message, code: err.code, validation_errors: err.validation_errors });
+  }
+});
+
+// 3B. POST Save Specific Account Day Schedule (Atomic, Partial Merge)
+app.post('/api/allocation/schedule/day-save', requireSupervisor, (req, res) => {
+  try {
+    const { account, status, day, start, end, new_start_time, new_end_time, pending_start_time, pending_end_time } = req.body;
+    const operator = req.body.operator || req.headers['x-user'] || 'Supervisor';
+    if (!account) return res.status(400).json({ success: false, error: 'account is required' });
+    if (!day) return res.status(400).json({ success: false, error: 'day is required' });
+
+    const result = saveAccountDaySchedule({
+      account,
+      status: status || 'NEW',
+      day,
+      start,
+      end,
+      new_start_time,
+      new_end_time,
+      pending_start_time,
+      pending_end_time,
+      operator
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// 3C. POST Reset Specific Account Day Schedule to Default
+app.post('/api/allocation/schedule/day-reset', requireSupervisor, (req, res) => {
+  try {
+    const { account, day } = req.body;
+    const operator = req.body.operator || req.headers['x-user'] || 'Supervisor';
+    if (!account) return res.status(400).json({ success: false, error: 'account is required' });
+    if (!day) return res.status(400).json({ success: false, error: 'day is required' });
+
+    const result = resetAccountDayScheduleInDb(account, day, operator);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
   }
 });
 
@@ -1197,9 +1263,10 @@ app.get('/api/allocation/configuration/history', (req, res) => {
 // 5. GET Account + Status Schedule Evaluation
 app.get('/api/allocation/schedule/status', (req, res) => {
   try {
-    const { account, work_type, time } = req.query;
+    const { account, work_type, time, date, workDate } = req.query;
     if (!account) return res.status(400).json({ error: 'account is required' });
-    const status = evaluateAccountTimeStatus(account, work_type || 'NEW', time || null);
+    const targetDate = date || workDate || null;
+    const status = evaluateAccountTimeStatus(account, work_type || 'NEW', time || null, targetDate);
     res.json(status);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1243,7 +1310,7 @@ app.post(['/api/allocation/preview', '/api/allocations/:date/preview'], (req, re
 });
 
 // 9. POST Execute Allocation (Atomic Production Write)
-app.post(['/api/allocation/execute', '/api/allocations/:date/execute'], (req, res) => {
+app.post(['/api/allocation/execute', '/api/allocations/:date/execute'], requireSupervisor, (req, res) => {
   const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
   try {
     const result = executeEnterpriseAllocation(req.body?.plan || date, { mode: 'ACTIVE', ...req.body });
@@ -1289,7 +1356,7 @@ app.get(['/api/allocation/alerts', '/api/allocations/:date/alerts'], (req, res) 
 });
 
 // 13. POST Undo / Reject Allocation (Rollback to exact pre-allocation state)
-app.post(['/api/allocations/:date/undo', '/api/allocation/:date/undo', '/api/allocations/undo', '/api/allocation/undo'], (req, res) => {
+app.post(['/api/allocations/:date/undo', '/api/allocation/:date/undo', '/api/allocations/undo', '/api/allocation/undo'], requireSupervisor, (req, res) => {
   const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
   const { allocation_run_id, run_id, reason, operator, generated_by, forceFailForTest } = req.body || {};
   try {
@@ -1338,7 +1405,7 @@ app.get(['/api/allocations/:date/undo-history', '/api/allocation/:date/undo-hist
     res.status(500).json({ success: false, error: err.message });
   }
 });
-app.post(['/api/allocations/:date/generate', '/api/allocations/generate', '/api/allocation/generate'], (req, res) => {
+app.post(['/api/allocations/:date/generate', '/api/allocations/generate', '/api/allocation/generate'], requireSupervisor, (req, res) => {
   const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
   const { method, account_specific_rules, regenerate, round_based, round_number, max_capacity_per_employee, max_capacity, enterprise, use_enterprise } = req.body || {};
   
@@ -1358,25 +1425,14 @@ app.post(['/api/allocations/:date/generate', '/api/allocations/generate', '/api/
 
   try {
     let result;
-    if (mode === 'ACTIVE' || enterprise === true || use_enterprise === true) {
+    if (mode === 'OFF') {
+      result = executeEnterpriseAllocation(date, { mode: 'OFF', ...req.body });
+    } else if (mode === 'ACTIVE' || enterprise === true || use_enterprise === true) {
       result = executeEnterpriseAllocation(date, { mode: 'ACTIVE', ...req.body });
+    } else if (mode === 'SHADOW') {
+      result = executeEnterpriseAllocation(date, { mode: 'SHADOW', ...req.body });
     } else {
-      result = generateRoundBasedAllocation(date, {
-        method: method || 'fair_random',
-        account_specific_rules,
-        regenerate: regenerate === true,
-        round_number: round_number || 1,
-        max_capacity_per_employee: max_capacity_per_employee || max_capacity || 40,
-        ...req.body
-      });
-
-      if (mode === 'SHADOW') {
-        try {
-          executeEnterpriseAllocation(date, { mode: 'SHADOW', trigger: 'SHADOW_POST_GENERATE' });
-        } catch (e) {
-          console.warn('[SHADOW] Enterprise shadow plan warning:', e.message);
-        }
-      }
+      result = executeEnterpriseAllocation(date, { mode, ...req.body });
     }
 
     console.log(`[ALLOCATION BOUNDARY] Allocation generated: date=${date}, status=${result.status || 'OK'}, assigned=${result.assigned_orders ?? result.assigned_count ?? 0}, unassigned=${result.unassigned_orders ?? result.unassigned_count ?? 0}`);
@@ -1390,7 +1446,7 @@ app.post(['/api/allocations/:date/generate', '/api/allocations/generate', '/api/
 /**
  * REALLOCATE REMAINING / UNCLAIMED ORDERS (Round 2+)
  */
-app.post(['/api/allocations/:date/reallocate', '/api/allocations/reallocate', '/api/allocation/reallocate'], (req, res) => {
+app.post(['/api/allocations/:date/reallocate', '/api/allocations/reallocate', '/api/allocation/reallocate'], requireSupervisor, (req, res) => {
   const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
   const { method, max_capacity_per_employee, max_capacity, round_number, use_legacy } = req.body || {};
   try {
@@ -1420,7 +1476,7 @@ app.post(['/api/allocations/:date/reallocate', '/api/allocations/reallocate', '/
 /**
  * SAVE FINAL ORDER-LEVEL ALLOCATION
  */
-app.post('/api/allocations/:date/save-order-level', (req, res) => {
+app.post('/api/allocations/:date/save-order-level', requireSupervisor, (req, res) => {
   const { date } = req.params;
   const { notes, generated_by } = req.body || {};
   const payloadSummary = req.body ? (Array.isArray(req.body) ? `Array(${req.body.length})` : `Object(keys: ${Object.keys(req.body).join(',')})`) : 'empty';
@@ -1439,7 +1495,7 @@ app.post('/api/allocations/:date/save-order-level', (req, res) => {
 /**
  * MANUAL OVERRIDE SINGLE ORDER ALLOCATION
  */
-app.post('/api/allocations/:date/override', (req, res) => {
+app.post('/api/allocations/:date/override', requireSupervisor, (req, res) => {
   const { date } = req.params;
   const { version, order_code, employee_id } = req.body || {};
   if (!order_code || !employee_id) {
@@ -1484,7 +1540,7 @@ app.get('/api/allocations/:date/account-owners', (req, res) => {
 /**
  * REASSIGN ACCOUNT OWNER (Supervisor Reassignment)
  */
-app.post('/api/allocations/:date/reassign-account', (req, res) => {
+app.post('/api/allocations/:date/reassign-account', requireSupervisor, (req, res) => {
   const { date } = req.params;
   const { account, employee_id, reason, reassigned_by } = req.body || {};
   if (!account || !employee_id) {
@@ -1626,7 +1682,7 @@ app.delete('/api/allocations/:id', (req, res) => {
   }
 });
 
-app.delete(['/api/allocations/date/:date', '/api/allocations/:date'], (req, res) => {
+app.delete(['/api/allocations/date/:date', '/api/allocations/:date'], requireSupervisor, (req, res) => {
   const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
   try {
     const result = deleteAllocationForDate(date);
@@ -1636,7 +1692,7 @@ app.delete(['/api/allocations/date/:date', '/api/allocations/:date'], (req, res)
   }
 });
 
-app.post(['/api/allocations/:date/reset', '/api/allocations/reset', '/api/allocation/reset'], (req, res) => {
+app.post(['/api/allocations/:date/reset', '/api/allocations/reset', '/api/allocation/reset'], requireSupervisor, (req, res) => {
   const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
   try {
     const result = deleteAllocationForDate(date);
@@ -2873,6 +2929,47 @@ app.post('/api/integrations/vendoor/sync/logs', async (req, res) => {
   }
 });
 
+app.post(['/api/integrations/vendoor/logs/import-week', '/api/vendoor/logs/import-week'], async (req, res) => {
+  try {
+    const { startDate, endDate, start_date, end_date, forceMode } = req.body || {};
+    const result = await importWeeklyVendoorLogs({
+      startDate: startDate || start_date,
+      endDate: endDate || end_date,
+      forceMode
+    });
+    return res.json(result);
+  } catch (err) {
+    if (err.code === 'IMPORT_ALREADY_RUNNING') {
+      return res.status(409).json({
+        success: false,
+        code: 'IMPORT_ALREADY_RUNNING',
+        error: err.message,
+        status: err.status || getWeeklyLogsImportStatus()
+      });
+    }
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get(['/api/integrations/vendoor/logs/import-week/status', '/api/vendoor/logs/import-week/status'], (req, res) => {
+  try {
+    const status = getWeeklyLogsImportStatus();
+    return res.json({ success: true, ...status });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get(['/api/integrations/vendoor/logs/import-week/preview-range', '/api/vendoor/logs/import-week/preview-range'], (req, res) => {
+  try {
+    const refDate = req.query.ref_date || req.query.date || getCairoBusinessDate();
+    const range = getPreviousCompletedWeekRange(refDate);
+    return res.json({ success: true, ref_date: refDate, ...range });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/api/integrations/vendoor/sync/all', async (req, res) => {
   try {
     const { workDate, fromDate, toDate, forceMode, isHistoricalSync } = req.body || {};
@@ -3712,7 +3809,8 @@ if (process.env.SEED_DEMO_DATA === 'true') {
   seedTrackingDefaults();
 }
 
-if (process.env.NODE_ENV !== 'test') {
+const isTestExecution = process.env.NODE_ENV === 'test' || process.argv.some(a => typeof a === 'string' && a.includes('test'));
+if (!isTestExecution) {
   const server = app.listen(PORT, HOST, () => {
     console.log(`CS Executive BI server running on http://${HOST}:${PORT}`);
     try {

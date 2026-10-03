@@ -330,23 +330,29 @@ input:checked + .slider:before{transform:translateX(16px)}
           <div class="gds-badge" id="globalDateDisplay">Loading...</div>
         </div>
         <div class="gds-controls">
-          <button type="button" class="gds-btn" id="btnPrevDay" onclick="navigateDateOffset(-1)" title="Previous Day">
-            ◀ Previous Day
+          <button type="button" class="gds-btn" id="btnPrevDay" onclick="navigateDateOffset(-1)" title="Previous Available Day">
+            ◀ Prev Day
           </button>
           <button type="button" class="gds-btn active-today" id="btnToday" onclick="navigateDateToday()" title="Return to Today">
             Today
           </button>
-          <button type="button" class="gds-btn" id="btnNextDay" onclick="navigateDateOffset(1)" title="Next Day">
+          <button type="button" class="gds-btn" id="btnNextDay" onclick="navigateDateOffset(1)" title="Next Available Day">
             Next Day ▶
           </button>
           <div class="gds-cal-wrap">
             <label class="gds-btn" for="globalCalendarPicker" title="Pick any date from calendar" style="position:relative;cursor:pointer;display:inline-flex;align-items:center;margin:0">
               📅 Calendar
-              <input type="date" id="globalCalendarPicker" class="gds-date-input" onchange="onGlobalDatePicked(this.value)">
+              <input type="date" id="globalCalendarPicker" class="gds-date-input" list="availableDatesDatalist" onchange="onGlobalDatePicked(this.value)">
             </label>
+          </div>
+          <div id="availableDatesDropdownWrap" style="display:inline-flex;align-items:center">
+            <select id="globalAvailableDatesSelect" class="filter" style="padding:4px 8px;font-size:12px;font-weight:700;color:var(--navy);border-radius:6px;border:1.5px solid #CBD5E1;background:#fff;max-width:190px" onchange="if(this.value) setGlobalSelectedDate(this.value)" title="Direct jump to any recorded operational date">
+              <option value="">📂 Recorded Days...</option>
+            </select>
           </div>
         </div>
       </div>
+      <datalist id="availableDatesDatalist"></datalist>
 
       <!-- GLOBAL TRUE EVENT TIME WINDOW FILTER -->
       <div class="global-time-selector" id="globalTimeSelector" style="display:flex;align-items:center;background:#fff;border:1px solid var(--line);border-radius:10px;padding:4px 10px;gap:8px;box-shadow:var(--shadow)">
@@ -510,14 +516,61 @@ function lineChart(series,keys,colors,labels,pctMode){
 }
 
 // -------------------------------------------------------------
-// GLOBAL DATE NAVIGATION ENGINE
+// GLOBAL DATE NAVIGATION ENGINE (CANONICAL CAIRO BUSINESS DATE)
 // -------------------------------------------------------------
+function getClientCairoDate() {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Cairo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    return formatter.format(new Date());
+  } catch (_) {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+}
+
 function getTodayDate() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  return getClientCairoDate();
+}
+
+let availableBusinessDates = [];
+
+async function loadAvailableBusinessDates(force = false) {
+  try {
+    const res = await apiFetch('/api/work/available-dates' + (force ? '?fresh=true' : ''));
+    if (res && Array.isArray(res.dates)) {
+      availableBusinessDates = res.dates;
+      updateAvailableDatesUI();
+    }
+  } catch (err) {
+    console.warn('Failed to load available business dates:', err.message);
+  }
+}
+
+function updateAvailableDatesUI() {
+  const datalist = document.getElementById('availableDatesDatalist');
+  const select = document.getElementById('globalAvailableDatesSelect');
+  
+  if (datalist) {
+    datalist.innerHTML = availableBusinessDates.map(d => `<option value="${d.date}">${formatDisplayDate(d.date)}${d.is_today ? ' (Today)' : ''} — ${d.orders_count || 0} Orders</option>`).join('');
+  }
+
+  if (select) {
+    let opts = '<option value="">📂 Recorded Days (' + availableBusinessDates.length + ')...</option>';
+    opts += availableBusinessDates.map(d => {
+      const isSel = (d.date === currentWorkDate);
+      const label = `${d.date} ${d.is_today ? '🌟 (Today)' : ''} — ${d.orders_count || 0} ord${d.has_allocation ? ', ✓Alloc' : ''}`;
+      return `<option value="${d.date}" ${isSel ? 'selected' : ''}>${label}</option>`;
+    }).join('');
+    select.innerHTML = opts;
+  }
 }
 
 function getInitialDate() {
@@ -618,6 +671,11 @@ function updateGlobalDateUI() {
 
   const cal = document.getElementById('globalCalendarPicker');
   if (cal) cal.value = currentWorkDate;
+
+  const sel = document.getElementById('globalAvailableDatesSelect');
+  if (sel) {
+    sel.value = currentWorkDate;
+  }
 
   const btnToday = document.getElementById('btnToday');
   if (btnToday) {
@@ -2196,11 +2254,75 @@ let currentConfigCenterData = null;
 let configDraft = null;
 let configUnsavedChangesCount = 0;
 let currentEnterprisePreviewPlan = null;
-let configSelectedScheduleDay = 'all';
+
+function getClientCairoDayOfWeek() {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Africa/Cairo',
+      weekday: 'long'
+    });
+    return formatter.format(new Date()).toLowerCase();
+  } catch (_) {
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    return dayNames[new Date().getDay()];
+  }
+}
+
+function getClientCairoTime() {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Africa/Cairo',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
+    return formatter.format(new Date());
+  } catch (_) {
+    const now = new Date();
+    return String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  }
+}
+
+function getArabicDayName(day) {
+  const map = {
+    sunday: 'الأحد',
+    monday: 'الإثنين',
+    tuesday: 'الثلاثاء',
+    wednesday: 'الأربعاء',
+    thursday: 'الخميس',
+    friday: 'الجمعة',
+    saturday: 'السبت',
+    all: 'جميع الأيام (الافتراضي العام)'
+  };
+  return map[day] || day;
+}
+
+function getInitialConfigScheduleDay() {
+  try {
+    const sessionDay = sessionStorage.getItem('cs_config_selected_schedule_day');
+    const valid = ['all', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    if (sessionDay && valid.includes(sessionDay)) {
+      return sessionDay;
+    }
+  } catch (_) {}
+  // Always default automatically to Cairo operational current day
+  return getClientCairoDayOfWeek();
+}
+
+let configSelectedScheduleDay = getInitialConfigScheduleDay();
 
 function changeConfigScheduleDay(day) {
   configSelectedScheduleDay = day || 'all';
+  try {
+    sessionStorage.setItem('cs_config_selected_schedule_day', configSelectedScheduleDay);
+  } catch (_) {}
   renderAllocationConfigCenterUI();
+}
+
+function selectTodayConfigScheduleDay() {
+  const todayDay = getClientCairoDayOfWeek();
+  changeConfigScheduleDay(todayDay);
+  showToast('📅 اليوم الحالي', `تم الانتقال تلقائياً ليوم ${getArabicDayName(todayDay)} (${todayDay.toUpperCase()})`);
 }
 
 function setAllAccountsAllDayForDay(day) {
@@ -2374,22 +2496,25 @@ function renderAllocationConfigCenterUI(alerts = []) {
       <div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
         <div>
           <h3>⏰ Account + Status Schedules</h3>
-          <p>Independent time windows for NEW and PENDING work per account. Blank Start & End = ALL_DAY (Always open).</p>
+          <p>مواعيد عمل الحسابات لطلبات NEW و PENDING لكل يوم بشكل مستقل. الخانات الفارغة = ALL_DAY (مفتوح طوال اليوم).</p>
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <div style="display:flex;align-items:center;gap:6px">
             <label style="font-size:12.5px;font-weight:700;color:var(--navy)">📅 Schedule Day / يوم الجدول:</label>
             <select id="cfgScheduleDaySelect" class="filter" style="padding:6px 12px;border-radius:8px;border:1.5px solid var(--blue);font-weight:700;color:var(--navy);background:#F8FAFC" onchange="changeConfigScheduleDay(this.value)">
-              <option value="all" ${configSelectedScheduleDay === 'all' ? 'selected' : ''}>🌟 All Days (Default) / جميع الأيام (الافتراضي)</option>
-              <option value="sunday" ${configSelectedScheduleDay === 'sunday' ? 'selected' : ''}>الأحد / Sunday</option>
-              <option value="monday" ${configSelectedScheduleDay === 'monday' ? 'selected' : ''}>الإثنين / Monday</option>
-              <option value="tuesday" ${configSelectedScheduleDay === 'tuesday' ? 'selected' : ''}>الثلاثاء / Tuesday</option>
-              <option value="wednesday" ${configSelectedScheduleDay === 'wednesday' ? 'selected' : ''}>الأربعاء / Wednesday</option>
-              <option value="thursday" ${configSelectedScheduleDay === 'thursday' ? 'selected' : ''}>الخميس / Thursday</option>
-              <option value="friday" ${configSelectedScheduleDay === 'friday' ? 'selected' : ''}>🕌 الجمعة / Friday (e.g. All Day / طوال اليوم)</option>
-              <option value="saturday" ${configSelectedScheduleDay === 'saturday' ? 'selected' : ''}>السبت / Saturday</option>
+              <option value="all" ${configSelectedScheduleDay === 'all' ? 'selected' : ''}>🌐 All Days (Default) / جميع الأيام (الافتراضي العام)</option>
+              <option value="sunday" ${configSelectedScheduleDay === 'sunday' ? 'selected' : ''}>الأحد / Sunday ${getClientCairoDayOfWeek() === 'sunday' ? '🌟 (اليوم الحالي / TODAY)' : ''}</option>
+              <option value="monday" ${configSelectedScheduleDay === 'monday' ? 'selected' : ''}>الإثنين / Monday ${getClientCairoDayOfWeek() === 'monday' ? '🌟 (اليوم الحالي / TODAY)' : ''}</option>
+              <option value="tuesday" ${configSelectedScheduleDay === 'tuesday' ? 'selected' : ''}>الثلاثاء / Tuesday ${getClientCairoDayOfWeek() === 'tuesday' ? '🌟 (اليوم الحالي / TODAY)' : ''}</option>
+              <option value="wednesday" ${configSelectedScheduleDay === 'wednesday' ? 'selected' : ''}>الأربعاء / Wednesday ${getClientCairoDayOfWeek() === 'wednesday' ? '🌟 (اليوم الحالي / TODAY)' : ''}</option>
+              <option value="thursday" ${configSelectedScheduleDay === 'thursday' ? 'selected' : ''}>الخميس / Thursday ${getClientCairoDayOfWeek() === 'thursday' ? '🌟 (اليوم الحالي / TODAY)' : ''}</option>
+              <option value="friday" ${configSelectedScheduleDay === 'friday' ? 'selected' : ''}>🕌 الجمعة / Friday ${getClientCairoDayOfWeek() === 'friday' ? '🌟 (اليوم الحالي / TODAY)' : ''}</option>
+              <option value="saturday" ${configSelectedScheduleDay === 'saturday' ? 'selected' : ''}>السبت / Saturday ${getClientCairoDayOfWeek() === 'saturday' ? '🌟 (اليوم الحالي / TODAY)' : ''}</option>
             </select>
           </div>
+          <button class="btn sm" onclick="selectTodayConfigScheduleDay()" style="background:${configSelectedScheduleDay === getClientCairoDayOfWeek() ? '#DCFCE7' : '#EFF6FF'};color:${configSelectedScheduleDay === getClientCairoDayOfWeek() ? '#15803D' : '#1D4ED8'};border:1.5px solid ${configSelectedScheduleDay === getClientCairoDayOfWeek() ? '#86EFAC' : '#BFDBFE'};font-weight:700" title="الانتقال التلقائي لجدول اليوم الحالي">
+            ⚡ اليوم الحالي: ${getArabicDayName(getClientCairoDayOfWeek())} ${configSelectedScheduleDay === getClientCairoDayOfWeek() ? '✓ (المختار حالياً)' : ''}
+          </button>
           ${configSelectedScheduleDay !== 'all' ? `
             <button class="btn sm success" onclick="setAllAccountsAllDayForDay('${configSelectedScheduleDay}')" title="Set all accounts to work all day on this day" style="background:#DCFCE7;color:#15803D;border-color:#86EFAC">⚡ Set All Day for ${configSelectedScheduleDay.toUpperCase()}</button>
             <button class="btn sm" onclick="resetDayScheduleToDefault('${configSelectedScheduleDay}')" title="Reset this day to use default schedule" style="background:#FEF2F2;color:#991B1B;border-color:#FECACA">↺ Reset to Default</button>
@@ -2400,13 +2525,20 @@ function renderAllocationConfigCenterUI(alerts = []) {
         </div>
       </div>
 
-      <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#1E40AF;display:flex;align-items:center;gap:8px">
-        <span>💡</span>
-        <span>
-          ${configSelectedScheduleDay === 'all' 
-            ? '<b>الجدول الافتراضي (Default):</b> ينطبق على جميع أيام الأسبوع ما لم يتم تخصيص يوم محدد في القائمة أعلاه (مثل يوم الجمعة ALL_DAY للعمل طوال اليوم والتوزيع العادي).' 
-            : `<b>تخصيص جدول يوم ${configSelectedScheduleDay.toUpperCase()}:</b> الحسابات التي يتم إدخال مواعيد لها هنا ستلتزم بها في هذا اليوم فقط. الحسابات ذات الخانات الفارغة في هذا اليوم ستعمل طوال اليوم ALL_DAY.`}
-        </span>
+      <div style="background:${configSelectedScheduleDay === getClientCairoDayOfWeek() ? '#F0FDF4' : '#EFF6FF'};border:1.5px solid ${configSelectedScheduleDay === getClientCairoDayOfWeek() ? '#86EFAC' : '#BFDBFE'};border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:${configSelectedScheduleDay === getClientCairoDayOfWeek() ? '#166534' : '#1E40AF'};display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:18px">📅</span>
+          <span>
+            ${configSelectedScheduleDay === getClientCairoDayOfWeek() 
+              ? `<b>السيستم تعرّف تلقائياً على اليوم الحالي: ${getArabicDayName(getClientCairoDayOfWeek())} (${getClientCairoDayOfWeek().toUpperCase()})</b> — يتم تطبيق مواعيد هذا اليوم تلقائياً في التوزيع والحالة اللحظية. أي تعديل تحفظه يظل مسجلاً لهذا اليوم ولن يتغير عند مغادرة الصفحة.` 
+              : (configSelectedScheduleDay === 'all' 
+                ? '<b>الجدول الافتراضي العام (Default):</b> ينطبق تلقائياً على جميع أيام الأسبوع ما لم يكن لليوم تخصيص مستقل. اليوم الحالي في السيستم هو <b>' + getArabicDayName(getClientCairoDayOfWeek()) + '</b>.' 
+                : `<b>تخصيص جدول يوم ${getArabicDayName(configSelectedScheduleDay)} (${configSelectedScheduleDay.toUpperCase()}):</b> يتم حفظ وتطبيق هذه المواعيد حصرياً على هذا اليوم. تظل محفوظة دائماً في قاعدة البيانات ولا تتغير بالخروج من الصفحة.`)}
+          </span>
+        </div>
+        ${configSelectedScheduleDay !== getClientCairoDayOfWeek() ? `
+          <button class="btn sm" onclick="selectTodayConfigScheduleDay()" style="background:#15803D;color:#fff;border:none;font-weight:700">الانتقال لليوم الحالي (${getArabicDayName(getClientCairoDayOfWeek())})</button>
+        ` : ''}
       </div>
 
       <div class="tbl-scroll" style="max-height:450px;overflow-y:auto">
@@ -2421,9 +2553,10 @@ function renderAllocationConfigCenterUI(alerts = []) {
               <th>PENDING Start Time</th>
               <th>PENDING End Time</th>
               <th>PENDING Live Status</th>
+              ${configSelectedScheduleDay !== 'all' ? '<th style="text-align:center">Day Action</th>' : ''}
             </tr>
           </thead>
-          <tbody>
+          <tbody id="cfgAccountSchedulesTableBody">
             ${accounts.map((acc, idx) => {
               const dayOverrides = (acc.day_schedules && acc.day_schedules[configSelectedScheduleDay]) || null;
               const isDaySpecific = configSelectedScheduleDay !== 'all';
@@ -2446,15 +2579,20 @@ function renderAllocationConfigCenterUI(alerts = []) {
                   ps = dayOverrides.pending_start_time !== undefined && dayOverrides.pending_start_time !== null ? dayOverrides.pending_start_time : '';
                   pe = dayOverrides.pending_end_time !== undefined && dayOverrides.pending_end_time !== null ? dayOverrides.pending_end_time : '';
                 } else {
-                  ns = acc.new_start_time || '';
-                  ne = acc.new_end_time || '';
-                  ps = acc.pending_start_time || '';
-                  pe = acc.pending_end_time || '';
+                  ns = '';
+                  ne = '';
+                  ps = '';
+                  pe = '';
                 }
               }
 
-              const newStatus = (!ns && !ne) ? 'ALL_DAY' : (isTimeWindowOpen(ns, ne) ? 'OPEN' : 'CLOSED');
-              const pendStatus = (!ps && !pe) ? 'ALL_DAY' : (isTimeWindowOpen(ps, pe) ? 'OPEN' : 'CLOSED');
+              const effNs = hasDayOverride ? ns : (acc.new_start_time || '');
+              const effNe = hasDayOverride ? ne : (acc.new_end_time || '');
+              const effPs = hasDayOverride ? ps : (acc.pending_start_time || '');
+              const effPe = hasDayOverride ? pe : (acc.pending_end_time || '');
+
+              const newStatus = (!effNs && !effNe) ? 'ALL_DAY' : (isTimeWindowOpen(effNs, effNe) ? 'OPEN' : 'CLOSED');
+              const pendStatus = (!effPs && !effPe) ? 'ALL_DAY' : (isTimeWindowOpen(effPs, effPe) ? 'OPEN' : 'CLOSED');
 
               const newBadgeBg = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
               const newBadgeCol = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
@@ -2462,43 +2600,64 @@ function renderAllocationConfigCenterUI(alerts = []) {
               const pendBadgeBg = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
               const pendBadgeCol = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
 
+              const safeAccId = 'accSchedRow_' + idx;
+              const inputBg = hasDayOverride ? '#F0F9FF' : '#fff';
+              const inputBorder = hasDayOverride ? '1.5px solid #2563EB' : '1px solid var(--line)';
+              const defPlaceholderNs = acc.new_start_time ? `Default: ${acc.new_start_time}` : 'blank=ALL_DAY';
+              const defPlaceholderNe = acc.new_end_time ? `Default: ${acc.new_end_time}` : 'blank=ALL_DAY';
+              const defPlaceholderPs = acc.pending_start_time ? `Default: ${acc.pending_start_time}` : 'blank=ALL_DAY';
+              const defPlaceholderPe = acc.pending_end_time ? `Default: ${acc.pending_end_time}` : 'blank=ALL_DAY';
+
               return `
-                <tr>
+                <tr id="${safeAccId}" data-account="${escapeHtml(acc.account)}">
                   <td><span class="rk">${idx + 1}</span></td>
                   <td>
                     <b style="font-size:13px;color:var(--navy)">${escapeHtml(acc.account)}</b>
-                    ${isDaySpecific ? `
+                    <span id="${safeAccId}_dayTag" style="display:${isDaySpecific ? 'inline' : 'none'}">
                       <span class="tag sm" style="font-size:10px;margin-left:4px;background:${hasDayOverride ? '#DBEAFE' : '#F1F5F9'};color:${hasDayOverride ? '#1D4ED8' : '#64748B'}">
                         ${hasDayOverride ? `✓ ${configSelectedScheduleDay}` : 'Default'}
                       </span>
-                    ` : ''}
+                    </span>
                   </td>
                   <td>
-                    <input type="text" placeholder="${isDaySpecific ? (acc.new_start_time || 'blank=ALL_DAY') : 'e.g. 18:00 or blank'}" value="${escapeHtml(ns)}" 
-                           style="width:90px;padding:4px 6px;border:1px solid ${hasDayOverride ? 'var(--blue)' : 'var(--line)'};border-radius:6px;font-family:monospace;font-size:12px;background:${hasDayOverride ? '#F0F9FF' : '#fff'}"
-                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'new_start_time', this.value, '${configSelectedScheduleDay}')">
+                    <input type="text" id="${safeAccId}_ns" placeholder="${isDaySpecific ? defPlaceholderNs : 'e.g. 18:00 or blank'}" value="${escapeHtml(ns)}" 
+                           style="width:90px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
+                           oninput="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'new_start_time', this.value, '${configSelectedScheduleDay}', '${safeAccId}')"
+                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'new_start_time', this.value, '${configSelectedScheduleDay}', '${safeAccId}')">
                   </td>
                   <td>
-                    <input type="text" placeholder="${isDaySpecific ? (acc.new_end_time || 'blank=ALL_DAY') : 'e.g. 23:00 or blank'}" value="${escapeHtml(ne)}" 
-                           style="width:90px;padding:4px 6px;border:1px solid ${hasDayOverride ? 'var(--blue)' : 'var(--line)'};border-radius:6px;font-family:monospace;font-size:12px;background:${hasDayOverride ? '#F0F9FF' : '#fff'}"
-                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'new_end_time', this.value, '${configSelectedScheduleDay}')">
+                    <input type="text" id="${safeAccId}_ne" placeholder="${isDaySpecific ? defPlaceholderNe : 'e.g. 23:00 or blank'}" value="${escapeHtml(ne)}" 
+                           style="width:90px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
+                           oninput="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'new_end_time', this.value, '${configSelectedScheduleDay}', '${safeAccId}')"
+                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'new_end_time', this.value, '${configSelectedScheduleDay}', '${safeAccId}')">
                   </td>
                   <td>
-                    <span class="tag sm" style="background:${newBadgeBg};color:${newBadgeCol};font-weight:700">${newStatus}</span>
+                    <span id="${safeAccId}_newBadge" class="tag sm" style="background:${newBadgeBg};color:${newBadgeCol};font-weight:700">${newStatus}</span>
                   </td>
                   <td>
-                    <input type="text" placeholder="${isDaySpecific ? (acc.pending_start_time || 'blank=ALL_DAY') : 'HH:MM or blank'}" value="${escapeHtml(ps)}" 
-                           style="width:90px;padding:4px 6px;border:1px solid ${hasDayOverride ? 'var(--blue)' : 'var(--line)'};border-radius:6px;font-family:monospace;font-size:12px;background:${hasDayOverride ? '#F0F9FF' : '#fff'}"
-                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'pending_start_time', this.value, '${configSelectedScheduleDay}')">
+                    <input type="text" id="${safeAccId}_ps" placeholder="${isDaySpecific ? defPlaceholderPs : 'HH:MM or blank'}" value="${escapeHtml(ps)}" 
+                           style="width:90px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
+                           oninput="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'pending_start_time', this.value, '${configSelectedScheduleDay}', '${safeAccId}')"
+                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'pending_start_time', this.value, '${configSelectedScheduleDay}', '${safeAccId}')">
                   </td>
                   <td>
-                    <input type="text" placeholder="${isDaySpecific ? (acc.pending_end_time || 'blank=ALL_DAY') : 'HH:MM or blank'}" value="${escapeHtml(pe)}" 
-                           style="width:90px;padding:4px 6px;border:1px solid ${hasDayOverride ? 'var(--blue)' : 'var(--line)'};border-radius:6px;font-family:monospace;font-size:12px;background:${hasDayOverride ? '#F0F9FF' : '#fff'}"
-                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'pending_end_time', this.value, '${configSelectedScheduleDay}')">
+                    <input type="text" id="${safeAccId}_pe" placeholder="${isDaySpecific ? defPlaceholderPe : 'HH:MM or blank'}" value="${escapeHtml(pe)}" 
+                           style="width:90px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
+                           oninput="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'pending_end_time', this.value, '${configSelectedScheduleDay}', '${safeAccId}')"
+                           onchange="updateDraftAccountSchedule('${escapeHtml(acc.account)}', 'pending_end_time', this.value, '${configSelectedScheduleDay}', '${safeAccId}')">
                   </td>
                   <td>
-                    <span class="tag sm" style="background:${pendBadgeBg};color:${pendBadgeCol};font-weight:700">${pendStatus}</span>
+                    <span id="${safeAccId}_pendBadge" class="tag sm" style="background:${pendBadgeBg};color:${pendBadgeCol};font-weight:700">${pendStatus}</span>
                   </td>
+                  ${isDaySpecific ? `
+                    <td id="${safeAccId}_actionCell" style="text-align:center">
+                      ${hasDayOverride ? `
+                        <button class="btn sm" onclick="resetAccountDaySchedule('${escapeHtml(acc.account)}', '${configSelectedScheduleDay}')" title="Reset this account on ${configSelectedScheduleDay} to default" style="background:#FEF2F2;color:#991B1B;border-color:#FECACA;font-size:11px;padding:2px 6px">↺ Reset</button>
+                      ` : `
+                        <span style="font-size:11px;color:var(--mut)">—</span>
+                      `}
+                    </td>
+                  ` : ''}
                 </tr>
               `;
             }).join('')}
@@ -2576,7 +2735,7 @@ function updateDraftGlobal(key, val) {
   updateUnsavedBadge();
 }
 
-function updateDraftAccountSchedule(accountName, field, val, day = 'all') {
+function updateDraftAccountSchedule(accountName, field, val, day = 'all', rowId = null) {
   if (!configDraft) return;
   const acc = configDraft.accounts.find(a => a.account.toLowerCase() === accountName.toLowerCase());
   if (acc) {
@@ -2598,7 +2757,99 @@ function updateDraftAccountSchedule(accountName, field, val, day = 'all') {
     }
     configUnsavedChangesCount++;
     updateUnsavedBadge();
+
+    // Update row live state in-place without destroying DOM inputs
+    if (rowId) {
+      updateAccountScheduleRowLive(acc, day, rowId);
+    }
+  }
+}
+
+function updateAccountScheduleRowLive(acc, day, rowId) {
+  const isDaySpecific = day && day !== 'all';
+  const dayOverrides = (isDaySpecific && acc.day_schedules && acc.day_schedules[day]) || null;
+  const hasDayOverride = !!dayOverrides;
+
+  let ns = '';
+  let ne = '';
+  let ps = '';
+  let pe = '';
+
+  if (!isDaySpecific) {
+    ns = acc.new_start_time || '';
+    ne = acc.new_end_time || '';
+    ps = acc.pending_start_time || '';
+    pe = acc.pending_end_time || '';
+  } else {
+    if (hasDayOverride) {
+      ns = dayOverrides.new_start_time !== undefined && dayOverrides.new_start_time !== null ? dayOverrides.new_start_time : '';
+      ne = dayOverrides.new_end_time !== undefined && dayOverrides.new_end_time !== null ? dayOverrides.new_end_time : '';
+      ps = dayOverrides.pending_start_time !== undefined && dayOverrides.pending_start_time !== null ? dayOverrides.pending_start_time : '';
+      pe = dayOverrides.pending_end_time !== undefined && dayOverrides.pending_end_time !== null ? dayOverrides.pending_end_time : '';
+    }
+  }
+
+  const effNs = hasDayOverride ? ns : (acc.new_start_time || '');
+  const effNe = hasDayOverride ? ne : (acc.new_end_time || '');
+  const effPs = hasDayOverride ? ps : (acc.pending_start_time || '');
+  const effPe = hasDayOverride ? pe : (acc.pending_end_time || '');
+
+  const newStatus = (!effNs && !effNe) ? 'ALL_DAY' : (isTimeWindowOpen(effNs, effNe) ? 'OPEN' : 'CLOSED');
+  const pendStatus = (!effPs && !effPe) ? 'ALL_DAY' : (isTimeWindowOpen(effPs, effPe) ? 'OPEN' : 'CLOSED');
+
+  const newBadge = document.getElementById(`${rowId}_newBadge`);
+  if (newBadge) {
+    newBadge.textContent = newStatus;
+    newBadge.style.background = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
+    newBadge.style.color = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
+  }
+
+  const pendBadge = document.getElementById(`${rowId}_pendBadge`);
+  if (pendBadge) {
+    pendBadge.textContent = pendStatus;
+    pendBadge.style.background = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
+    pendBadge.style.color = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
+  }
+
+  const dayTag = document.getElementById(`${rowId}_dayTag`);
+  if (dayTag && isDaySpecific) {
+    dayTag.innerHTML = `
+      <span class="tag sm" style="font-size:10px;margin-left:4px;background:${hasDayOverride ? '#DBEAFE' : '#F1F5F9'};color:${hasDayOverride ? '#1D4ED8' : '#64748B'}">
+        ${hasDayOverride ? `✓ ${day}` : 'Default'}
+      </span>
+    `;
+  }
+
+  const actionCell = document.getElementById(`${rowId}_actionCell`);
+  if (actionCell && isDaySpecific) {
+    actionCell.innerHTML = hasDayOverride ? `
+      <button class="btn sm" onclick="resetAccountDaySchedule('${escapeHtml(acc.account)}', '${day}')" title="Reset this account on ${day} to default" style="background:#FEF2F2;color:#991B1B;border-color:#FECACA;font-size:11px;padding:2px 6px">↺ Reset</button>
+    ` : `<span style="font-size:11px;color:var(--mut)">—</span>`;
+  }
+
+  // Update input borders & backgrounds to reflect override status
+  const nsInp = document.getElementById(`${rowId}_ns`);
+  const neInp = document.getElementById(`${rowId}_ne`);
+  const psInp = document.getElementById(`${rowId}_ps`);
+  const peInp = document.getElementById(`${rowId}_pe`);
+  const inputBg = hasDayOverride ? '#F0F9FF' : '#fff';
+  const inputBorder = hasDayOverride ? '1.5px solid #2563EB' : '1px solid var(--line)';
+  if (nsInp) { nsInp.style.border = inputBorder; nsInp.style.background = inputBg; }
+  if (neInp) { neInp.style.border = inputBorder; neInp.style.background = inputBg; }
+  if (psInp) { psInp.style.border = inputBorder; psInp.style.background = inputBg; }
+  if (peInp) { peInp.style.border = inputBorder; peInp.style.background = inputBg; }
+}
+
+function resetAccountDaySchedule(accountName, day) {
+  if (!configDraft || !day || day === 'all') return;
+  const acc = configDraft.accounts.find(a => a.account.toLowerCase() === accountName.toLowerCase());
+  if (acc) {
+    if (!acc.day_schedules) acc.day_schedules = {};
+    acc.day_schedules[day] = null; // null signals explicit deletion in partial merge
+    configUnsavedChangesCount++;
+    updateUnsavedBadge();
     renderAllocationConfigCenterUI();
+    showToast('✓ إعادة ضبط الجدول', `تمت إعادة ضبط مواعيد ${accountName} ليوم ${getArabicDayName(day)} للوضع الافتراضي. اضغط حفظ لتطبيق التغيير.`);
   }
 }
 
@@ -2629,11 +2880,16 @@ function updateUnsavedBadge() {
 
 function isTimeWindowOpen(start, end) {
   if (!start && !end) return true;
-  const now = new Date();
-  const nowStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  const nowTime = getClientCairoTime();
   if (start && end) {
-    return nowStr >= start && nowStr < end;
+    if (start <= end) {
+      return nowTime >= start && nowTime < end;
+    } else {
+      return nowTime >= start || nowTime < end;
+    }
   }
+  if (start && !end) return nowTime >= start;
+  if (!start && end) return nowTime < end;
   return true;
 }
 
@@ -2673,7 +2929,8 @@ async function saveAllConfigurationCenter() {
     });
 
     if (res.success) {
-      showToast('✓ Configuration Published!', `Version #${res.version} is now active. Accounts: ${res.accounts_changed}, Employees: ${res.employees_changed}, Settings: ${res.settings_changed}`);
+      const savedDayName = configSelectedScheduleDay !== 'all' ? `${getArabicDayName(configSelectedScheduleDay)} (${configSelectedScheduleDay.toUpperCase()})` : 'جميع الأيام (الافتراضي العام)';
+      showToast('✓ تم حفظ ونشر الإعدادات بنجاح', `تم حفظ إعدادات ${savedDayName} بنجاح في قاعدة البيانات (نسخة #${res.version}).`);
       await loadAllocationConfigCenterView();
     } else {
       alert('Save failed: ' + (res.error || 'Unknown error'));
@@ -4156,6 +4413,8 @@ function renderVendoorIntegrationUI() {
 
   if (currentVendoorSubTab === 'dispatcher') {
     loadAutoDispatcherView();
+  } else if (currentVendoorSubTab === 'sync') {
+    setTimeout(computeAndSetDefaultPreviousWeek, 30);
   }
 }
 
@@ -4517,6 +4776,45 @@ function renderVendoorSyncTab() {
             ✓ Ingest & Sync Logs
           </button>
         </div>
+      </div>
+    </div>
+
+    <!-- NEW: Previous Week Logs Import Panel -->
+    <div class="panel" style="margin-bottom:20px;border-top:3px solid #7C3AED;background:#FAF5FF">
+      <div class="hd">
+        <div>
+          <h3 style="color:#5B21B6">🗓️ تحميل لوجز الأسبوع السابق من Vendoor (Load Previous Week Logs)</h3>
+          <p style="color:#6D28D9">سحب سجلات النشاط التاريخية للأسبوع المنتهي بالكامل (Monday → Sunday) تلقائيًا وحفظها في SQLite بدون مساس باليوم الحالي</p>
+        </div>
+        <span class="tag" style="background:#EDE9FE;color:#6D28D9;font-weight:700">Weekly Archive</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end;margin-bottom:14px">
+        <div>
+          <label style="display:block;font-size:11px;font-weight:700;color:#5B21B6;margin-bottom:4px">Start Date (Monday)</label>
+          <input type="date" id="vendoorWeeklyImportStartDate" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #DDD6FE;border-radius:6px;font-size:12px;background:#FFF">
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;font-weight:700;color:#5B21B6;margin-bottom:4px">End Date (Sunday)</label>
+          <input type="date" id="vendoorWeeklyImportEndDate" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #DDD6FE;border-radius:6px;font-size:12px;background:#FFF">
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn sm" onclick="computeAndSetDefaultPreviousWeek()" style="padding:6px 12px;background:#EDE9FE;color:#5B21B6;border:1px solid #C4B5FD;font-weight:600">
+            🔄 حساب الأسبوع السابق
+          </button>
+          <button class="btn sm" id="btnRunWeeklyImport" onclick="runWeeklyVendoorLogsImportAction()" style="padding:6px 16px;background:#7C3AED;color:#FFF;font-weight:700">
+            🚀 تحميل لوجز الأسبوع السابق
+          </button>
+        </div>
+      </div>
+      <div id="vendoorWeeklyImportProgressContainer" style="display:none;margin-top:12px;padding:12px;background:#FFF;border:1px solid #E9D5FF;border-radius:6px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <b id="vendoorWeeklyImportStatusText" style="font-size:12.5px;color:#5B21B6">Processing...</b>
+          <span id="vendoorWeeklyImportCountsBadge" class="tag" style="background:#EDE9FE;color:#6D28D9;font-weight:700">0 / 7 Days</span>
+        </div>
+        <div style="height:8px;background:#F3E8FF;border-radius:4px;overflow:hidden;margin-bottom:8px">
+          <div id="vendoorWeeklyImportProgressBar" style="height:100%;width:0%;background:#7C3AED;transition:width 0.3s"></div>
+        </div>
+        <div id="vendoorWeeklyImportDaysPills" style="display:flex;gap:6px;flex-wrap:wrap;font-size:11.5px"></div>
       </div>
     </div>
 
@@ -5087,6 +5385,98 @@ async function runVendoorSyncLogsAction() {
     if (btn) {
       btn.disabled = false;
       btn.textContent = '✓ Ingest & Sync Logs';
+    }
+    await loadVendoorIntegrationView();
+  }
+}
+
+async function computeAndSetDefaultPreviousWeek() {
+  try {
+    const res = await apiFetch('/api/integrations/vendoor/logs/import-week/preview-range?date=' + (currentWorkDate || ''));
+    if (res && res.startDate && res.endDate) {
+      const startInp = document.getElementById('vendoorWeeklyImportStartDate');
+      const endInp = document.getElementById('vendoorWeeklyImportEndDate');
+      if (startInp) startInp.value = res.startDate;
+      if (endInp) endInp.value = res.endDate;
+    }
+  } catch (err) {
+    console.warn('Could not preview week range:', err.message);
+  }
+}
+
+async function runWeeklyVendoorLogsImportAction() {
+  const btn = document.getElementById('btnRunWeeklyImport');
+  const startInp = document.getElementById('vendoorWeeklyImportStartDate');
+  const endInp = document.getElementById('vendoorWeeklyImportEndDate');
+  const progressContainer = document.getElementById('vendoorWeeklyImportProgressContainer');
+  const statusText = document.getElementById('vendoorWeeklyImportStatusText');
+  const countsBadge = document.getElementById('vendoorWeeklyImportCountsBadge');
+  const progressBar = document.getElementById('vendoorWeeklyImportProgressBar');
+  const daysPills = document.getElementById('vendoorWeeklyImportDaysPills');
+
+  const startDate = startInp?.value || '';
+  const endDate = endInp?.value || '';
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ استيراد الأسبوع...';
+  }
+  if (progressContainer) {
+    progressContainer.style.display = 'block';
+  }
+  if (statusText) statusText.textContent = `جاري استيراد لوجز الأسبوع من Vendoor (${startDate || 'Previous Week'} → ${endDate || ''})...`;
+  if (progressBar) progressBar.style.width = '15%';
+
+  let pollInterval = setInterval(async () => {
+    try {
+      const st = await apiFetch('/api/integrations/vendoor/logs/import-week/status');
+      if (st && countsBadge) {
+        countsBadge.textContent = `${st.days_completed || 0} / ${st.days_total || 7} Days (${fmt(st.total_inserted || 0)} Inserted)`;
+      }
+      if (st && progressBar && st.days_total) {
+        const pct = Math.round(((st.days_completed || 0) / st.days_total) * 100);
+        progressBar.style.width = Math.max(15, pct) + '%';
+      }
+      if (st && st.per_day_summary && daysPills) {
+        daysPills.innerHTML = st.per_day_summary.map(d => `
+          <span style="padding:2px 8px;border-radius:4px;background:${d.status === 'SUCCESS' ? '#DCFCE7' : '#FEE2E2'};color:${d.status === 'SUCCESS' ? '#15803D' : '#991B1B'};font-weight:600">
+            ${d.date}: ${fmt(d.inserted || 0)} inserted (${fmt(d.duplicates || 0)} dup)
+          </span>
+        `).join('');
+      }
+    } catch {}
+  }, 1000);
+
+  try {
+    const res = await apiFetch('/api/integrations/vendoor/logs/import-week', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        startDate: startDate || undefined,
+        endDate: endDate || undefined
+      })
+    });
+
+    clearInterval(pollInterval);
+    vendoorActiveSyncResult = res;
+
+    if (res.success) {
+      if (progressBar) progressBar.style.width = '100%';
+      if (statusText) statusText.textContent = `✓ تم استيراد لوجز الأسبوع السابق بالكامل بنجاح (${fmt(res.inserted || 0)} عملية محفوظة، ${fmt(res.duplicates || 0)} مكررة)`;
+      showToast('✓ Weekly Vendoor Logs Loaded', `Successfully loaded ${res.days || 7} days (${fmt(res.inserted || 0)} logs) from Vendoor.`);
+      await loadAvailableBusinessDates();
+    } else {
+      if (statusText) statusText.textContent = `⚠️ فشل الاستيراد: ${res.error || 'Unknown error'}`;
+      showToast('⚠️ Import Failed', res.error || 'Failed to complete weekly logs import.');
+    }
+  } catch (err) {
+    clearInterval(pollInterval);
+    if (statusText) statusText.textContent = `⚠️ خطأ: ${err.message}`;
+    showToast('⚠️ Error', err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '🚀 تحميل لوجز الأسبوع السابق';
     }
     await loadVendoorIntegrationView();
   }

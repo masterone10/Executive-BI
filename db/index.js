@@ -31,7 +31,7 @@ export function cleanupMockContamination(database = db) {
     database.prepare(`DELETE FROM current_work_orders WHERE merchant_code LIKE 've%' AND account IN ('Vendoor Express', 'Alpha Merchant', 'Beta Logistics', 'Delta Direct', 'Gamma Trade')`).run();
     database.prepare(`DELETE FROM vendoor_sync_runs WHERE sync_run_id LIKE '%40n8%' OR sync_run_id LIKE '%z1gf%' OR sync_run_id LIKE '%mock%'`).run();
     database.prepare(`DELETE FROM vendoor_bootstrap_state WHERE job_id LIKE '%mock%'`).run();
-    database.prepare(`DELETE FROM performance_snapshots WHERE date IN ('2026-10-10', '2026-10-11') OR employee_name LIKE 'Smart % CS'`).run();
+    database.prepare(`DELETE FROM performance_snapshots WHERE employee_name LIKE 'Smart % CS'`).run();
   } catch (e) {
     console.warn('Cleanup mock contamination warning:', e.message);
   }

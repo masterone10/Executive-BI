@@ -20,11 +20,12 @@ import { getUnallocatedOrdersPool } from './unallocated.js';
 import { getCompletedOrdersForDate } from './completion.js';
 import { getOperationalBusinessDate } from '../parser.js';
 import { syncAndRestoreObservedTeam } from '../working_team_ops.js';
+import { getCairoBusinessDate } from '../time_utils.js';
 
 export function getEffectiveWorkDate(dateInput) {
   if (dateInput) return dateInput;
   const op = getOperationalBusinessDate(new Date());
-  return op ? op.business_date : new Date().toISOString().slice(0, 10);
+  return op ? op.business_date : getCairoBusinessDate();
 }
 
 // Central in-memory state of the Dispatcher Engine

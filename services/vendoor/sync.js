@@ -10,6 +10,7 @@
 
 import { getVendoorDataSource } from './adapter.js';
 import { getVendoorConfig, testVendoorLiveLogin } from './auth.js';
+import { getCairoBusinessDate } from '../time_utils.js';
 import db from '../../db/index.js';
 
 /**
@@ -180,7 +181,7 @@ export async function testVendoorOrdersAccess(options = {}) {
 export async function testVendoorLogsAccess(options = {}) {
   const forceMode = options.forceMode || null;
   const ds = getVendoorDataSource(forceMode);
-  const startDate = options.startDate || options.start_date || new Date().toISOString().slice(0, 10);
+  const startDate = options.startDate || options.start_date || getCairoBusinessDate();
   const endDate = options.endDate || options.end_date || startDate;
   const isMultiDay = startDate !== endDate;
   const testType = isMultiDay ? 'multi_day' : 'one_day';

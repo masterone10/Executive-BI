@@ -21,6 +21,7 @@
  */
 
 import { db } from '../db/index.js';
+import { getCairoBusinessDate } from './time_utils.js';
 import { isCsDept, normalizeEmployeeName, ALT_RE, ADDED_RE } from './parser.js';
 import { resolveEmployeeIdentity } from './vendoor/identity.js';
 import { resolveDateRange } from './reports.js';
@@ -313,7 +314,7 @@ export function resolvePhoneAlertAttribution(orderCode, database = db) {
 export function recordPhoneMatchAlert(alertData, database = db) {
   ensurePhoneAlertsTable(database);
 
-  const workDate = alertData.work_date || new Date().toISOString().slice(0, 10);
+  const workDate = alertData.work_date || getCairoBusinessDate();
   const orderCode = String(alertData.order_code || '').trim();
   const employeeId = alertData.employee_id ? parseInt(alertData.employee_id, 10) : null;
   const employeeName = String(alertData.employee_name || (employeeId ? 'Unresolved' : 'Unresolved')).trim() || 'Unresolved';
@@ -516,7 +517,7 @@ export function evaluateAndRecordOrderPhoneDuplicate(orderData, previousOrderDat
   const phoneA = orderData.phone || (orderData.raw_source && orderData.raw_source.phone) || '';
   const phoneB = orderData.phone2 || orderData.alt_phone || (orderData.raw_source && (orderData.raw_source.phone2 || orderData.raw_source.alt_phone)) || '';
   const comparison = compareOrderPhoneNumbers(phoneA, phoneB);
-  const workDate = orderData.business_date || orderData.date || new Date().toISOString().slice(0, 10);
+  const workDate = orderData.business_date || orderData.date || getCairoBusinessDate();
 
   if (comparison.is_match) {
     // Check if previously the numbers were different or missing

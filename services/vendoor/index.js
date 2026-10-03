@@ -18,3 +18,4 @@ export * from './workload.js';
 export * from './unallocated.js';
 export * from './dispatcher.js';
 export * from './bootstrap.js';
+export * from './weekly_logs_importer.js';
