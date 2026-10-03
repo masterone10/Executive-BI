@@ -17,7 +17,40 @@ export const ACTION_CLASSIFICATIONS = {
 
 // Explicit mappings for known Arabic and English action keywords in Vendoor logs
 const ACTION_RULES = [
-  // Canceled actions (Must be checked FIRST so cancellations are never classified as productive)
+  // Non-Productive / Notes / Administrative (Checked FIRST so notes are never classified as cancellations or status changes)
+  {
+    type: ACTION_CLASSIFICATIONS.NON_PRODUCTIVE_ACTION,
+    patterns: [
+      /ملاحظة/i,
+      /ملاحظه/i,
+      /note.*added/i,
+      /view/i,
+      /عرض/i,
+      /معاينة/i,
+      /login/i,
+      /تسجيل.*دخول/i,
+      /export/i,
+      /تصدير/i,
+      /search/i,
+      /بحث/i,
+      /filter/i,
+      /فلتر/i,
+      /tag/i,
+      /وسم/i,
+      /assigned/i,
+      /اسناد/i,
+      /إسناد/i,
+      /order.*created/i,
+      /انشاء.*طلب/i,
+      /إنشاء.*طلب/i,
+      /اضافة.*طلب/i,
+      /اضاف.*اوردر/i,
+      /أضاف.*اوردر/i,
+      /ايزي.*اوردر/i
+    ]
+  },
+
+  // Canceled actions (Real cancellation events)
   {
     type: ACTION_CLASSIFICATIONS.CANCELED_ACTION,
     patterns: [
@@ -73,39 +106,6 @@ const ACTION_RULES = [
       /تم.*التسليم/i,
       /shipping/i,
       /شحن/i
-    ]
-  },
-
-  // Non-Productive / Administrative / Read-only / Ingestion actions
-  {
-    type: ACTION_CLASSIFICATIONS.NON_PRODUCTIVE_ACTION,
-    patterns: [
-      /view/i,
-      /عرض/i,
-      /معاينة/i,
-      /note.*added/i,
-      /ملاحظة/i,
-      /ملاحظه/i,
-      /login/i,
-      /تسجيل.*دخول/i,
-      /export/i,
-      /تصدير/i,
-      /search/i,
-      /بحث/i,
-      /filter/i,
-      /فلتر/i,
-      /tag/i,
-      /وسم/i,
-      /assigned/i,
-      /اسناد/i,
-      /إسناد/i,
-      /order.*created/i,
-      /انشاء.*طلب/i,
-      /إنشاء.*طلب/i,
-      /اضافة.*طلب/i,
-      /اضاف.*اوردر/i,
-      /أضاف.*اوردر/i,
-      /ايزي.*اوردر/i
     ]
   }
 ];
@@ -182,13 +182,18 @@ export function extractCanonicalStatus(actionText, statusText = '') {
   const combined = `${actionText || ''} ${statusText || ''}`.trim();
   if (!combined) return 'Action Recorded';
 
+  // Notes and remarks are strictly non-status events and must never be treated as status transitions
+  if (/ملاحظة|ملاحظه|note/i.test(combined)) {
+    return 'Action Recorded';
+  }
+
   if (/cancel|ملغي|إلغاء|الغاء|رفض|مرتجع|reject|refused/i.test(combined)) {
     return 'Cancelled';
   }
   if (/print|طبع|طباعة/i.test(combined)) {
     return 'Printed';
   }
-  if (/pending|معلق|انتظار/i.test(combined)) {
+  if (/pending|معلق|قيد.*الانتظار/i.test(combined)) {
     return 'Pending';
   }
   if (/processing|تجهيز|قيد.*التجهيز/i.test(combined)) {
@@ -200,7 +205,7 @@ export function extractCanonicalStatus(actionText, statusText = '') {
   if (/shipping|شحن/i.test(combined)) {
     return 'Shipping';
   }
-  if (/alt.*phone|رقم.*بديل|هاتف.*بديل|تليفون.*بديل|رقم.*هاتف.*آخر|رقم.*هاتف.*اخر|رقم.*آخر|رقم.*اخر/i.test(combined)) {
+  if (/alt.*phone|رقم.*بديل|هاتف.*بديل|تليفون.*بديل|رقم.*هاتف.*آخر|رقم.*هاتف.*اخر/i.test(combined)) {
     return 'Alt Phone';
   }
 

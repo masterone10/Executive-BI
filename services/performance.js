@@ -53,24 +53,29 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
       dt = parseDate(r.event_datetime);
     }
 
-    const isAlt = r.alt !== undefined ? Boolean(r.alt) : ALT_RE.test(actionText);
-    const isAdded = r.added !== undefined ? Boolean(r.added) : ADDED_RE.test(actionText);
+    const isNote = /ملاحظ/i.test(actionText) || /note/i.test(actionText);
+    const isAddressEdit = /عدل.*العنوان|تعديل.*العنوان/i.test(actionText);
+    const isClientEdit = /عدل.*اسم.*العميل|تعديل.*اسم.*العميل/i.test(actionText);
+    const isAlt = !isNote && !isAddressEdit && !isClientEdit && (r.alt !== undefined ? Boolean(r.alt) : ALT_RE.test(actionText));
+    const isAdded = !isNote && !isAddressEdit && !isClientEdit && (r.added !== undefined ? Boolean(r.added) : ADDED_RE.test(actionText));
 
-    if (r.st) {
+    if (isNote || isAddressEdit || isClientEdit) {
+      statusText = null;
+    } else if (r.st && KNOWN_STATUSES.has(r.st === 'Canceled' ? 'Cancelled' : r.st)) {
       statusText = r.st === 'Canceled' ? 'Cancelled' : r.st;
     } else if (!isAlt && !isAdded) {
       const m = STATUS_RE.exec(actionText);
-      if (m && KNOWN_STATUSES.has(m[1].trim() === 'Canceled' ? 'Cancelled' : m[1].trim())) {
-        statusText = m[1].trim() === 'Canceled' ? 'Cancelled' : m[1].trim();
-      } else if (r.status && KNOWN_STATUSES.has(r.status === 'Canceled' ? 'Cancelled' : r.status)) {
-        statusText = r.status === 'Canceled' ? 'Cancelled' : r.status;
-      } else {
-        const extracted = extractCanonicalStatus(actionText, r.status || '');
-        if (KNOWN_STATUSES.has(extracted)) {
-          statusText = extracted;
+      if (m) {
+        const candidate = m[1].trim() === 'Canceled' ? 'Cancelled' : m[1].trim();
+        if (KNOWN_STATUSES.has(candidate)) {
+          statusText = candidate;
         } else {
           statusText = null;
         }
+      } else if (r.status && KNOWN_STATUSES.has(r.status === 'Canceled' ? 'Cancelled' : r.status) && (r.status.toLowerCase() === actionText.toLowerCase() || /حالة.*(?:الطلب|الاوردر|الطلب)|(?:order|status).*(?:change|update|transition)/i.test(actionText))) {
+        statusText = r.status === 'Canceled' ? 'Cancelled' : r.status;
+      } else {
+        statusText = null;
       }
     } else {
       statusText = null;
@@ -141,13 +146,11 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
       altGroups.get(key).push(r.dt || 0);
     }
 
-    if (r.st) {
+    if (r.st && isCS) {
       rawStatusCount++;
-      if (isCS) {
-        const key = `${r.order}|${canonicalName}|${r.st}`;
-        if (!statusGroups.has(key)) statusGroups.set(key, []);
-        statusGroups.get(key).push({ dt: r.dt || 0, r });
-      }
+      const key = `${r.order}|${canonicalName}|${r.st}`;
+      if (!statusGroups.has(key)) statusGroups.set(key, []);
+      statusGroups.get(key).push({ dt: r.dt || 0, r });
     }
   }
 
@@ -195,8 +198,8 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
         empAltMap.set(empName, (empAltMap.get(empName) || 0) + 1);
         if (isCsAlt) {
           empAltMapCS.set(empName, (empAltMapCS.get(empName) || 0) + 1);
+          totalAltPhones++;
         }
-        totalAltPhones++;
         lastTs = ts;
       }
     }

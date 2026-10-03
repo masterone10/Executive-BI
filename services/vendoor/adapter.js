@@ -228,7 +228,7 @@ export class MockVendoorDataSource extends VendoorDataSource {
       throw new Error(`startDate "${startDate}" cannot be after endDate "${endDate}".`);
     }
 
-    const employees = ['Ahmed Hassan', 'Sara Mahmoud', 'Mohamed Ali', 'Nour Ibrahim', 'Khaled Omar'];
+    const employees = ['BASMA CS', 'MOHAMED OSAMA CS', 'Sanaa CS', 'Ahmed Hassan', 'Store Admin'];
     const actions = ['Order Printed', 'Status Updated: Pending', 'Alt Phone Added', 'Confirmed with Customer'];
 
     const mockLogs = [];

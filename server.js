@@ -6,7 +6,7 @@ import multer from 'multer';
 import XLSX from 'xlsx';
 import { db } from './db/index.js';
 import { parseDailyLogBuffer, parseSpecificOrdersBuffer, isCsEmployee } from './services/parser.js';
-import { getCairoBusinessDate } from './services/time_utils.js';
+import { getCairoBusinessDate, getPreviousCompletedWeekRange } from './services/time_utils.js';
 import { computePerformanceFromRecords, savePerformanceSnapshotToDB, getSystemWeights } from './services/performance.js';
 import {
   saveCurrentWorkOrders,
@@ -193,6 +193,8 @@ import {
   getAvailableBusinessDates,
   getHistoricalDayOverview,
   getHistoricalOrdersList,
+  getHistoricalDateRegistryStatus,
+  loadOrSyncHistoricalDate,
   invalidateAvailableDatesCache
 } from './services/historical_dates.js';
 
@@ -933,7 +935,7 @@ app.post('/api/system/restore', (req, res) => {
 // 4. WORK ALLOCATION & CURRENT WORK (Parts 13 to 25, 39, 40)
 // -------------------------------------------------------------
 // Canonical Available Business Dates Discovery API (Historical Days First-Class Concept)
-app.get(['/api/work/available-dates', '/api/available-dates', '/api/dates/available'], (req, res) => {
+app.get(['/api/work/available-dates', '/api/available-dates', '/api/dates/available', '/api/historical/dates'], (req, res) => {
   try {
     const forceFresh = req.query.fresh === 'true';
     const data = getAvailableBusinessDates(forceFresh);
@@ -941,6 +943,29 @@ app.get(['/api/work/available-dates', '/api/available-dates', '/api/dates/availa
   } catch (err) {
     console.error('Error fetching available business dates:', err);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Historical Date Registry Status API
+app.get('/api/historical/date-status/:date', (req, res) => {
+  try {
+    const status = getHistoricalDateRegistryStatus(req.params.date);
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Automated Historical Date Load & Vendoor Sync API
+app.post('/api/historical/load-date', async (req, res) => {
+  try {
+    const date = req.body.date || req.body.work_date || req.query.date;
+    const forceSync = req.body.force_sync === true || req.body.forceSync === true;
+    const result = await loadOrSyncHistoricalDate(date, { forceSync });
+    res.json(result);
+  } catch (err) {
+    console.error(`Error in /api/historical/load-date for ${req.body?.date}:`, err);
+    res.status(500).json({ success: false, error: err.message, work_date: req.body?.date });
   }
 });
 
@@ -2446,27 +2471,66 @@ app.get('/api/performance/:date', (req, res) => {
   const { date } = req.params;
   const snapshots = db.prepare('SELECT * FROM performance_snapshots WHERE date = ? ORDER BY performance_score DESC').all(date);
   if (snapshots && snapshots.length > 0) {
-    const totalActions = snapshots.reduce((s, r) => s + (r.real_actions || 0), 0);
-    const totalNew = snapshots.reduce((s, r) => s + (r.new_orders || 0), 0);
-    const totalPrinted = snapshots.reduce((s, r) => s + (r.printed_orders || 0), 0);
-    const totalPending = snapshots.reduce((s, r) => s + (r.pending_backlog || 0), 0);
-    const totalCancelled = snapshots.reduce((s, r) => s + (r.cancelled_orders || 0), 0);
-    const totalAlt = snapshots.reduce((s, r) => s + (r.alt_phones || 0), 0);
+    const totalRealActions = snapshots.reduce((s, r) => s + (r.real_actions || 0), 0);
+    const totalPrintedActions = snapshots.reduce((s, r) => s + (r.printed_actions || 0), 0);
+    const totalPendingActions = snapshots.reduce((s, r) => s + (r.pending_actions || 0), 0);
+    const totalCancelledActions = snapshots.reduce((s, r) => s + (r.cancelled_actions || 0), 0);
+    const totalProcessingActions = snapshots.reduce((s, r) => s + (r.processing_actions || 0), 0);
+    const totalAltPhones = snapshots.reduce((s, r) => s + (r.alt_phones || 0), 0);
+    const totalNewOrders = snapshots.reduce((s, r) => s + (r.new_orders || 0), 0);
+
+    const totalPrintedOrders = snapshots.reduce((s, r) => s + (r.printed_orders || 0), 0);
+    const totalPendingBacklog = snapshots.reduce((s, r) => s + (r.pending_backlog || 0), 0);
+    const totalCancelledOrders = snapshots.reduce((s, r) => s + (r.cancelled_orders || 0), 0);
+
+    let dedupStats = null;
+    try {
+      const dSnap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(date);
+      if (dSnap && dSnap.metrics_json) {
+        const parsed = JSON.parse(dSnap.metrics_json);
+        dedupStats = parsed.dedup || parsed.summary?.duplicatesRemovedPct !== undefined ? parsed.summary : null;
+      }
+    } catch {}
+
+    const mappedEmployees = snapshots.map(s => ({
+      ...s,
+      name: s.employee_name,
+      actions: s.real_actions,
+      printed: s.printed_actions,
+      pending: s.pending_actions,
+      cancelled: s.cancelled_actions,
+      processing: s.processing_actions,
+      alt: s.alt_phones
+    }));
 
     return res.json({
       exists: true,
       date,
-      totals: {
-        actions: totalActions,
-        new_orders: totalNew,
-        printed: totalPrinted,
-        pending: totalPending,
-        cancelled: totalCancelled,
-        alt_phones: totalAlt,
+      summary: {
+        totalRealActions,
+        printedActions: totalPrintedActions,
+        pendingActions: totalPendingActions,
+        cancelledActions: totalCancelledActions,
+        processingActions: totalProcessingActions,
+        totalAltPhones,
+        totalNewOrders,
+        dedup: dedupStats
       },
-      employees: snapshots,
-      top_performers: snapshots.slice(0, 10),
-      most_active: [...snapshots].sort((a, b) => b.real_actions - a.real_actions).slice(0, 10)
+      totals: {
+        actions: totalRealActions,
+        new_orders: totalNewOrders,
+        printed: totalPrintedActions,
+        pending: totalPendingActions,
+        cancelled: totalCancelledActions,
+        processing: totalProcessingActions,
+        alt_phones: totalAltPhones,
+        printed_orders: totalPrintedOrders,
+        pending_backlog: totalPendingBacklog,
+        cancelled_orders: totalCancelledOrders
+      },
+      employees: mappedEmployees,
+      top_performers: mappedEmployees.slice(0, 10),
+      most_active: [...mappedEmployees].sort((a, b) => b.real_actions - a.real_actions).slice(0, 10)
     });
   }
 

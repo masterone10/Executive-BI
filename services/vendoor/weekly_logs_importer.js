@@ -24,6 +24,7 @@ import { isCsEmployee } from '../parser.js';
 import { computePerformanceFromRecords, savePerformanceSnapshotToDB } from '../performance.js';
 import { getPreviousCompletedWeekRange, getCairoBusinessDate } from '../time_utils.js';
 import { createSyncRunId, recordSyncRun } from './orchestrator.js';
+import { invalidateAvailableDatesCache } from '../historical_dates.js';
 
 // Ensure weekly import state table exists for audit & resumption
 try {
@@ -47,6 +48,12 @@ try {
       updated_at TEXT DEFAULT (datetime('now'))
     );
   `);
+  // Clean up any stale RUNNING states on boot
+  db.prepare(`
+    UPDATE vendoor_weekly_import_state
+    SET status = 'FAILED', last_error = 'Process restarted during import', completed_at = datetime('now')
+    WHERE status = 'RUNNING'
+  `).run();
 } catch (e) {
   console.warn('[WeeklyLogsImporter] State table setup:', e.message);
 }
@@ -78,7 +85,7 @@ export function getWeeklyLogsImportStatus() {
   try {
     const latestDbRow = db.prepare(`
       SELECT * FROM vendoor_weekly_import_state
-      ORDER BY updated_at DESC
+      ORDER BY rowid DESC
       LIMIT 1
     `).get();
 
@@ -93,14 +100,19 @@ export function getWeeklyLogsImportStatus() {
         current_day: latestDbRow.current_day,
         days_total: latestDbRow.days_total,
         days_completed: latestDbRow.days_completed,
+        pages_completed: latestDbRow.days_completed,
         total_fetched: latestDbRow.total_fetched,
         total_inserted: latestDbRow.total_inserted,
+        records_fetched: latestDbRow.total_fetched,
+        records_stored: latestDbRow.total_inserted,
         total_duplicated: latestDbRow.total_duplicated,
         total_rejected: latestDbRow.total_rejected,
         per_day_summary: summary?.per_day_summary || [],
         last_error: latestDbRow.last_error,
         started_at: latestDbRow.started_at,
-        completed_at: latestDbRow.completed_at
+        start_time: latestDbRow.started_at,
+        completed_at: latestDbRow.completed_at,
+        end_time: latestDbRow.completed_at
       };
     }
 
@@ -113,14 +125,19 @@ export function getWeeklyLogsImportStatus() {
       current_day: activeWeeklyImportState.currentDay,
       days_total: activeWeeklyImportState.daysTotal,
       days_completed: activeWeeklyImportState.daysCompleted,
+      pages_completed: activeWeeklyImportState.daysCompleted,
       total_fetched: activeWeeklyImportState.totalFetched,
       total_inserted: activeWeeklyImportState.totalInserted,
+      records_fetched: activeWeeklyImportState.totalFetched,
+      records_stored: activeWeeklyImportState.totalInserted,
       total_duplicated: activeWeeklyImportState.totalDuplicated,
       total_rejected: activeWeeklyImportState.totalRejected,
       per_day_summary: activeWeeklyImportState.perDaySummary,
       last_error: activeWeeklyImportState.lastError,
       started_at: activeWeeklyImportState.startedAt,
-      completed_at: activeWeeklyImportState.completedAt
+      start_time: activeWeeklyImportState.startedAt,
+      completed_at: activeWeeklyImportState.completedAt,
+      end_time: activeWeeklyImportState.completedAt
     };
   } catch {
     return {
@@ -208,15 +225,15 @@ export async function importWeeklyVendoorLogs(options = {}) {
     console.warn('[WeeklyLogsImporter] Initial DB state warning:', dbErr.message);
   }
 
-  const ds = getVendoorDataSource(options.forceMode);
-
-  // 3. Ensure live session authentication
+  let ds;
+  // 3. Ensure live session authentication & datasource initialization
   try {
+    ds = getVendoorDataSource(options.forceMode);
     await ensureAuthenticatedVendoorSession();
-  } catch (authErr) {
+  } catch (initErr) {
     activeWeeklyImportState.isRunning = false;
     activeWeeklyImportState.status = 'FAILED';
-    activeWeeklyImportState.lastError = authErr.message;
+    activeWeeklyImportState.lastError = initErr.message;
     activeWeeklyImportState.completedAt = new Date().toISOString();
 
     recordSyncRun({
@@ -231,7 +248,7 @@ export async function importWeeklyVendoorLogs(options = {}) {
       records_rejected: 0,
       duration_ms: Date.now() - startTime,
       summary_json: null,
-      error_safe: authErr.message
+      error_safe: initErr.message
     });
 
     try {
@@ -239,10 +256,10 @@ export async function importWeeklyVendoorLogs(options = {}) {
         UPDATE vendoor_weekly_import_state
         SET status = 'FAILED', last_error = ?, completed_at = datetime('now'), updated_at = datetime('now')
         WHERE job_id = ?
-      `).run(authErr.message, jobId);
+      `).run(initErr.message, jobId);
     } catch {}
 
-    throw authErr;
+    throw initErr;
   }
 
   // Prepared statements for idempotent writes
@@ -273,6 +290,7 @@ export async function importWeeklyVendoorLogs(options = {}) {
   // 4. Sequential Day-by-Day Processing
   for (let dIdx = 0; dIdx < targetDates.length; dIdx++) {
     const targetDay = targetDates[dIdx];
+    const dayStartTime = Date.now();
     activeWeeklyImportState.currentDay = targetDay;
 
     let dayFetched = 0;
@@ -291,12 +309,13 @@ export async function importWeeklyVendoorLogs(options = {}) {
     let logsResult = null;
     let dayError = null;
 
-    // Fetch with retry & session renewal
+    // Fetch with retry & session renewal (explicit historical target day)
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         logsResult = await ds.fetchLogs({
           startDate: targetDay,
-          endDate: targetDay
+          endDate: targetDay,
+          historical: true
         });
         break;
       } catch (fetchErr) {
@@ -313,6 +332,8 @@ export async function importWeeklyVendoorLogs(options = {}) {
       }
     }
 
+    const dayDurationMs = Date.now() - dayStartTime;
+
     if (!logsResult) {
       hasPartialFailure = true;
       overallError = dayError?.message || `Failed to fetch logs for ${targetDay}`;
@@ -320,13 +341,19 @@ export async function importWeeklyVendoorLogs(options = {}) {
         date: targetDay,
         status: 'FAILED',
         error: dayError?.message || 'Fetch failed after 3 attempts',
+        zero_reason: 'FETCH_FAILED_AFTER_RETRIES',
         requested: 1,
         raw_fetched: 0,
+        raw_stored: 0,
+        normalized: 0,
         inserted: 0,
         duplicates: 0,
         rejected: 0,
         unique_orders: 0,
         unique_employees: 0,
+        unique_actors: 0,
+        duration_ms: dayDurationMs,
+        rows_per_sec: 0,
         status_breakdown: { printed: 0, pending: 0, cancelled: 0, processing: 0, other: 0 }
       });
       continue;
@@ -365,12 +392,12 @@ export async function importWeeklyVendoorLogs(options = {}) {
         const classification = classifyVendoorAction(rawAction);
         const canonicalStatus = extractCanonicalStatus(rawAction);
 
-        // Derive authoritative business date from raw timestamp
-        const opDateObj = getOperationalBusinessDate(rawTs);
+        // Derive authoritative business date from raw timestamp (NEVER falls back to current day)
+        const opDateObj = getOperationalBusinessDate(rawTs, targetDay);
         const resolvedWorkDate = opDateObj ? opDateObj.business_date : (log.date || targetDay);
 
-        // Deterministic CS / Employee Identity Resolution
-        const identity = resolveEmployeeIdentity(log.employee_name, { persistIdentity: true });
+        // Deterministic CS / Employee Identity Resolution without mutating Employee Master
+        const identity = resolveEmployeeIdentity(log.employee_name, { persistIdentity: false });
         const actorName = identity.employee_name || log.employee_name;
         const isCS = isCsEmployee({ name: actorName, department: identity.department }) ? 1 : 0;
 
@@ -442,16 +469,28 @@ export async function importWeeklyVendoorLogs(options = {}) {
     activeWeeklyImportState.totalDuplicated += dayDuplicated;
     activeWeeklyImportState.totalRejected += dayRejected;
 
+    const zeroReason = (dayFetched === 0)
+      ? (logsResult.rawRowsCount === 0 ? 'VENDOOR_RETURNED_ZERO_RECORDS' : 'NORMALIZATION_REJECTED_ALL_ROWS')
+      : null;
+
+    const rowsPerSec = dayDurationMs > 0 ? Math.round(dayFetched / (dayDurationMs / 1000)) : dayFetched;
+
     const daySummary = {
       date: targetDay,
       status: 'SUCCESS',
       requested: 1,
       raw_fetched: dayFetched,
+      raw_stored: dayInserted + dayDuplicated,
+      normalized: Math.max(0, dayFetched - dayRejected),
       inserted: dayInserted,
       duplicates: dayDuplicated,
       rejected: dayRejected,
       unique_orders: uniqueOrders.size,
       unique_employees: uniqueEmployees.size,
+      unique_actors: uniqueEmployees.size,
+      zero_reason: zeroReason,
+      duration_ms: dayDurationMs,
+      rows_per_sec: rowsPerSec,
       status_breakdown: {
         printed: dayPrinted,
         pending: dayPending,
@@ -462,6 +501,9 @@ export async function importWeeklyVendoorLogs(options = {}) {
     };
 
     activeWeeklyImportState.perDaySummary.push(daySummary);
+
+    // Invalidate dates cache so each day is visible immediately
+    invalidateAvailableDatesCache();
 
     if (typeof options.onProgress === 'function') {
       try {
@@ -487,6 +529,9 @@ export async function importWeeklyVendoorLogs(options = {}) {
   activeWeeklyImportState.status = finalStatus;
   activeWeeklyImportState.completedAt = new Date().toISOString();
   activeWeeklyImportState.lastError = overallError;
+
+  // Invalidate date cache globally after complete run
+  invalidateAvailableDatesCache();
 
   // Persist final audit to vendoor_sync_runs
   recordSyncRun({

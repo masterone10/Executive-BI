@@ -78,12 +78,14 @@ async function fetchSingleLogsChunk(startDate, endDate) {
   const buffer = Buffer.from(arrayBuffer);
 
   if (buffer.length === 0) {
-    throw new VendoorClientError(
-      'Vendoor returned an empty response body for logs export.',
-      502,
-      'EMPTY_RESPONSE',
-      { durationMs, status, contentType }
-    );
+    return {
+      rawRowsCount: 0,
+      normalizedLogs: [],
+      durationMs,
+      contentType,
+      status,
+      fileSizeBytes: 0
+    };
   }
 
   // Check if response is HTML login page
@@ -111,14 +113,18 @@ async function fetchSingleLogsChunk(startDate, endDate) {
     }
   }
 
-  // If not JSON, parse as Excel workbook via SheetJS
+  // If not JSON, parse as Excel workbook via SheetJS across ALL worksheets
   if (rawRows.length === 0) {
     try {
       const workbook = XLSX.read(buffer, { type: 'buffer' });
-      const firstSheetName = workbook.SheetNames[0];
-      if (firstSheetName) {
-        const worksheet = workbook.Sheets[firstSheetName];
-        rawRows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+      for (const sheetName of (workbook.SheetNames || [])) {
+        const worksheet = workbook.Sheets[sheetName];
+        if (worksheet) {
+          const sheetRows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+          if (Array.isArray(sheetRows) && sheetRows.length > 0) {
+            rawRows.push(...sheetRows);
+          }
+        }
       }
     } catch (parseErr) {
       throw new VendoorClientError(

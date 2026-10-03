@@ -205,6 +205,37 @@ export function runMigrations(database = db) {
     console.warn('Migration for daily_working_team live tracking columns:', e.message);
   }
 
+  // Safe table migration: Ensure historical_date_registry exists
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS historical_date_registry (
+        work_date TEXT PRIMARY KEY,
+        data_availability TEXT NOT NULL DEFAULT 'MISSING',
+        logs_available INTEGER DEFAULT 0,
+        orders_available INTEGER DEFAULT 0,
+        metrics_available INTEGER DEFAULT 0,
+        snapshots_available INTEGER DEFAULT 0,
+        sync_status TEXT DEFAULT 'IDLE',
+        sync_started_at TEXT,
+        sync_completed_at TEXT,
+        last_successful_sync TEXT,
+        record_count INTEGER DEFAULT 0,
+        pages_fetched INTEGER DEFAULT 0,
+        pages_total INTEGER DEFAULT 0,
+        completeness TEXT DEFAULT 'NONE',
+        last_error TEXT,
+        source TEXT DEFAULT 'VENDOOR',
+        summary_json TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_hist_reg_date ON historical_date_registry(work_date);
+      CREATE INDEX IF NOT EXISTS idx_hist_reg_status ON historical_date_registry(data_availability);
+    `);
+  } catch (e) {
+    console.warn('Migration for historical_date_registry:', e.message);
+  }
+
   // Safe table migration: Ensure preparation_batches exists
   try {
     database.exec(`

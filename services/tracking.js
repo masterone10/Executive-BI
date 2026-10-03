@@ -1460,13 +1460,18 @@ export function getTrackingOverview(workDate) {
   const dedupMap = new Map();
 
   for (const r of logRows) {
+    const isNote = /ملاحظة|ملاحظه|note/i.test(r.action || '');
+    let normStatus = r.status || r.action;
+    if (isNote && (normStatus === 'Pending' || normStatus === 'Cancelled')) {
+      normStatus = 'Action Recorded';
+    }
     const dt = r.event_datetime ? new Date(r.event_datetime).getTime() : 0;
-    const key = `${r.order_code}|${r.employee_name}|${r.status || r.action}`;
+    const key = `${r.order_code}|${r.employee_name}|${normStatus}`;
     const lastTime = dedupMap.get(key) || 0;
 
     if (dt - lastTime >= 120000 || lastTime === 0) {
       dedupMap.set(key, dt);
-      deduplicatedActions.push(r);
+      deduplicatedActions.push({ ...r, status: normStatus });
     }
   }
 
@@ -1513,7 +1518,7 @@ export function getTrackingOverview(workDate) {
     if (act.status === 'Pending') { pendingCount++; stObj.pending++; }
     if (act.status === 'Cancelled') { cancelledCount++; stObj.cancelled++; }
     if (act.status === 'Processing') { processingCount++; stObj.processing++; }
-    if (/هاتف.*آخر|هاتف.*اخر|هاتف.*بديل|تليفون.*بديل|رقم.*بديل|رقم.*هاتف|phone|alt/i.test(act.action)) { altCount++; stObj.alt++; }
+    if (/التليفون\s*البديل|رقم\s*بديل|هاتف\s*بديل|موبايل\s*بديل|رقم\s*هاتف\s*آخر|رقم\s*هاتف\s*اخر|رقم\s*تليفون\s*آخر|رقم\s*تليفون\s*اخر|phone2|alt.*phone/i.test(act.action || '')) { altCount++; stObj.alt++; }
   }
 
   // 5. Build Employee Tracking List & Outside Allocation Table

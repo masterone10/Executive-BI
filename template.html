@@ -379,6 +379,9 @@ input:checked + .slider:before{transform:translateX(16px)}
       </div>
 
       <div class="actions">
+        <button class="btn sm" onclick="show('management', 'vendoor'); setTimeout(runWeeklyVendoorLogsImportAction, 100);" style="background:#7C3AED;color:#fff;font-weight:700" title="تحميل لوجز الأسبوع السابق من Vendoor (Load Previous Week Logs from Vendoor)">
+          📥 تحميل لوجز الأسبوع السابق
+        </button>
         <button class="btn sm" onclick="show('tracking', 'employees')" style="background:#16A34A;color:#fff;font-weight:700;box-shadow:0 0 8px rgba(22,163,74,0.3)">
           ⚡ Live Agent Monitor
         </button>
@@ -862,25 +865,60 @@ function onGlobalDatePicked(val) {
 }
 
 let globalDateRequestId = 0;
+let isHistoricalMode = false;
+let globalDateAbortController = null;
 
-async function setGlobalSelectedDate(newDate) {
+async function setGlobalSelectedDate(newDate, options = {}) {
   if (!newDate || !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return;
+  const cleanDate = newDate.trim();
   const requestId = ++globalDateRequestId;
-  currentWorkDate = newDate;
 
-  updateUrlDate(newDate);
-  try { sessionStorage.setItem('executive_bi_selected_date', newDate); } catch(e){}
+  if (globalDateAbortController) {
+    try { globalDateAbortController.abort(); } catch(e){}
+  }
+  globalDateAbortController = new AbortController();
+
+  currentWorkDate = cleanDate;
+  isHistoricalMode = (cleanDate !== getTodayDate());
+
+  updateUrlDate(cleanDate);
+  try { sessionStorage.setItem('executive_bi_selected_date', cleanDate); } catch(e){}
   updateGlobalDateUI();
 
-  // Fetch performance metrics for this date
-  await fetchPerformanceDataForDate(newDate);
+  if (isHistoricalMode) {
+    showToast('📅 Business Date Selected', `Loading operations for ${formatDisplayDate(cleanDate)}...`, 3000);
+  }
 
-  // If a newer date request was initiated, discard obsolete render
+  // Phase 1: Determine date status and auto-sync with Vendoor if needed
+  try {
+    const statusRes = await apiFetch(`/api/historical/date-status/${cleanDate}`, { signal: globalDateAbortController.signal }).catch(() => null);
+
+    if (statusRes && statusRes.data_availability !== 'READY' && cleanDate <= getTodayDate()) {
+      showToast('⚡ Synchronizing Historical Date', `Fetching activity logs for ${cleanDate} from Vendoor...`, 6000);
+      await apiFetch('/api/historical/load-date', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: cleanDate, force_sync: options.forceSync || false }),
+        signal: globalDateAbortController.signal
+      }).catch(err => {
+        console.warn('Auto historical sync notice:', err.message);
+      });
+      loadAvailableBusinessDates(true);
+    }
+  } catch (syncErr) {
+    console.warn('Date status evaluation notice:', syncErr);
+  }
+
   if (requestId !== globalDateRequestId) return;
 
-  // Re-render
+  // Phase 2: Fetch performance metrics for this date
+  await fetchPerformanceDataForDate(cleanDate, currentTimeWindowFrom, currentTimeWindowTo, globalDateAbortController.signal);
+
+  if (requestId !== globalDateRequestId) return;
+
+  // Phase 3: Re-render
   RENDERED = pages();
-  show(currentMainPage, currentPage);
+  show(currentMainPage, currentSubTabs[currentMainPage] || currentPage);
   updateGlobalContextBar();
 }
 
@@ -918,14 +956,15 @@ window.resetTimeWindowAllDay = async function() {
   show(currentMainPage, currentSubTabs[currentMainPage]);
 };
 
-async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindowFrom, toTime = currentTimeWindowTo) {
+async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindowFrom, toTime = currentTimeWindowTo, signal = null) {
   try {
     let url = `/api/data?date=${encodeURIComponent(dateStr)}`;
     if (fromTime || toTime) {
       url += `&from=${encodeURIComponent(fromTime || '')}&to=${encodeURIComponent(toTime || '')}`;
     }
-    const data = await apiFetch(url);
-    if (data && data.exists !== false && (data.employees || data.hr || data.log_totals || data.time_window)) {
+    const data = await apiFetch(url, signal ? { signal } : undefined);
+    if (data && data.exists !== false && (data.employees || data.hr || data.log_totals || data.time_window || data.summary)) {
+      const summary = data.summary || {};
       D = {
         exists: true,
         date: dateStr,
@@ -933,20 +972,21 @@ async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindow
         time_window: data.time_window || null,
         kpis: data.kpis || null,
         order_events: data.order_events || [],
+        summary: summary,
         log_totals: {
-          actions: data.log_totals?.actions || 0,
-          printed: data.log_totals?.printed || 0,
-          pending: data.log_totals?.pending || 0,
-          processing: data.log_totals?.processing || 0,
-          cancelled: data.log_totals?.cancelled || 0,
-          alt: data.log_totals?.alt || 0,
+          actions: summary.totalRealActions !== undefined ? summary.totalRealActions : (data.log_totals?.actions || 0),
+          printed: summary.printedActions !== undefined ? summary.printedActions : (data.log_totals?.printed || 0),
+          pending: summary.pendingActions !== undefined ? summary.pendingActions : (data.log_totals?.pending || 0),
+          processing: summary.processingActions !== undefined ? summary.processingActions : (data.log_totals?.processing || 0),
+          cancelled: summary.cancelledActions !== undefined ? summary.cancelledActions : (data.log_totals?.cancelled || 0),
+          alt: summary.totalAltPhones !== undefined ? summary.totalAltPhones : (data.log_totals?.alt || 0),
           ...(data.log_totals || {})
         },
         status_totals: {
-          Printed: data.status_totals?.Printed || 0,
-          Pending: data.status_totals?.Pending || 0,
-          Processing: data.status_totals?.Processing || 0,
-          Cancelled: data.status_totals?.Cancelled || 0,
+          Printed: summary.printedActions !== undefined ? summary.printedActions : (data.status_totals?.Printed || 0),
+          Pending: summary.pendingActions !== undefined ? summary.pendingActions : (data.status_totals?.Pending || 0),
+          Processing: summary.processingActions !== undefined ? summary.processingActions : (data.status_totals?.Processing || 0),
+          Cancelled: summary.cancelledActions !== undefined ? summary.cancelledActions : (data.status_totals?.Cancelled || 0),
           ...(data.status_totals || {})
         },
         rankings: {
@@ -956,10 +996,10 @@ async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindow
           ...(data.rankings || {})
         },
         cancel_rate_rank: data.cancel_rate_rank || [],
-        hr: data.hr || { days: 0, tot_new: 0, tot_printed: 0, tot_cancel: 0, tot_add: 0 },
+        hr: data.hr || { days: 0, tot_new: summary.totalNewOrders || 0, tot_printed: summary.printedActions || 0, tot_cancel: summary.cancelledActions || 0, tot_add: 0 },
         daily: data.daily || [],
-        dedup: data.dedup || { removed: 0, removed_pct: 0 },
-        team_cancel_rate: data.team_cancel_rate || 0,
+        dedup: data.dedup || summary.dedup || { removed: 0, removed_pct: 0 },
+        team_cancel_rate: data.team_cancel_rate || summary.teamCancelRate || 0,
         team_pending_rate: data.team_pending_rate || 0,
         addedOrders: data.addedOrders || { totalAdded: 0, totalAddedCS: 0, totalAddedNonCS: 0, fromCS: 0, fromOtherDepartments: 0, topCSContributors: [], allCSContributors: [] },
         ...data
@@ -988,6 +1028,7 @@ async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindow
       };
     }
   } catch (err) {
+    if (err.name === 'AbortError') return;
     D = {
       exists: false,
       date: dateStr,
@@ -4815,6 +4856,24 @@ function renderVendoorSyncTab() {
           <div id="vendoorWeeklyImportProgressBar" style="height:100%;width:0%;background:#7C3AED;transition:width 0.3s"></div>
         </div>
         <div id="vendoorWeeklyImportDaysPills" style="display:flex;gap:6px;flex-wrap:wrap;font-size:11.5px"></div>
+        <div id="vendoorWeeklyImportSummaryContainer" style="display:none;margin-top:12px;overflow-x:auto">
+          <table style="width:100%;font-size:11.5px;border-collapse:collapse;border:1px solid #E9D5FF;border-radius:6px;overflow:hidden">
+            <thead style="background:#F5F3FF;color:#5B21B6;text-align:left">
+              <tr>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Date</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Fetched</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Inserted</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Duplicates</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Rejected</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Orders</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Actors</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Status Breakdown</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Time</th>
+              </tr>
+            </thead>
+            <tbody id="vendoorWeeklyImportSummaryTableBody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -5463,6 +5522,30 @@ async function runWeeklyVendoorLogsImportAction() {
     if (res.success) {
       if (progressBar) progressBar.style.width = '100%';
       if (statusText) statusText.textContent = `✓ تم استيراد لوجز الأسبوع السابق بالكامل بنجاح (${fmt(res.inserted || 0)} عملية محفوظة، ${fmt(res.duplicates || 0)} مكررة)`;
+      
+      const summaryTableContainer = document.getElementById('vendoorWeeklyImportSummaryContainer');
+      const summaryTableBody = document.getElementById('vendoorWeeklyImportSummaryTableBody');
+      if (summaryTableContainer && summaryTableBody && res.per_day_summary && res.per_day_summary.length > 0) {
+        summaryTableBody.innerHTML = res.per_day_summary.map(d => {
+          const breakdown = d.status_breakdown ? 
+            `Print: ${d.status_breakdown.printed || 0} | Pend: ${d.status_breakdown.pending || 0} | Canc: ${d.status_breakdown.cancelled || 0}` : '-';
+          return `
+            <tr style="border-bottom:1px solid #F3E8FF">
+              <td style="padding:6px 8px;font-weight:700;color:#4C1D95">${d.date}</td>
+              <td style="padding:6px 8px">${fmt(d.raw_fetched || d.fetched || 0)}</td>
+              <td style="padding:6px 8px;color:#15803D;font-weight:700">${fmt(d.inserted || 0)}</td>
+              <td style="padding:6px 8px;color:#B45309">${fmt(d.duplicates || 0)}</td>
+              <td style="padding:6px 8px;color:${(d.rejected || 0) > 0 ? '#B91C1C' : '#6B7280'}">${fmt(d.rejected || 0)}</td>
+              <td style="padding:6px 8px">${fmt(d.unique_orders || 0)}</td>
+              <td style="padding:6px 8px">${fmt(d.unique_actors || d.unique_employees || 0)}</td>
+              <td style="padding:6px 8px;font-size:10.5px;color:#6B7280">${breakdown}</td>
+              <td style="padding:6px 8px;color:#6B7280">${d.duration_ms ? (d.duration_ms / 1000).toFixed(1) + 's' : '-'}</td>
+            </tr>
+          `;
+        }).join('');
+        summaryTableContainer.style.display = 'block';
+      }
+      
       showToast('✓ Weekly Vendoor Logs Loaded', `Successfully loaded ${res.days || 7} days (${fmt(res.inserted || 0)} logs) from Vendoor.`);
       await loadAvailableBusinessDates();
     } else {

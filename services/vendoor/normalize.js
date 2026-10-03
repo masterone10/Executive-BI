@@ -8,6 +8,7 @@
  */
 
 import { extractCanonicalStatus } from './actions.js';
+import { extractCairoDateTimeComponents, getCairoBusinessDate } from '../time_utils.js';
 export { extractCanonicalStatus };
 
 /**
@@ -361,12 +362,19 @@ export function normalizeVendoorLogRow(rawRow) {
 }
 
 /**
- * Resolves the operational business date for a given timestamp
+ * Resolves the operational business date for a given timestamp in Africa/Cairo timezone
+ * Never falls back to current date if a valid historical fallbackDate is provided.
  */
-export function getOperationalBusinessDate(timestampStr) {
-  if (!timestampStr) return { business_date: new Date().toISOString().slice(0, 10) };
+export function getOperationalBusinessDate(timestampStr, fallbackDate = null) {
+  if (!timestampStr) {
+    return { business_date: fallbackDate || getCairoBusinessDate() };
+  }
   try {
     const s = String(timestampStr).trim();
+    const cairoComps = extractCairoDateTimeComponents(s);
+    if (cairoComps && cairoComps.cairoDate) {
+      return { business_date: cairoComps.cairoDate };
+    }
     if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
       return { business_date: s.slice(0, 10) };
     }
@@ -377,7 +385,7 @@ export function getOperationalBusinessDate(timestampStr) {
   } catch {
     // ignore
   }
-  return { business_date: new Date().toISOString().slice(0, 10) };
+  return { business_date: fallbackDate || getCairoBusinessDate() };
 }
 
 /**

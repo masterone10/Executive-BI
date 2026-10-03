@@ -341,23 +341,29 @@ input:checked + .slider:before{transform:translateX(16px)}
           <div class="gds-badge" id="globalDateDisplay">Loading...</div>
         </div>
         <div class="gds-controls">
-          <button type="button" class="gds-btn" id="btnPrevDay" onclick="navigateDateOffset(-1)" title="Previous Day">
-            ◀ Previous Day
+          <button type="button" class="gds-btn" id="btnPrevDay" onclick="navigateDateOffset(-1)" title="Previous Available Day">
+            ◀ Prev Day
           </button>
           <button type="button" class="gds-btn active-today" id="btnToday" onclick="navigateDateToday()" title="Return to Today">
             Today
           </button>
-          <button type="button" class="gds-btn" id="btnNextDay" onclick="navigateDateOffset(1)" title="Next Day">
+          <button type="button" class="gds-btn" id="btnNextDay" onclick="navigateDateOffset(1)" title="Next Available Day">
             Next Day ▶
           </button>
           <div class="gds-cal-wrap">
             <label class="gds-btn" for="globalCalendarPicker" title="Pick any date from calendar" style="position:relative;cursor:pointer;display:inline-flex;align-items:center;margin:0">
               📅 Calendar
-              <input type="date" id="globalCalendarPicker" class="gds-date-input" onchange="onGlobalDatePicked(this.value)">
+              <input type="date" id="globalCalendarPicker" class="gds-date-input" list="availableDatesDatalist" onchange="onGlobalDatePicked(this.value)">
             </label>
+          </div>
+          <div id="availableDatesDropdownWrap" style="display:inline-flex;align-items:center">
+            <select id="globalAvailableDatesSelect" class="filter" style="padding:4px 8px;font-size:12px;font-weight:700;color:var(--navy);border-radius:6px;border:1.5px solid #CBD5E1;background:#fff;max-width:190px" onchange="if(this.value) setGlobalSelectedDate(this.value)" title="Direct jump to any recorded operational date">
+              <option value="">📂 Recorded Days...</option>
+            </select>
           </div>
         </div>
       </div>
+      <datalist id="availableDatesDatalist"></datalist>
 
       <!-- GLOBAL TRUE EVENT TIME WINDOW FILTER -->
       <div class="global-time-selector" id="globalTimeSelector" style="display:flex;align-items:center;background:#fff;border:1px solid var(--line);border-radius:10px;padding:4px 10px;gap:8px;box-shadow:var(--shadow)">
@@ -384,6 +390,9 @@ input:checked + .slider:before{transform:translateX(16px)}
       </div>
 
       <div class="actions">
+        <button class="btn sm" onclick="show('management', 'vendoor'); setTimeout(runWeeklyVendoorLogsImportAction, 100);" style="background:#7C3AED;color:#fff;font-weight:700" title="تحميل لوجز الأسبوع السابق من Vendoor (Load Previous Week Logs from Vendoor)">
+          📥 تحميل لوجز الأسبوع السابق
+        </button>
         <button class="btn sm" onclick="show('tracking', 'employees')" style="background:#16A34A;color:#fff;font-weight:700;box-shadow:0 0 8px rgba(22,163,74,0.3)">
           ⚡ Live Agent Monitor
         </button>
@@ -521,14 +530,61 @@ function lineChart(series,keys,colors,labels,pctMode){
 }
 
 // -------------------------------------------------------------
-// GLOBAL DATE NAVIGATION ENGINE
+// GLOBAL DATE NAVIGATION ENGINE (CANONICAL CAIRO BUSINESS DATE)
 // -------------------------------------------------------------
+function getClientCairoDate() {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Cairo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    return formatter.format(new Date());
+  } catch (_) {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+}
+
 function getTodayDate() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  return getClientCairoDate();
+}
+
+let availableBusinessDates = [];
+
+async function loadAvailableBusinessDates(force = false) {
+  try {
+    const res = await apiFetch('/api/work/available-dates' + (force ? '?fresh=true' : ''));
+    if (res && Array.isArray(res.dates)) {
+      availableBusinessDates = res.dates;
+      updateAvailableDatesUI();
+    }
+  } catch (err) {
+    console.warn('Failed to load available business dates:', err.message);
+  }
+}
+
+function updateAvailableDatesUI() {
+  const datalist = document.getElementById('availableDatesDatalist');
+  const select = document.getElementById('globalAvailableDatesSelect');
+  
+  if (datalist) {
+    datalist.innerHTML = availableBusinessDates.map(d => `<option value="${d.date}">${formatDisplayDate(d.date)}${d.is_today ? ' (Today)' : ''} — ${d.orders_count || 0} Orders</option>`).join('');
+  }
+
+  if (select) {
+    let opts = '<option value="">📂 Recorded Days (' + availableBusinessDates.length + ')...</option>';
+    opts += availableBusinessDates.map(d => {
+      const isSel = (d.date === currentWorkDate);
+      const label = `${d.date} ${d.is_today ? '🌟 (Today)' : ''} — ${d.orders_count || 0} ord${d.has_allocation ? ', ✓Alloc' : ''}`;
+      return `<option value="${d.date}" ${isSel ? 'selected' : ''}>${label}</option>`;
+    }).join('');
+    select.innerHTML = opts;
+  }
 }
 
 function getInitialDate() {
@@ -629,6 +685,11 @@ function updateGlobalDateUI() {
 
   const cal = document.getElementById('globalCalendarPicker');
   if (cal) cal.value = currentWorkDate;
+
+  const sel = document.getElementById('globalAvailableDatesSelect');
+  if (sel) {
+    sel.value = currentWorkDate;
+  }
 
   const btnToday = document.getElementById('btnToday');
   if (btnToday) {
@@ -815,25 +876,60 @@ function onGlobalDatePicked(val) {
 }
 
 let globalDateRequestId = 0;
+let isHistoricalMode = false;
+let globalDateAbortController = null;
 
-async function setGlobalSelectedDate(newDate) {
+async function setGlobalSelectedDate(newDate, options = {}) {
   if (!newDate || !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return;
+  const cleanDate = newDate.trim();
   const requestId = ++globalDateRequestId;
-  currentWorkDate = newDate;
 
-  updateUrlDate(newDate);
-  try { sessionStorage.setItem('executive_bi_selected_date', newDate); } catch(e){}
+  if (globalDateAbortController) {
+    try { globalDateAbortController.abort(); } catch(e){}
+  }
+  globalDateAbortController = new AbortController();
+
+  currentWorkDate = cleanDate;
+  isHistoricalMode = (cleanDate !== getTodayDate());
+
+  updateUrlDate(cleanDate);
+  try { sessionStorage.setItem('executive_bi_selected_date', cleanDate); } catch(e){}
   updateGlobalDateUI();
 
-  // Fetch performance metrics for this date
-  await fetchPerformanceDataForDate(newDate);
+  if (isHistoricalMode) {
+    showToast('📅 Business Date Selected', `Loading operations for ${formatDisplayDate(cleanDate)}...`, 3000);
+  }
 
-  // If a newer date request was initiated, discard obsolete render
+  // Phase 1: Determine date status and auto-sync with Vendoor if needed
+  try {
+    const statusRes = await apiFetch(`/api/historical/date-status/${cleanDate}`, { signal: globalDateAbortController.signal }).catch(() => null);
+
+    if (statusRes && statusRes.data_availability !== 'READY' && cleanDate <= getTodayDate()) {
+      showToast('⚡ Synchronizing Historical Date', `Fetching activity logs for ${cleanDate} from Vendoor...`, 6000);
+      await apiFetch('/api/historical/load-date', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: cleanDate, force_sync: options.forceSync || false }),
+        signal: globalDateAbortController.signal
+      }).catch(err => {
+        console.warn('Auto historical sync notice:', err.message);
+      });
+      loadAvailableBusinessDates(true);
+    }
+  } catch (syncErr) {
+    console.warn('Date status evaluation notice:', syncErr);
+  }
+
   if (requestId !== globalDateRequestId) return;
 
-  // Re-render
+  // Phase 2: Fetch performance metrics for this date
+  await fetchPerformanceDataForDate(cleanDate, currentTimeWindowFrom, currentTimeWindowTo, globalDateAbortController.signal);
+
+  if (requestId !== globalDateRequestId) return;
+
+  // Phase 3: Re-render
   RENDERED = pages();
-  show(currentMainPage, currentPage);
+  show(currentMainPage, currentSubTabs[currentMainPage] || currentPage);
   updateGlobalContextBar();
 }
 
@@ -871,14 +967,15 @@ window.resetTimeWindowAllDay = async function() {
   show(currentMainPage, currentSubTabs[currentMainPage]);
 };
 
-async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindowFrom, toTime = currentTimeWindowTo) {
+async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindowFrom, toTime = currentTimeWindowTo, signal = null) {
   try {
     let url = `/api/data?date=${encodeURIComponent(dateStr)}`;
     if (fromTime || toTime) {
       url += `&from=${encodeURIComponent(fromTime || '')}&to=${encodeURIComponent(toTime || '')}`;
     }
-    const data = await apiFetch(url);
-    if (data && data.exists !== false && (data.employees || data.hr || data.log_totals || data.time_window)) {
+    const data = await apiFetch(url, signal ? { signal } : undefined);
+    if (data && data.exists !== false && (data.employees || data.hr || data.log_totals || data.time_window || data.summary)) {
+      const summary = data.summary || {};
       D = {
         exists: true,
         date: dateStr,
@@ -886,20 +983,21 @@ async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindow
         time_window: data.time_window || null,
         kpis: data.kpis || null,
         order_events: data.order_events || [],
+        summary: summary,
         log_totals: {
-          actions: data.log_totals?.actions || 0,
-          printed: data.log_totals?.printed || 0,
-          pending: data.log_totals?.pending || 0,
-          processing: data.log_totals?.processing || 0,
-          cancelled: data.log_totals?.cancelled || 0,
-          alt: data.log_totals?.alt || 0,
+          actions: summary.totalRealActions !== undefined ? summary.totalRealActions : (data.log_totals?.actions || 0),
+          printed: summary.printedActions !== undefined ? summary.printedActions : (data.log_totals?.printed || 0),
+          pending: summary.pendingActions !== undefined ? summary.pendingActions : (data.log_totals?.pending || 0),
+          processing: summary.processingActions !== undefined ? summary.processingActions : (data.log_totals?.processing || 0),
+          cancelled: summary.cancelledActions !== undefined ? summary.cancelledActions : (data.log_totals?.cancelled || 0),
+          alt: summary.totalAltPhones !== undefined ? summary.totalAltPhones : (data.log_totals?.alt || 0),
           ...(data.log_totals || {})
         },
         status_totals: {
-          Printed: data.status_totals?.Printed || 0,
-          Pending: data.status_totals?.Pending || 0,
-          Processing: data.status_totals?.Processing || 0,
-          Cancelled: data.status_totals?.Cancelled || 0,
+          Printed: summary.printedActions !== undefined ? summary.printedActions : (data.status_totals?.Printed || 0),
+          Pending: summary.pendingActions !== undefined ? summary.pendingActions : (data.status_totals?.Pending || 0),
+          Processing: summary.processingActions !== undefined ? summary.processingActions : (data.status_totals?.Processing || 0),
+          Cancelled: summary.cancelledActions !== undefined ? summary.cancelledActions : (data.status_totals?.Cancelled || 0),
           ...(data.status_totals || {})
         },
         rankings: {
@@ -909,10 +1007,10 @@ async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindow
           ...(data.rankings || {})
         },
         cancel_rate_rank: data.cancel_rate_rank || [],
-        hr: data.hr || { days: 0, tot_new: 0, tot_printed: 0, tot_cancel: 0, tot_add: 0 },
+        hr: data.hr || { days: 0, tot_new: summary.totalNewOrders || 0, tot_printed: summary.printedActions || 0, tot_cancel: summary.cancelledActions || 0, tot_add: 0 },
         daily: data.daily || [],
-        dedup: data.dedup || { removed: 0, removed_pct: 0 },
-        team_cancel_rate: data.team_cancel_rate || 0,
+        dedup: data.dedup || summary.dedup || { removed: 0, removed_pct: 0 },
+        team_cancel_rate: data.team_cancel_rate || summary.teamCancelRate || 0,
         team_pending_rate: data.team_pending_rate || 0,
         addedOrders: data.addedOrders || { totalAdded: 0, totalAddedCS: 0, totalAddedNonCS: 0, fromCS: 0, fromOtherDepartments: 0, topCSContributors: [], allCSContributors: [] },
         ...data
@@ -941,6 +1039,7 @@ async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindow
       };
     }
   } catch (err) {
+    if (err.name === 'AbortError') return;
     D = {
       exists: false,
       date: dateStr,
@@ -4366,6 +4465,8 @@ function renderVendoorIntegrationUI() {
 
   if (currentVendoorSubTab === 'dispatcher') {
     loadAutoDispatcherView();
+  } else if (currentVendoorSubTab === 'sync') {
+    setTimeout(computeAndSetDefaultPreviousWeek, 30);
   }
 }
 
@@ -4726,6 +4827,63 @@ function renderVendoorSyncTab() {
           <button class="btn success sm" id="btnRunSyncLogs" onclick="runVendoorSyncLogsAction()">
             ✓ Ingest & Sync Logs
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- NEW: Previous Week Logs Import Panel -->
+    <div class="panel" style="margin-bottom:20px;border-top:3px solid #7C3AED;background:#FAF5FF">
+      <div class="hd">
+        <div>
+          <h3 style="color:#5B21B6">🗓️ تحميل لوجز الأسبوع السابق من Vendoor (Load Previous Week Logs)</h3>
+          <p style="color:#6D28D9">سحب سجلات النشاط التاريخية للأسبوع المنتهي بالكامل (Monday → Sunday) تلقائيًا وحفظها في SQLite بدون مساس باليوم الحالي</p>
+        </div>
+        <span class="tag" style="background:#EDE9FE;color:#6D28D9;font-weight:700">Weekly Archive</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end;margin-bottom:14px">
+        <div>
+          <label style="display:block;font-size:11px;font-weight:700;color:#5B21B6;margin-bottom:4px">Start Date (Monday)</label>
+          <input type="date" id="vendoorWeeklyImportStartDate" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #DDD6FE;border-radius:6px;font-size:12px;background:#FFF">
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;font-weight:700;color:#5B21B6;margin-bottom:4px">End Date (Sunday)</label>
+          <input type="date" id="vendoorWeeklyImportEndDate" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #DDD6FE;border-radius:6px;font-size:12px;background:#FFF">
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn sm" onclick="computeAndSetDefaultPreviousWeek()" style="padding:6px 12px;background:#EDE9FE;color:#5B21B6;border:1px solid #C4B5FD;font-weight:600">
+            🔄 حساب الأسبوع السابق
+          </button>
+          <button class="btn sm" id="btnRunWeeklyImport" onclick="runWeeklyVendoorLogsImportAction()" style="padding:6px 16px;background:#7C3AED;color:#FFF;font-weight:700">
+            🚀 تحميل لوجز الأسبوع السابق
+          </button>
+        </div>
+      </div>
+      <div id="vendoorWeeklyImportProgressContainer" style="display:none;margin-top:12px;padding:12px;background:#FFF;border:1px solid #E9D5FF;border-radius:6px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <b id="vendoorWeeklyImportStatusText" style="font-size:12.5px;color:#5B21B6">Processing...</b>
+          <span id="vendoorWeeklyImportCountsBadge" class="tag" style="background:#EDE9FE;color:#6D28D9;font-weight:700">0 / 7 Days</span>
+        </div>
+        <div style="height:8px;background:#F3E8FF;border-radius:4px;overflow:hidden;margin-bottom:8px">
+          <div id="vendoorWeeklyImportProgressBar" style="height:100%;width:0%;background:#7C3AED;transition:width 0.3s"></div>
+        </div>
+        <div id="vendoorWeeklyImportDaysPills" style="display:flex;gap:6px;flex-wrap:wrap;font-size:11.5px"></div>
+        <div id="vendoorWeeklyImportSummaryContainer" style="display:none;margin-top:12px;overflow-x:auto">
+          <table style="width:100%;font-size:11.5px;border-collapse:collapse;border:1px solid #E9D5FF;border-radius:6px;overflow:hidden">
+            <thead style="background:#F5F3FF;color:#5B21B6;text-align:left">
+              <tr>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Date</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Fetched</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Inserted</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Duplicates</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Rejected</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Orders</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Actors</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Status Breakdown</th>
+                <th style="padding:6px 8px;border-bottom:1px solid #E9D5FF">Time</th>
+              </tr>
+            </thead>
+            <tbody id="vendoorWeeklyImportSummaryTableBody"></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -5297,6 +5455,122 @@ async function runVendoorSyncLogsAction() {
     if (btn) {
       btn.disabled = false;
       btn.textContent = '✓ Ingest & Sync Logs';
+    }
+    await loadVendoorIntegrationView();
+  }
+}
+
+async function computeAndSetDefaultPreviousWeek() {
+  try {
+    const res = await apiFetch('/api/integrations/vendoor/logs/import-week/preview-range?date=' + (currentWorkDate || ''));
+    if (res && res.startDate && res.endDate) {
+      const startInp = document.getElementById('vendoorWeeklyImportStartDate');
+      const endInp = document.getElementById('vendoorWeeklyImportEndDate');
+      if (startInp) startInp.value = res.startDate;
+      if (endInp) endInp.value = res.endDate;
+    }
+  } catch (err) {
+    console.warn('Could not preview week range:', err.message);
+  }
+}
+
+async function runWeeklyVendoorLogsImportAction() {
+  const btn = document.getElementById('btnRunWeeklyImport');
+  const startInp = document.getElementById('vendoorWeeklyImportStartDate');
+  const endInp = document.getElementById('vendoorWeeklyImportEndDate');
+  const progressContainer = document.getElementById('vendoorWeeklyImportProgressContainer');
+  const statusText = document.getElementById('vendoorWeeklyImportStatusText');
+  const countsBadge = document.getElementById('vendoorWeeklyImportCountsBadge');
+  const progressBar = document.getElementById('vendoorWeeklyImportProgressBar');
+  const daysPills = document.getElementById('vendoorWeeklyImportDaysPills');
+
+  const startDate = startInp?.value || '';
+  const endDate = endInp?.value || '';
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ استيراد الأسبوع...';
+  }
+  if (progressContainer) {
+    progressContainer.style.display = 'block';
+  }
+  if (statusText) statusText.textContent = `جاري استيراد لوجز الأسبوع من Vendoor (${startDate || 'Previous Week'} → ${endDate || ''})...`;
+  if (progressBar) progressBar.style.width = '15%';
+
+  let pollInterval = setInterval(async () => {
+    try {
+      const st = await apiFetch('/api/integrations/vendoor/logs/import-week/status');
+      if (st && countsBadge) {
+        countsBadge.textContent = `${st.days_completed || 0} / ${st.days_total || 7} Days (${fmt(st.total_inserted || 0)} Inserted)`;
+      }
+      if (st && progressBar && st.days_total) {
+        const pct = Math.round(((st.days_completed || 0) / st.days_total) * 100);
+        progressBar.style.width = Math.max(15, pct) + '%';
+      }
+      if (st && st.per_day_summary && daysPills) {
+        daysPills.innerHTML = st.per_day_summary.map(d => `
+          <span style="padding:2px 8px;border-radius:4px;background:${d.status === 'SUCCESS' ? '#DCFCE7' : '#FEE2E2'};color:${d.status === 'SUCCESS' ? '#15803D' : '#991B1B'};font-weight:600">
+            ${d.date}: ${fmt(d.inserted || 0)} inserted (${fmt(d.duplicates || 0)} dup)
+          </span>
+        `).join('');
+      }
+    } catch {}
+  }, 1000);
+
+  try {
+    const res = await apiFetch('/api/integrations/vendoor/logs/import-week', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        startDate: startDate || undefined,
+        endDate: endDate || undefined
+      })
+    });
+
+    clearInterval(pollInterval);
+    vendoorActiveSyncResult = res;
+
+    if (res.success) {
+      if (progressBar) progressBar.style.width = '100%';
+      if (statusText) statusText.textContent = `✓ تم استيراد لوجز الأسبوع السابق بالكامل بنجاح (${fmt(res.inserted || 0)} عملية محفوظة، ${fmt(res.duplicates || 0)} مكررة)`;
+      
+      const summaryTableContainer = document.getElementById('vendoorWeeklyImportSummaryContainer');
+      const summaryTableBody = document.getElementById('vendoorWeeklyImportSummaryTableBody');
+      if (summaryTableContainer && summaryTableBody && res.per_day_summary && res.per_day_summary.length > 0) {
+        summaryTableBody.innerHTML = res.per_day_summary.map(d => {
+          const breakdown = d.status_breakdown ? 
+            `Print: ${d.status_breakdown.printed || 0} | Pend: ${d.status_breakdown.pending || 0} | Canc: ${d.status_breakdown.cancelled || 0}` : '-';
+          return `
+            <tr style="border-bottom:1px solid #F3E8FF">
+              <td style="padding:6px 8px;font-weight:700;color:#4C1D95">${d.date}</td>
+              <td style="padding:6px 8px">${fmt(d.raw_fetched || d.fetched || 0)}</td>
+              <td style="padding:6px 8px;color:#15803D;font-weight:700">${fmt(d.inserted || 0)}</td>
+              <td style="padding:6px 8px;color:#B45309">${fmt(d.duplicates || 0)}</td>
+              <td style="padding:6px 8px;color:${(d.rejected || 0) > 0 ? '#B91C1C' : '#6B7280'}">${fmt(d.rejected || 0)}</td>
+              <td style="padding:6px 8px">${fmt(d.unique_orders || 0)}</td>
+              <td style="padding:6px 8px">${fmt(d.unique_actors || d.unique_employees || 0)}</td>
+              <td style="padding:6px 8px;font-size:10.5px;color:#6B7280">${breakdown}</td>
+              <td style="padding:6px 8px;color:#6B7280">${d.duration_ms ? (d.duration_ms / 1000).toFixed(1) + 's' : '-'}</td>
+            </tr>
+          `;
+        }).join('');
+        summaryTableContainer.style.display = 'block';
+      }
+      
+      showToast('✓ Weekly Vendoor Logs Loaded', `Successfully loaded ${res.days || 7} days (${fmt(res.inserted || 0)} logs) from Vendoor.`);
+      await loadAvailableBusinessDates();
+    } else {
+      if (statusText) statusText.textContent = `⚠️ فشل الاستيراد: ${res.error || 'Unknown error'}`;
+      showToast('⚠️ Import Failed', res.error || 'Failed to complete weekly logs import.');
+    }
+  } catch (err) {
+    clearInterval(pollInterval);
+    if (statusText) statusText.textContent = `⚠️ خطأ: ${err.message}`;
+    showToast('⚠️ Error', err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '🚀 تحميل لوجز الأسبوع السابق';
     }
     await loadVendoorIntegrationView();
   }
