@@ -60,8 +60,8 @@ console.log('--- STARTING CS EXECUTIVE BI FULL AUDIT & QA SUITE ---');
 console.log('======================================================');
 
 async function runFullAudit() {
-  const auditDate1 = '2026-10-01';
-  const auditDate2 = '2026-10-02';
+  const auditDate1 = '2026-11-21';
+  const auditDate2 = '2026-11-22';
 
   // Clean up any test artifacts for test dates
   const cleanup = (date) => {

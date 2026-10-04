@@ -14,6 +14,7 @@
 import * as XLSX from 'xlsx';
 import { vendoorFetch, VendoorClientError } from './client.js';
 import { normalizeVendoorLogRow, summarizeNormalizedLogs } from './normalize.js';
+import { getCairoBusinessDate, parseCairoTimestamp } from '../time_utils.js';
 
 /**
  * Validate date format (YYYY-MM-DD)
@@ -255,3 +256,98 @@ export async function fetchVendoorLogsRange(options = {}) {
     logs: allLogs
   };
 }
+
+/**
+ * Derives the canonical business work date (Africa/Cairo) for a log record
+ *
+ * @param {Object} record
+ * @returns {string|null} YYYY-MM-DD
+ */
+export function canonicalWorkDate(record) {
+  if (!record) return null;
+  const tsStr = record.timestamp_str || record.event_datetime || record.timestamp || record.date;
+  if (!tsStr) return null;
+  const dt = parseCairoTimestamp(tsStr);
+  if (!dt || isNaN(dt.getTime())) {
+    // If string already contains YYYY-MM-DD at the beginning
+    const m = String(tsStr).match(/^(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : null;
+  }
+  return getCairoBusinessDate(dt);
+}
+
+/**
+ * Strict Single-Day Historical Vendoor Logs Fetcher
+ * Guarantees startDate === dateStr AND endDate === dateStr.
+ * Validates and filters every incoming record to ensure canonicalWorkDate(record) === dateStr.
+ *
+ * @param {string} dateStr YYYY-MM-DD
+ * @param {Object} [options]
+ * @returns {Promise<Object>}
+ */
+export async function fetchVendoorLogsForDate(dateStr, options = {}) {
+  const cleanDate = String(dateStr || '').trim();
+  if (!isValidISODate(cleanDate)) {
+    throw new VendoorClientError(
+      `Invalid date "${cleanDate}". Expected YYYY-MM-DD.`,
+      400,
+      'INVALID_DATE_FORMAT'
+    );
+  }
+
+  // Exact-day fetch: startDate === cleanDate, endDate === cleanDate
+  const rangeResult = await fetchVendoorLogsRange({
+    startDate: cleanDate,
+    endDate: cleanDate,
+    chunkDays: 1,
+    ...options
+  });
+
+  const rawLogs = rangeResult.logs || [];
+  const acceptedLogs = [];
+  const rejectedLogs = [];
+  const seenEventKeys = new Set();
+  let duplicateCount = 0;
+
+  for (const log of rawLogs) {
+    const recDate = canonicalWorkDate(log);
+    if (recDate !== cleanDate) {
+      rejectedLogs.push({ ...log, rejected_reason: `Cross-date log (${recDate} !== ${cleanDate})` });
+      continue;
+    }
+
+    const eventKey = `${log.order_code || ''}|${log.timestamp || log.date || ''}|${log.employee_name || ''}|${log.action || ''}`;
+    if (seenEventKeys.has(eventKey)) {
+      duplicateCount++;
+      continue;
+    }
+    seenEventKeys.add(eventKey);
+    acceptedLogs.push(log);
+  }
+
+  const summary = summarizeNormalizedLogs(acceptedLogs);
+
+  return {
+    success: true,
+    resource: 'logs',
+    work_date: cleanDate,
+    requested_range: {
+      startDate: cleanDate,
+      endDate: cleanDate
+    },
+    http_status: rangeResult.http_status,
+    duration_ms: rangeResult.duration_ms,
+    pages_fetched: rangeResult.chunks_requested || 1,
+    pages_expected: rangeResult.chunks_requested || 1,
+    rows_fetched: rawLogs.length,
+    rows_accepted: acceptedLogs.length,
+    rows_rejected: rejectedLogs.length,
+    duplicates_removed: duplicateCount,
+    summary,
+    sample_rows: acceptedLogs.slice(0, 10),
+    logs: acceptedLogs,
+    normalizedLogs: acceptedLogs,
+    rejected_logs_sample: rejectedLogs.slice(0, 5)
+  };
+}
+

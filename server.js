@@ -193,6 +193,9 @@ import {
   getAvailableBusinessDates,
   getHistoricalDayOverview,
   getHistoricalOrdersList,
+  getHistoricalOrdersForDate,
+  getHistoricalPendingOrders,
+  getCurrentLivePendingOrders,
   getHistoricalDateRegistryStatus,
   loadOrSyncHistoricalDate,
   invalidateAvailableDatesCache
@@ -966,6 +969,36 @@ app.post('/api/historical/load-date', async (req, res) => {
   } catch (err) {
     console.error(`Error in /api/historical/load-date for ${req.body?.date}:`, err);
     res.status(500).json({ success: false, error: err.message, work_date: req.body?.date });
+  }
+});
+
+// Canonical Historical Orders Endpoint (Date-Scoped, Single Source of Truth)
+app.get(['/api/historical/:date/orders', '/api/orders/historical/:date'], (req, res) => {
+  try {
+    const orders = getHistoricalOrdersForDate(req.params.date);
+    res.json({ success: true, work_date: req.params.date, count: orders.length, orders });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message, work_date: req.params.date });
+  }
+});
+
+// Canonical Historical Pending Orders Endpoint (Date-Scoped, Zero Live Queue Contamination)
+app.get(['/api/historical/:date/pending-orders', '/api/pending-orders/historical/:date'], (req, res) => {
+  try {
+    const pendingOrders = getHistoricalPendingOrders(req.params.date);
+    res.json({ success: true, work_date: req.params.date, count: pendingOrders.length, pending_orders: pendingOrders });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message, work_date: req.params.date });
+  }
+});
+
+// Live Pending Queue Endpoint (LIVE_MODE ONLY)
+app.get('/api/pending-orders/live', (req, res) => {
+  try {
+    const livePending = getCurrentLivePendingOrders();
+    res.json({ success: true, mode: 'LIVE', count: livePending.length, pending_orders: livePending });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

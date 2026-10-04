@@ -385,43 +385,23 @@ export async function loadOrSyncHistoricalDate(workDate, options = {}) {
     // 2. Check current local status
     const statusInfo = getHistoricalDateRegistryStatus(cleanDate);
     const hasRawLogs = statusInfo.record_count > 0;
-    const hasSnapshots = statusInfo.snapshots_available === 1;
 
-    if (!options.forceSync && hasRawLogs && hasSnapshots) {
-      console.log(`[HistoricalDateSync] ${cleanDate} is already READY locally (${statusInfo.record_count} records). Loading from canonical snapshots...`);
-      const dailySnap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(cleanDate);
-      const perfRows = db.prepare('SELECT * FROM performance_snapshots WHERE date = ? ORDER BY performance_score DESC').all(cleanDate);
+    if (!options.forceSync && hasRawLogs) {
+      console.log(`[HistoricalDateSync] ${cleanDate} is already available locally (${statusInfo.record_count} records). Computing canonical metrics...`);
+      const records = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all(cleanDate);
+      const metrics = computePerformanceFromRecords(records, cleanDate);
 
-      let parsed = null;
-      try {
-        if (dailySnap?.metrics_json) parsed = JSON.parse(dailySnap.metrics_json);
-      } catch {}
+      // Keep DB snapshots in sync with canonical engine
+      savePerformanceSnapshotToDB(cleanDate, metrics);
 
       return {
         success: true,
         work_date: cleanDate,
         status: 'READY',
         source: 'LOCAL_CANONICAL',
-        summary: parsed?.summary || {
-          totalRealActions: perfRows.reduce((s, r) => s + (r.real_actions || 0), 0),
-          printedActions: perfRows.reduce((s, r) => s + (r.printed_actions || 0), 0),
-          pendingActions: perfRows.reduce((s, r) => s + (r.pending_actions || 0), 0),
-          cancelledActions: perfRows.reduce((s, r) => s + (r.cancelled_actions || 0), 0),
-          processingActions: perfRows.reduce((s, r) => s + (r.processing_actions || 0), 0),
-          totalAltPhones: perfRows.reduce((s, r) => s + (r.alt_phones || 0), 0),
-          totalNewOrders: perfRows.reduce((s, r) => s + (r.new_orders || 0), 0)
-        },
-        dedup: parsed?.dedup || { removed: 0, removed_pct: 0 },
-        employees: perfRows.map(r => ({
-          ...r,
-          name: r.employee_name,
-          actions: r.real_actions,
-          printed: r.printed_actions,
-          pending: r.pending_actions,
-          cancelled: r.cancelled_actions,
-          processing: r.processing_actions,
-          alt: r.alt_phones
-        }))
+        summary: metrics.summary,
+        dedup: metrics.dedup,
+        employees: metrics.employees
       };
     }
 
@@ -501,8 +481,9 @@ export async function loadOrSyncHistoricalDate(workDate, options = {}) {
     }
 
     // 4. Idempotent Database Persistence into vendoor_logs and raw_log_records
-    const normalizedLogs = logsResult.normalizedLogs || [];
-    console.log(`[HistoricalDateSync] Ingesting ${normalizedLogs.length} normalized logs for ${cleanDate}...`);
+    const normalizedLogs = logsResult.normalizedLogs || logsResult.logs || [];
+    const pagesFetched = logsResult.chunks_requested || logsResult.pages_fetched || 1;
+    console.log(`[HistoricalDateSync] Ingesting ${normalizedLogs.length} normalized logs for ${cleanDate} (${pagesFetched} pages/chunks)...`);
 
     const insertVendoorLogStmt = db.prepare(`
       INSERT INTO vendoor_logs (
@@ -553,7 +534,7 @@ export async function loadOrSyncHistoricalDate(workDate, options = {}) {
 
     // 5. Compute Canonical Metrics via computePerformanceFromRecords
     const records = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all(cleanDate);
-    const metrics = computePerformanceFromRecords(records);
+    const metrics = computePerformanceFromRecords(records, cleanDate);
 
     // 6. Save Updated Snapshots
     savePerformanceSnapshotToDB(cleanDate, metrics);
@@ -567,15 +548,15 @@ export async function loadOrSyncHistoricalDate(workDate, options = {}) {
           metrics_available = 1,
           snapshots_available = 1,
           record_count = ?,
-          pages_fetched = 1,
-          pages_total = 1,
+          pages_fetched = ?,
+          pages_total = ?,
           completeness = 'COMPLETE',
           last_successful_sync = datetime('now'),
           last_error = NULL,
           summary_json = ?,
           updated_at = datetime('now')
       WHERE work_date = ?
-    `).run(records.length, JSON.stringify(metrics.summary), cleanDate);
+    `).run(records.length, pagesFetched, pagesFetched, JSON.stringify(metrics.summary), cleanDate);
 
     invalidateAvailableDatesCache();
 
@@ -817,4 +798,96 @@ export function getHistoricalOrdersList(workDate, options = {}) {
     offset,
     orders: []
   };
+}
+
+/**
+ * Canonical Resolver for all orders belonging strictly to a historical date.
+ * Single source of truth across all historical views.
+ *
+ * @param {string} workDate YYYY-MM-DD
+ * @returns {Array<Object>} Date-scoped order objects
+ */
+export function getHistoricalOrdersForDate(workDate) {
+  const cleanDate = String(workDate || '').trim();
+  if (!cleanDate || !/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+    throw new Error(`Invalid workDate: ${workDate}. Expected format YYYY-MM-DD`);
+  }
+
+  // 1. Check current_work_orders scoped by work_date
+  const cwoOrders = db.prepare(`
+    SELECT id, order_code, account, status, order_date, source_file_slot, work_state, assigned_employee_id, assigned_employee_name, tracking_id
+    FROM current_work_orders
+    WHERE work_date = ?
+    ORDER BY account ASC, order_code ASC
+  `).all(cleanDate);
+
+  if (cwoOrders && cwoOrders.length > 0) {
+    return cwoOrders;
+  }
+
+  // 2. Fallback to order_level_allocations scoped by allocation_date
+  const allocOrders = db.prepare(`
+    SELECT id, order_code, account, status, allocation_date as order_date, 1 as source_file_slot, work_state, employee_id as assigned_employee_id, employee_name as assigned_employee_name, tracking_id
+    FROM order_level_allocations
+    WHERE allocation_date = ?
+    ORDER BY account ASC, order_code ASC
+  `).all(cleanDate);
+
+  if (allocOrders && allocOrders.length > 0) {
+    return allocOrders;
+  }
+
+  // 3. Fallback to vendoor_orders scoped by business_date or source_date
+  const voOrders = db.prepare(`
+    SELECT id, order_code, account, COALESCE(active_status, status) as status, COALESCE(source_date, business_date) as order_date, 1 as source_file_slot, 'UNASSIGNED' as work_state, null as assigned_employee_id, 'UNASSIGNED' as assigned_employee_name, order_code as tracking_id
+    FROM vendoor_orders
+    WHERE (business_date = ? OR source_date = ?) AND is_active = 1
+    ORDER BY account ASC, order_code ASC
+  `).all(cleanDate, cleanDate);
+
+  if (voOrders && voOrders.length > 0) {
+    return voOrders;
+  }
+
+  return [];
+}
+
+/**
+ * Canonical Resolver for all PENDING orders belonging strictly to a historical date.
+ * Relies strictly on getHistoricalOrdersForDate to prevent current pending queue leakage.
+ *
+ * @param {string} workDate YYYY-MM-DD
+ * @returns {Array<Object>} Date-scoped pending order objects
+ */
+export function getHistoricalPendingOrders(workDate) {
+  const allOrders = getHistoricalOrdersForDate(workDate);
+  return allOrders.filter(order => {
+    const st = String(order.status || '').trim().toLowerCase();
+    return st === 'pending' || st.includes('معلق') || st.includes('pending');
+  });
+}
+
+/**
+ * Resolves current live pending orders ONLY for LIVE_MODE (Today).
+ * Never called for historical dates.
+ *
+ * @returns {Array<Object>} Live pending order objects
+ */
+export function getCurrentLivePendingOrders() {
+  const today = getCairoBusinessDate();
+  const cwoPending = db.prepare(`
+    SELECT id, order_code, account, status, order_date, source_file_slot, work_state, assigned_employee_id, assigned_employee_name, tracking_id
+    FROM current_work_orders
+    WHERE work_date = ? AND (LOWER(status) = 'pending' OR status LIKE '%Pending%')
+  `).all(today);
+
+  if (cwoPending && cwoPending.length > 0) {
+    return cwoPending;
+  }
+
+  return db.prepare(`
+    SELECT id, order_code, account, COALESCE(active_status, status) as status, COALESCE(source_date, business_date) as order_date, 2 as source_file_slot, 'UNASSIGNED' as work_state, null as assigned_employee_id, 'UNASSIGNED' as assigned_employee_name, order_code as tracking_id
+    FROM vendoor_orders
+    WHERE (business_date = ? OR source_date = ?) AND is_active = 1 AND (LOWER(COALESCE(active_status, status)) = 'pending' OR COALESCE(active_status, status) LIKE '%Pending%')
+  `).all(today, today);
 }
