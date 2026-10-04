@@ -81,9 +81,12 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
       statusText = null;
     }
 
-    const isCS = r.is_cs !== undefined 
-      ? Boolean(r.is_cs) 
-      : (r.isCS !== undefined ? Boolean(r.isCS) : isCsEmployee(r, dbEmployeesMap));
+    let isCS = false;
+    if (r.is_cs === 0 || r.is_cs === false || r.isCS === false) {
+      isCS = false;
+    } else {
+      isCS = isCsEmployee({ name: rawName, employee_name: rawName, department: r.department }, dbEmployeesMap);
+    }
 
     return {
       order: orderCode,

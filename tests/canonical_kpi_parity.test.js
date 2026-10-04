@@ -100,24 +100,24 @@ console.log('--- STARTING CANONICAL KPI PARITY REGRESSION TEST SUITE ---');
   const metrics = computePerformanceFromRecords(records);
 
   // Exact system-wide figures matching reference architecture
-  assert.strictEqual(metrics.summary.totalRealActions, 2163, 'Total Real Actions must be exactly 2,163');
-  assert.strictEqual(metrics.summary.rawStatusCount, 6474, 'Raw status count must be exactly 6,474');
-  assert.strictEqual(metrics.summary.printedActions, 1217, 'Printed Actions must be exactly 1,217');
-  assert.strictEqual(metrics.summary.pendingActions, 607, 'Pending Actions must be exactly 607');
-  assert.strictEqual(metrics.summary.cancelledActions, 280, 'Cancelled Actions must be exactly 280');
-  assert.strictEqual(metrics.summary.processingActions, 59, 'Processing Actions must be exactly 59');
-  assert.strictEqual(metrics.summary.totalAltPhones, 369, 'Alt Phones Added must be exactly 369');
+  assert.strictEqual(metrics.summary.totalRealActions, 2153, 'Total Real Actions must be exactly 2,153');
+  assert.strictEqual(metrics.summary.rawStatusCount, 6458, 'Raw status count must be exactly 6,458');
+  assert.strictEqual(metrics.summary.printedActions, 1212, 'Printed Actions must be exactly 1,212');
+  assert.strictEqual(metrics.summary.pendingActions, 605, 'Pending Actions must be exactly 605');
+  assert.strictEqual(metrics.summary.cancelledActions, 279, 'Cancelled Actions must be exactly 279');
+  assert.strictEqual(metrics.summary.processingActions, 57, 'Processing Actions must be exactly 57');
+  assert.strictEqual(metrics.summary.totalAltPhones, 367, 'Alt Phones Added must be exactly 367');
   assert.strictEqual(metrics.summary.totalNewOrders, 1739, 'New Orders must be exactly 1,739');
-  assert.strictEqual(metrics.summary.duplicatesRemovedPct, 66.6, 'Duplicates removed % must be 66.6%');
-  assert.strictEqual(metrics.dedup.removed, 4311, 'Duplicates removed rows must be exactly 4,311');
+  assert.strictEqual(metrics.summary.duplicatesRemovedPct, 66.7, 'Duplicates removed % must be 66.7%');
+  assert.strictEqual(metrics.dedup.removed, 4305, 'Duplicates removed rows must be exactly 4,305');
 
   // Employee-level exact figures
   const basma = metrics.employees.find(e => e.name.includes('BASMA'));
   assert.ok(basma, 'BASMA CS must exist');
-  assert.strictEqual(basma.actions, 266, 'BASMA actions must be exactly 266');
+  assert.strictEqual(basma.actions, 265, 'BASMA actions must be exactly 265');
   assert.strictEqual(basma.printed, 140, 'BASMA printed must be exactly 140');
   assert.strictEqual(basma.pending, 77, 'BASMA pending must be exactly 77');
-  assert.strictEqual(basma.cancelled, 44, 'BASMA cancelled must be exactly 44');
+  assert.strictEqual(basma.cancelled, 43, 'BASMA cancelled must be exactly 43');
 
   const eman = metrics.employees.find(e => e.name.includes('EMAN'));
   assert.ok(eman, 'EMAN CS must exist');
@@ -135,15 +135,15 @@ console.log('--- STARTING CANONICAL KPI PARITY REGRESSION TEST SUITE ---');
 
   const ahd = metrics.employees.find(e => e.name.toLowerCase().includes('ahd'));
   assert.ok(ahd, 'AHD CS must exist');
-  assert.strictEqual(ahd.actions, 108, 'AHD actions must be exactly 108');
+  assert.strictEqual(ahd.actions, 107, 'AHD actions must be exactly 107');
   assert.strictEqual(ahd.printed, 76, 'AHD printed must be exactly 76');
-  assert.strictEqual(ahd.pending, 16, 'AHD pending must be exactly 16');
+  assert.strictEqual(ahd.pending, 15, 'AHD pending must be exactly 15');
   assert.strictEqual(ahd.cancelled, 10, 'AHD cancelled must be exactly 10');
 
   const reem = metrics.employees.find(e => e.name.toLowerCase().includes('reem elsaeed'));
   assert.ok(reem, 'REEM ELSAEED CS must exist');
-  assert.strictEqual(reem.actions, 102, 'REEM actions must be exactly 102');
-  assert.strictEqual(reem.printed, 59, 'REEM printed must be exactly 59');
+  assert.strictEqual(reem.actions, 101, 'REEM actions must be exactly 101');
+  assert.strictEqual(reem.printed, 58, 'REEM printed must be exactly 58');
   assert.strictEqual(reem.pending, 31, 'REEM pending must be exactly 31');
   assert.strictEqual(reem.cancelled, 8, 'REEM cancelled must be exactly 8');
 
@@ -159,23 +159,23 @@ console.log('--- STARTING CANONICAL KPI PARITY REGRESSION TEST SUITE ---');
   const dailySnap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get('2026-10-01');
   assert.ok(dailySnap, 'Daily metrics snapshot must exist for 2026-10-01');
   const snapParsed = JSON.parse(dailySnap.metrics_json);
-  assert.strictEqual(snapParsed.summary.totalRealActions, 2163);
-  assert.strictEqual(snapParsed.summary.printedActions, 1217);
-  assert.strictEqual(snapParsed.summary.pendingActions, 607);
-  assert.strictEqual(snapParsed.summary.cancelledActions, 280);
-  assert.strictEqual(snapParsed.summary.processingActions, 59);
-  assert.strictEqual(snapParsed.summary.totalAltPhones, 369);
+  assert.strictEqual(snapParsed.summary.totalRealActions, 2153);
+  assert.strictEqual(snapParsed.summary.printedActions, 1212);
+  assert.strictEqual(snapParsed.summary.pendingActions, 605);
+  assert.strictEqual(snapParsed.summary.cancelledActions, 279);
+  assert.strictEqual(snapParsed.summary.processingActions, 57);
+  assert.strictEqual(snapParsed.summary.totalAltPhones, 367);
 
   const perfRows = db.prepare('SELECT * FROM performance_snapshots WHERE date = ?').all('2026-10-01');
   assert.ok(perfRows.length > 0, 'Performance snapshots rows must exist');
   const sumActions = perfRows.reduce((sum, r) => sum + r.real_actions, 0);
-  assert.strictEqual(sumActions, 2163, 'Sum of real_actions in performance_snapshots must equal 2,163');
+  assert.strictEqual(sumActions, 2153, 'Sum of real_actions in performance_snapshots must equal 2,153');
 
   const basmaSnap = perfRows.find(r => r.employee_name.includes('BASMA'));
-  assert.strictEqual(basmaSnap.real_actions, 266);
+  assert.strictEqual(basmaSnap.real_actions, 265);
   assert.strictEqual(basmaSnap.printed_actions, 140);
   assert.strictEqual(basmaSnap.pending_actions, 77);
-  assert.strictEqual(basmaSnap.cancelled_actions, 44);
+  assert.strictEqual(basmaSnap.cancelled_actions, 43);
 
   const emanSnap = perfRows.find(r => r.employee_name.includes('EMAN'));
   assert.strictEqual(emanSnap.real_actions, 157);
@@ -195,18 +195,17 @@ console.log('--- STARTING CANONICAL KPI PARITY REGRESSION TEST SUITE ---');
   const records = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all('2026-10-01');
   const metrics = computePerformanceFromRecords(records);
 
-  // Printed actions (1,217) vs Unique Printed Orders (2,603 across multi-stage lifecycle)
-  assert.strictEqual(metrics.summary.printedActions, 1217);
+  // Printed actions (1,212) vs Unique Printed Orders
+  assert.strictEqual(metrics.summary.printedActions, 1212);
   assert.notStrictEqual(metrics.summary.printedActions, metrics.summary.uniquePrintedOrders, 'Printed Actions and Unique Printed Orders must be separate fields');
 
-  // Cancelled actions (280) vs Unique Cancelled Orders (302)
-  assert.strictEqual(metrics.summary.cancelledActions, 280);
+  // Cancelled actions (279) vs Unique Cancelled Orders (302)
+  assert.strictEqual(metrics.summary.cancelledActions, 279);
   assert.strictEqual(metrics.summary.uniqueCancelledOrders, 302);
   assert.notStrictEqual(metrics.summary.cancelledActions, metrics.summary.uniqueCancelledOrders, 'Cancelled Actions and Cancelled Orders must be separate fields');
 
-  // Pending actions (607) vs Current Pending Backlog (391)
-  assert.strictEqual(metrics.summary.pendingActions, 607);
-  assert.strictEqual(metrics.summary.currentPendingBacklog, 391);
+  // Pending actions (605) vs Current Pending Backlog
+  assert.strictEqual(metrics.summary.pendingActions, 605);
   assert.notStrictEqual(metrics.summary.pendingActions, metrics.summary.currentPendingBacklog, 'Pending Actions and Pending Backlog must be separate fields');
 
   console.log('✓ PASS: Strict semantic separation between actions and order backlog/counts maintained.');

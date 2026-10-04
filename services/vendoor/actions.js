@@ -176,7 +176,7 @@ export const isProductiveVendoorAction = isValidProductiveAction;
 /**
  * Canonical status extractor for universal normalization across Vendoor logs & SQL queries.
  * Maps any Arabic / English action or status string to standard canonical status:
- * 'Printed' | 'Pending' | 'Cancelled' | 'Processing' | 'Delivered' | 'Shipping' | 'Alt Phone' | 'Action Recorded'
+ * 'Printed' | 'Pending' | 'Cancelled' | 'Processing' | 'Delivered' | 'Shipping' | 'Collected' | 'New' | 'Alt Phone' | 'Action Recorded'
  */
 export function extractCanonicalStatus(actionText, statusText = '') {
   const combined = `${actionText || ''} ${statusText || ''}`.trim();
@@ -185,6 +185,21 @@ export function extractCanonicalStatus(actionText, statusText = '') {
   // Notes and remarks are strictly non-status events and must never be treated as status transitions
   if (/ملاحظة|ملاحظه|note/i.test(combined)) {
     return 'Action Recorded';
+  }
+
+  // Check for target state in transition "من ... إلى (Target)"
+  const toMatch = combined.match(/(?:إلى|الى|to)\s*['"]?([A-Za-z \u0600-\u06FF]+)['"]?\s*$/i);
+  const targetText = toMatch ? toMatch[1].trim() : '';
+
+  if (targetText) {
+    if (/cancel|ملغي|إلغاء|الغاء|رفض|مرتجع|reject|refused/i.test(targetText)) return 'Cancelled';
+    if (/print|طبع|طباعة/i.test(targetText)) return 'Printed';
+    if (/pending|معلق|قيد.*الانتظار/i.test(targetText)) return 'Pending';
+    if (/processing|تجهيز|قيد.*التجهيز/i.test(targetText)) return 'Processing';
+    if (/delivered|تسليم|تم.*التسليم/i.test(targetText)) return 'Delivered';
+    if (/shipping|شحن/i.test(targetText)) return 'Shipping';
+    if (/collected|تحصيل|تم.*التحصيل/i.test(targetText)) return 'Collected';
+    if (/new|جديد/i.test(targetText)) return 'New';
   }
 
   if (/cancel|ملغي|إلغاء|الغاء|رفض|مرتجع|reject|refused/i.test(combined)) {
@@ -204,6 +219,12 @@ export function extractCanonicalStatus(actionText, statusText = '') {
   }
   if (/shipping|شحن/i.test(combined)) {
     return 'Shipping';
+  }
+  if (/collected|تحصيل|تم.*التحصيل/i.test(combined)) {
+    return 'Collected';
+  }
+  if (/أضاف.*اوردر|اضاف.*اوردر|انشاء.*اوردر|إنشاء.*اوردر|اضافة.*اوردر|ايزي.*اوردر/i.test(combined)) {
+    return 'New';
   }
   if (/alt.*phone|رقم.*بديل|هاتف.*بديل|تليفون.*بديل|رقم.*هاتف.*آخر|رقم.*هاتف.*اخر/i.test(combined)) {
     return 'Alt Phone';

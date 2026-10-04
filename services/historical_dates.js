@@ -8,10 +8,13 @@
 
 import { db } from '../db/index.js';
 import { getCairoBusinessDate } from './time_utils.js';
+import { isCsEmployee } from './parser.js';
 import { getVendoorDataSource } from './vendoor/adapter.js';
 import { ensureAuthenticatedVendoorSession, performVendoorAutoLogin } from './vendoor/auth.js';
 import { computePerformanceFromRecords, savePerformanceSnapshotToDB } from './performance.js';
 import { createSyncRunId, recordSyncRun } from './vendoor/orchestrator.js';
+import { fetchVendoorLogsForDate, canonicalWorkDate } from './vendoor/logs.js';
+import { extractCanonicalStatus } from './vendoor/actions.js';
 
 let cachedAvailableDates = null;
 let cacheTimestamp = 0;
@@ -79,7 +82,7 @@ export function getHistoricalDateRegistryStatus(workDate) {
   const rawLogsCount = db.prepare('SELECT count(*) as c FROM raw_log_records WHERE work_date = ?').get(cleanDate)?.c || 0;
   const vendoorLogsCount = db.prepare('SELECT count(*) as c FROM vendoor_logs WHERE work_date = ?').get(cleanDate)?.c || 0;
   const cwoOrdersCount = db.prepare('SELECT count(*) as c FROM current_work_orders WHERE work_date = ?').get(cleanDate)?.c || 0;
-  const voOrdersCount = db.prepare('SELECT count(*) as c FROM vendoor_orders WHERE (business_date = ? OR source_date = ?) AND is_active = 1').get(cleanDate, cleanDate)?.c || 0;
+  const voOrdersCount = db.prepare('SELECT count(*) as c FROM vendoor_orders WHERE (business_date = ? OR source_date = ?)').get(cleanDate, cleanDate)?.c || 0;
   const totalOrders = Math.max(cwoOrdersCount, voOrdersCount);
   const totalLogs = Math.max(rawLogsCount, vendoorLogsCount);
 
@@ -423,24 +426,13 @@ export async function loadOrSyncHistoricalDate(workDate, options = {}) {
 
     console.log(`[HistoricalDateSync] Starting live Vendoor fetch for historical date ${cleanDate}...`);
 
-    let ds;
-    try {
-      ds = getVendoorDataSource(options.forceMode);
-      await ensureAuthenticatedVendoorSession();
-    } catch (authErr) {
-      console.warn(`[HistoricalDateSync] Session renewal: ${authErr.message}`);
-      try { await performVendoorAutoLogin(); } catch {}
-    }
-
     let logsResult = null;
     let fetchError = null;
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        logsResult = await ds.fetchLogs({
-          startDate: cleanDate,
-          endDate: cleanDate,
-          historical: true
+        logsResult = await fetchVendoorLogsForDate(cleanDate, {
+          forceMode: options.forceMode
         });
         break;
       } catch (err) {
@@ -481,9 +473,22 @@ export async function loadOrSyncHistoricalDate(workDate, options = {}) {
     }
 
     // 4. Idempotent Database Persistence into vendoor_logs and raw_log_records
-    const normalizedLogs = logsResult.normalizedLogs || logsResult.logs || [];
-    const pagesFetched = logsResult.chunks_requested || logsResult.pages_fetched || 1;
-    console.log(`[HistoricalDateSync] Ingesting ${normalizedLogs.length} normalized logs for ${cleanDate} (${pagesFetched} pages/chunks)...`);
+    const rawLogs = logsResult.normalizedLogs || logsResult.logs || [];
+    const pagesFetched = logsResult.pages_fetched || logsResult.chunks_requested || 1;
+    
+    // Exact Africa/Cairo date validation filter on every single record
+    const acceptedLogs = [];
+    let rejectedCount = 0;
+    for (const log of rawLogs) {
+      const recDate = canonicalWorkDate(log);
+      if (recDate === cleanDate) {
+        acceptedLogs.push(log);
+      } else {
+        rejectedCount++;
+      }
+    }
+
+    console.log(`[HistoricalDateSync] Ingesting ${acceptedLogs.length} validated logs for ${cleanDate} (${rejectedCount} rejected out-of-range, ${pagesFetched} pages/chunks)...`);
 
     const insertVendoorLogStmt = db.prepare(`
       INSERT INTO vendoor_logs (
@@ -507,7 +512,7 @@ export async function loadOrSyncHistoricalDate(workDate, options = {}) {
     `);
 
     const tx = db.transaction(() => {
-      for (const log of normalizedLogs) {
+      for (const log of acceptedLogs) {
         const orderCode = log.order_code || log.order || 'UNKNOWN';
         const rawName = log.employee_name || log.name || 'UNKNOWN';
         const actionText = log.action || '';
@@ -515,7 +520,7 @@ export async function loadOrSyncHistoricalDate(workDate, options = {}) {
         const actionClassification = log.action_classification || 'UNKNOWN';
         const isProductive = log.is_productive ? 1 : 0;
         const matchedEmpId = log.matched_employee_id || null;
-        const isCS = log.is_cs !== undefined ? (log.is_cs ? 1 : 0) : 1;
+        const isCS = isCsEmployee({ name: rawName, employee_name: rawName }) ? 1 : 0;
 
         insertVendoorLogStmt.run(
           rawName, orderCode, actionText, actionClassification,
@@ -545,6 +550,7 @@ export async function loadOrSyncHistoricalDate(workDate, options = {}) {
       SET data_availability = 'READY',
           sync_status = 'COMPLETED',
           logs_available = 1,
+          orders_available = 1,
           metrics_available = 1,
           snapshots_available = 1,
           record_count = ?,
@@ -566,10 +572,10 @@ export async function loadOrSyncHistoricalDate(workDate, options = {}) {
       start_date: cleanDate,
       end_date: cleanDate,
       status: 'SUCCESS',
-      records_fetched: normalizedLogs.length,
-      records_accepted: records.length,
-      records_duplicated: 0,
-      records_rejected: 0,
+      records_fetched: rawLogs.length,
+      records_accepted: acceptedLogs.length,
+      records_duplicated: logsResult.duplicates_removed || 0,
+      records_rejected: rejectedCount + (logsResult.rows_rejected || 0),
       duration_ms: Date.now() - startTime,
       summary_json: JSON.stringify(metrics.summary),
       error_safe: null
@@ -606,50 +612,11 @@ export function getHistoricalDayOverview(workDate) {
     throw new Error(`Invalid workDate: ${workDate}. Expected format YYYY-MM-DD`);
   }
 
-  // 1. Orders resolution
-  let ordersSummary = db.prepare(`
-    SELECT 
-      COUNT(*) as total_orders,
-      COUNT(DISTINCT account) as accounts_count,
-      SUM(CASE WHEN status = 'New' THEN 1 ELSE 0 END) as new_count,
-      SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) as pending_count
-    FROM current_work_orders
-    WHERE work_date = ?
-  `).get(cleanDate);
-
-  let source = 'current_work_orders';
-
-  if (!ordersSummary || ordersSummary.total_orders === 0) {
-    const allocSummary = db.prepare(`
-      SELECT 
-        COUNT(DISTINCT order_code) as total_orders,
-        COUNT(DISTINCT account) as accounts_count,
-        SUM(CASE WHEN LOWER(TRIM(status)) = 'new' THEN 1 ELSE 0 END) as new_count,
-        SUM(CASE WHEN LOWER(TRIM(status)) = 'pending' THEN 1 ELSE 0 END) as pending_count
-      FROM order_level_allocations
-      WHERE allocation_date = ?
-    `).get(cleanDate);
-
-    if (allocSummary && allocSummary.total_orders > 0) {
-      ordersSummary = allocSummary;
-      source = 'order_level_allocations';
-    } else {
-      const voSummary = db.prepare(`
-        SELECT 
-          COUNT(DISTINCT order_code) as total_orders,
-          COUNT(DISTINCT account) as accounts_count,
-          SUM(CASE WHEN LOWER(TRIM(COALESCE(active_status, status))) = 'new' THEN 1 ELSE 0 END) as new_count,
-          SUM(CASE WHEN LOWER(TRIM(COALESCE(active_status, status))) = 'pending' THEN 1 ELSE 0 END) as pending_count
-        FROM vendoor_orders
-        WHERE (business_date = ? OR source_date = ?) AND is_active = 1
-      `).get(cleanDate, cleanDate);
-
-      if (voSummary && voSummary.total_orders > 0) {
-        ordersSummary = voSummary;
-        source = 'vendoor_orders';
-      }
-    }
-  }
+  // 1. Orders resolution via single canonical source
+  const allOrders = getHistoricalOrdersForDate(cleanDate);
+  const accountsSet = new Set(allOrders.map(o => o.account));
+  const newCount = allOrders.filter(o => String(o.status || '').toLowerCase() === 'new' || String(o.status || '').includes('جديد')).length;
+  const pendingCount = allOrders.filter(o => String(o.status || '').toLowerCase() === 'pending' || String(o.status || '').includes('معلق')).length;
 
   // 2. Working team resolution
   const teamRow = db.prepare(`
@@ -687,16 +654,16 @@ export function getHistoricalDayOverview(workDate) {
   `).get(cleanDate, cleanDate, cleanDate);
   const completedCount = compRow ? compRow.completed_count : 0;
 
-  const totalOrders = ordersSummary ? (ordersSummary.total_orders || 0) : 0;
+  const totalOrders = allOrders.length;
   const unallocatedCount = Math.max(0, totalOrders - allocatedCount);
 
   return {
     work_date: cleanDate,
-    source,
+    source: 'canonical_historical_resolver',
     total_orders: totalOrders,
-    accounts_count: ordersSummary ? (ordersSummary.accounts_count || 0) : 0,
-    new_count: ordersSummary ? (ordersSummary.new_count || 0) : 0,
-    pending_count: ordersSummary ? (ordersSummary.pending_count || 0) : 0,
+    accounts_count: accountsSet.size,
+    new_count: newCount,
+    pending_count: pendingCount,
     working_team_count: teamCount,
     working_team_source: teamSource,
     allocated_count: allocatedCount,
@@ -706,97 +673,35 @@ export function getHistoricalDayOverview(workDate) {
 }
 
 /**
- * Resolves order list for a historical date using canonical fallback order
+ * Resolves order list for a historical date using canonical single source
  */
 export function getHistoricalOrdersList(workDate, options = {}) {
   const cleanDate = String(workDate || '').trim();
   const { account, status, search, limit = 100, offset = 0 } = options;
 
-  // 1. Try current_work_orders first
-  const cwoCheck = db.prepare('SELECT COUNT(*) as c FROM current_work_orders WHERE work_date = ?').get(cleanDate);
-  if (cwoCheck && cwoCheck.c > 0) {
-    let sql = 'SELECT id, order_code, account, status, order_date, source_file_slot, work_state, assigned_employee_id, assigned_employee_name, tracking_id FROM current_work_orders WHERE work_date = ?';
-    const params = [cleanDate];
+  let allOrders = getHistoricalOrdersForDate(cleanDate);
 
-    if (account) { sql += ' AND account = ?'; params.push(account); }
-    if (status) { sql += ' AND status = ?'; params.push(status); }
-    if (search) { sql += ' AND (order_code LIKE ? OR account LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
-
-    const countSql = sql.replace('SELECT id, order_code, account, status, order_date, source_file_slot, work_state, assigned_employee_id, assigned_employee_name, tracking_id', 'SELECT COUNT(*) as total');
-    const total = db.prepare(countSql).get(...params).total;
-
-    sql += ' ORDER BY account ASC, order_code ASC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
-
-    return {
-      work_date: cleanDate,
-      source: 'current_work_orders',
-      total,
-      limit,
-      offset,
-      orders: db.prepare(sql).all(...params)
-    };
+  if (account) {
+    allOrders = allOrders.filter(o => String(o.account || '').toLowerCase() === String(account).toLowerCase());
+  }
+  if (status) {
+    allOrders = allOrders.filter(o => String(o.status || '').toLowerCase() === String(status).toLowerCase());
+  }
+  if (search) {
+    const s = String(search).toLowerCase();
+    allOrders = allOrders.filter(o => String(o.order_code || '').toLowerCase().includes(s) || String(o.account || '').toLowerCase().includes(s));
   }
 
-  // 2. Fallback to order_level_allocations
-  const allocCheck = db.prepare('SELECT COUNT(*) as c FROM order_level_allocations WHERE allocation_date = ?').get(cleanDate);
-  if (allocCheck && allocCheck.c > 0) {
-    let sql = 'SELECT id, order_code, account, status, allocation_date as order_date, 1 as source_file_slot, work_state, employee_id as assigned_employee_id, employee_name as assigned_employee_name, tracking_id FROM order_level_allocations WHERE allocation_date = ?';
-    const params = [cleanDate];
-
-    if (account) { sql += ' AND account = ?'; params.push(account); }
-    if (status) { sql += ' AND status = ?'; params.push(status); }
-    if (search) { sql += ' AND (order_code LIKE ? OR account LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
-
-    const countSql = sql.replace('SELECT id, order_code, account, status, allocation_date as order_date, 1 as source_file_slot, work_state, employee_id as assigned_employee_id, employee_name as assigned_employee_name, tracking_id', 'SELECT COUNT(*) as total');
-    const total = db.prepare(countSql).get(...params).total;
-
-    sql += ' ORDER BY account ASC, order_code ASC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
-
-    return {
-      work_date: cleanDate,
-      source: 'order_level_allocations',
-      total,
-      limit,
-      offset,
-      orders: db.prepare(sql).all(...params)
-    };
-  }
-
-  // 3. Fallback to vendoor_orders
-  const voCheck = db.prepare('SELECT COUNT(*) as c FROM vendoor_orders WHERE (business_date = ? OR source_date = ?) AND is_active = 1').get(cleanDate, cleanDate);
-  if (voCheck && voCheck.c > 0) {
-    let sql = 'SELECT id, order_code, account, COALESCE(active_status, status) as status, COALESCE(source_date, business_date) as order_date, 1 as source_file_slot, "UNASSIGNED" as work_state, null as assigned_employee_id, "UNASSIGNED" as assigned_employee_name, order_code as tracking_id FROM vendoor_orders WHERE (business_date = ? OR source_date = ?) AND is_active = 1';
-    const params = [cleanDate, cleanDate];
-
-    if (account) { sql += ' AND account = ?'; params.push(account); }
-    if (status) { sql += ' AND (status = ? OR active_status = ?)'; params.push(status, status); }
-    if (search) { sql += ' AND (order_code LIKE ? OR account LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
-
-    const countSql = sql.replace('SELECT id, order_code, account, COALESCE(active_status, status) as status, COALESCE(source_date, business_date) as order_date, 1 as source_file_slot, "UNASSIGNED" as work_state, null as assigned_employee_id, "UNASSIGNED" as assigned_employee_name, order_code as tracking_id', 'SELECT COUNT(*) as total');
-    const total = db.prepare(countSql).get(...params).total;
-
-    sql += ' ORDER BY account ASC, order_code ASC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
-
-    return {
-      work_date: cleanDate,
-      source: 'vendoor_orders',
-      total,
-      limit,
-      offset,
-      orders: db.prepare(sql).all(...params)
-    };
-  }
+  const total = allOrders.length;
+  const paged = allOrders.slice(offset, offset + limit);
 
   return {
     work_date: cleanDate,
-    source: 'empty',
-    total: 0,
+    source: 'canonical_historical_resolver',
+    total,
     limit,
     offset,
-    orders: []
+    orders: paged
   };
 }
 
@@ -813,43 +718,156 @@ export function getHistoricalOrdersForDate(workDate) {
     throw new Error(`Invalid workDate: ${workDate}. Expected format YYYY-MM-DD`);
   }
 
-  // 1. Check current_work_orders scoped by work_date
-  const cwoOrders = db.prepare(`
-    SELECT id, order_code, account, status, order_date, source_file_slot, work_state, assigned_employee_id, assigned_employee_name, tracking_id
-    FROM current_work_orders
-    WHERE work_date = ?
-    ORDER BY account ASC, order_code ASC
-  `).all(cleanDate);
+  const ordersMap = new Map();
 
-  if (cwoOrders && cwoOrders.length > 0) {
-    return cwoOrders;
+  // 1. Check vendoor_orders specifically tied to this date (source_date or business_date)
+  const voOrders = db.prepare(`
+    SELECT 
+      id, 
+      order_code, 
+      account, 
+      COALESCE(active_status, status) as status, 
+      COALESCE(source_date, business_date) as order_date, 
+      1 as source_file_slot, 
+      'UNASSIGNED' as work_state, 
+      null as assigned_employee_id, 
+      'UNASSIGNED' as assigned_employee_name, 
+      order_code as tracking_id
+    FROM vendoor_orders
+    WHERE (source_date = ? OR business_date = ?)
+      AND COALESCE(source_date, business_date) IS NOT NULL
+      AND TRIM(COALESCE(source_date, business_date)) != ''
+    ORDER BY account ASC, order_code ASC
+  `).all(cleanDate, cleanDate);
+
+  for (const vo of voOrders) {
+    ordersMap.set(vo.order_code, {
+      id: vo.id,
+      order_code: vo.order_code,
+      account: vo.account || 'General Account',
+      status: vo.status || 'Pending',
+      order_date: cleanDate,
+      source_file_slot: vo.source_file_slot || 1,
+      work_state: vo.work_state || 'UNASSIGNED',
+      assigned_employee_id: vo.assigned_employee_id || null,
+      assigned_employee_name: vo.assigned_employee_name || 'UNASSIGNED',
+      tracking_id: vo.tracking_id || vo.order_code
+    });
   }
 
-  // 2. Fallback to order_level_allocations scoped by allocation_date
+  // 2. Check current_work_orders strictly scoped by work_date or order_date matching cleanDate
+  const cwoOrders = db.prepare(`
+    SELECT 
+      id, 
+      order_code, 
+      account, 
+      status, 
+      COALESCE(order_date, work_date) as order_date, 
+      source_file_slot, 
+      work_state, 
+      assigned_employee_id, 
+      assigned_employee_name, 
+      tracking_id
+    FROM current_work_orders
+    WHERE (order_date = ? OR (work_date = ? AND order_date IS NULL))
+      AND COALESCE(order_date, work_date) IS NOT NULL
+      AND TRIM(COALESCE(order_date, work_date)) != ''
+    ORDER BY account ASC, order_code ASC
+  `).all(cleanDate, cleanDate);
+
+  for (const cwo of cwoOrders) {
+    if (!ordersMap.has(cwo.order_code)) {
+      ordersMap.set(cwo.order_code, {
+        id: cwo.id,
+        order_code: cwo.order_code,
+        account: cwo.account || 'General Account',
+        status: cwo.status || 'New',
+        order_date: cleanDate,
+        source_file_slot: cwo.source_file_slot || 1,
+        work_state: cwo.work_state || 'UNASSIGNED',
+        assigned_employee_id: cwo.assigned_employee_id || null,
+        assigned_employee_name: cwo.assigned_employee_name || 'UNASSIGNED',
+        tracking_id: cwo.tracking_id || cwo.order_code
+      });
+    }
+  }
+
+  // 3. Fallback to order_level_allocations scoped by allocation_date
   const allocOrders = db.prepare(`
-    SELECT id, order_code, account, status, allocation_date as order_date, 1 as source_file_slot, work_state, employee_id as assigned_employee_id, employee_name as assigned_employee_name, tracking_id
+    SELECT 
+      id, 
+      order_code, 
+      account, 
+      status, 
+      allocation_date as order_date, 
+      1 as source_file_slot, 
+      work_state, 
+      employee_id as assigned_employee_id, 
+      employee_name as assigned_employee_name, 
+      tracking_id
     FROM order_level_allocations
     WHERE allocation_date = ?
     ORDER BY account ASC, order_code ASC
   `).all(cleanDate);
 
-  if (allocOrders && allocOrders.length > 0) {
-    return allocOrders;
+  for (const ao of allocOrders) {
+    if (!ordersMap.has(ao.order_code)) {
+      ordersMap.set(ao.order_code, {
+        id: ao.id,
+        order_code: ao.order_code,
+        account: ao.account || 'General Account',
+        status: ao.status || 'New',
+        order_date: cleanDate,
+        source_file_slot: 1,
+        work_state: ao.work_state || 'ASSIGNED',
+        assigned_employee_id: ao.assigned_employee_id || null,
+        assigned_employee_name: ao.assigned_employee_name || 'UNASSIGNED',
+        tracking_id: ao.tracking_id || ao.order_code
+      });
+    }
   }
 
-  // 3. Fallback to vendoor_orders scoped by business_date or source_date
-  const voOrders = db.prepare(`
-    SELECT id, order_code, account, COALESCE(active_status, status) as status, COALESCE(source_date, business_date) as order_date, 1 as source_file_slot, 'UNASSIGNED' as work_state, null as assigned_employee_id, 'UNASSIGNED' as assigned_employee_name, order_code as tracking_id
-    FROM vendoor_orders
-    WHERE (business_date = ? OR source_date = ?) AND is_active = 1
-    ORDER BY account ASC, order_code ASC
-  `).all(cleanDate, cleanDate);
+  // 4. Derive from date-scoped logs if any orders are present in logs
+  const rawLogs = db.prepare(`
+    SELECT id, order_code, employee_name, action, status, event_datetime
+    FROM raw_log_records
+    WHERE work_date = ? AND order_code IS NOT NULL AND TRIM(order_code) != '' AND order_code != 'UNKNOWN'
+    ORDER BY event_datetime ASC, id ASC
+  `).all(cleanDate);
 
-  if (voOrders && voOrders.length > 0) {
-    return voOrders;
+  if (rawLogs && rawLogs.length > 0) {
+    for (const log of rawLogs) {
+      const code = log.order_code;
+      const derivedStatus = extractCanonicalStatus(log.action, log.status);
+      if (!ordersMap.has(code)) {
+        ordersMap.set(code, {
+          id: log.id,
+          order_code: code,
+          account: 'General Account',
+          status: derivedStatus,
+          order_date: cleanDate,
+          source_file_slot: 1,
+          work_state: 'COMPLETED',
+          assigned_employee_id: null,
+          assigned_employee_name: log.employee_name || 'UNASSIGNED',
+          tracking_id: code,
+          first_action_time: log.event_datetime,
+          last_action_time: log.event_datetime
+        });
+      } else {
+        const existing = ordersMap.get(code);
+        if (derivedStatus && derivedStatus !== 'Action Recorded') {
+          existing.status = derivedStatus;
+        }
+        existing.last_action_time = log.event_datetime;
+        if (log.employee_name) {
+          existing.assigned_employee_name = log.employee_name;
+        }
+      }
+    }
   }
 
-  return [];
+  return Array.from(ordersMap.values());
 }
 
 /**

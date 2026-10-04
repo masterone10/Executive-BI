@@ -379,6 +379,9 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
   // Ensure test date data
   db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(testDate);
   db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(testDate);
+  db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(testDate);
+  db.prepare('DELETE FROM vendoor_orders WHERE business_date = ? OR source_date = ?').run(testDate, testDate);
+  db.prepare('DELETE FROM order_level_allocations WHERE allocation_date = ?').run(testDate);
 
   // Insert an employee if not exists
   let emp = db.prepare("SELECT id FROM employees WHERE department = 'CS' AND active = 1 LIMIT 1").get();
@@ -790,6 +793,14 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     assert.strictEqual(baseData.fromCS, 1219, 'Baseline fromCS should be 1219');
 
     // 2. Query empty historical date: 2026-09-06
+    db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run('2026-09-06');
+    db.prepare('DELETE FROM vendoor_logs WHERE work_date = ?').run('2026-09-06');
+    db.prepare('DELETE FROM daily_metrics_snapshots WHERE work_date = ?').run('2026-09-06');
+    db.prepare('DELETE FROM performance_snapshots WHERE date = ?').run('2026-09-06');
+    db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run('2026-09-06');
+    db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run('2026-09-06');
+    db.prepare('DELETE FROM vendoor_orders WHERE business_date = ? OR source_date = ?').run('2026-09-06', '2026-09-06');
+
     const emptyRes = await fetch(`${baseUrl}/api/data?date=2026-09-06`);
     assert.strictEqual(emptyRes.status, 200);
     const emptyData = await emptyRes.json();

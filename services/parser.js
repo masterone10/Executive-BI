@@ -4,7 +4,7 @@ import { db } from '../db/index.js';
 export const KNOWN_STATUSES = new Set(['Printed', 'Pending', 'Canceled', 'Cancelled', 'Processing']);
 export const STATUS_RE = /(?:الى|إلى)\s*'?([A-Za-z][A-Za-z ]*?)'?\s*$/;
 export const ADDED_RE = /أضاف\s*ا?أ?وردر|اضاف\s*ا?أ?وردر|انشاء\s*ا?أ?وردر|إنشاء\s*ا?أ?وردر|اضافة\s*ا?أ?وردر/;
-export const ALT_RE = /التليفون\s*البديل|رقم\s*بديل|هاتف\s*بديل|موبايل\s*بديل|رقم\s*هاتف\s*آخر|رقم\s*هاتف\s*اخر|رقم\s*تليفون\s*آخر|رقم\s*تليفون\s*اخر|phone2|alt.*phone/i;
+export const ALT_RE = /التليفون\s*البديل|الهاتف\s*البديل|الموبايل\s*البديل|رقم\s*بديل|هاتف\s*بديل|موبايل\s*بديل|رقم\s*(?:هاتف|تليفون|موبايل)?\s*(?:ال)?بديل|رقم\s*هاتف\s*آخر|رقم\s*هاتف\s*اخر|رقم\s*تليفون\s*آخر|رقم\s*تليفون\s*اخر|phone2|alt.*phone/i;
 
 export const CANONICAL_TIMEZONE = 'Africa/Cairo';
 

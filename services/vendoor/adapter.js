@@ -9,7 +9,7 @@
 
 import { fetchVendoorOrdersPage, fetchAllVendoorOrders } from './orders.js';
 import { exportAndParseVendoorOrders, mapStatusToCategoryId } from './export_sync.js';
-import { fetchVendoorLogsRange, isValidISODate } from './logs.js';
+import { fetchVendoorLogsRange, fetchVendoorLogsForDate, isValidISODate, canonicalWorkDate } from './logs.js';
 import { getVendoorConfig, getSafeVendoorStatus } from './auth.js';
 import { summarizeNormalizedLogs } from './normalize.js';
 
@@ -84,6 +84,11 @@ export class LiveVendoorDataSource extends VendoorDataSource {
   }
 
   async fetchLogs(options = {}) {
+    const startDate = options.startDate || options.start_date || '';
+    const endDate = options.endDate || options.end_date || startDate;
+    if (startDate && endDate && startDate === endDate) {
+      return await fetchVendoorLogsForDate(startDate, options);
+    }
     return await fetchVendoorLogsRange(options);
   }
 }
@@ -254,7 +259,11 @@ export class MockVendoorDataSource extends VendoorDataSource {
       curr.setUTCDate(curr.getUTCDate() + 1);
     }
 
-    const summary = summarizeNormalizedLogs(mockLogs);
+    const acceptedLogs = (startDate === endDate)
+      ? mockLogs.filter(log => (canonicalWorkDate ? canonicalWorkDate(log) : log.date) === startDate)
+      : mockLogs;
+
+    const summary = summarizeNormalizedLogs(acceptedLogs);
 
     return {
       success: true,
@@ -263,14 +272,23 @@ export class MockVendoorDataSource extends VendoorDataSource {
       http_status: 200,
       duration_ms: 18,
       content_type: 'application/vnd.ms-excel (mocked)',
-      file_size_bytes: mockLogs.length * 200,
+      file_size_bytes: acceptedLogs.length * 200,
+      pages_fetched: 1,
+      pages_expected: 1,
+      rows_fetched: mockLogs.length,
+      rows_accepted: acceptedLogs.length,
+      rows_rejected: mockLogs.length - acceptedLogs.length,
+      duplicates_removed: 0,
       requested_range: {
+        startDate,
+        endDate,
         start_date: startDate,
         end_date: endDate
       },
       summary,
-      sample_rows: mockLogs.slice(0, 10),
-      logs: mockLogs
+      sample_rows: acceptedLogs.slice(0, 10),
+      logs: acceptedLogs,
+      normalizedLogs: acceptedLogs
     };
   }
 }

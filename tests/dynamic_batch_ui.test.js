@@ -22,6 +22,10 @@ test('Dynamic Multi-File Staging and Detailed Account Data Suite', async (t) => 
   db.prepare('DELETE FROM current_work_pool_summary WHERE work_date = ?').run(testDate);
   db.prepare('DELETE FROM allocation_items WHERE allocation_header_id IN (SELECT id FROM allocation_headers WHERE allocation_date = ?)').run(testDate);
   db.prepare('DELETE FROM allocation_headers WHERE allocation_date = ?').run(testDate);
+  db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(testDate);
+  db.prepare('DELETE FROM vendoor_logs WHERE work_date = ?').run(testDate);
+  db.prepare('DELETE FROM vendoor_orders WHERE business_date = ? OR source_date = ?').run(testDate, testDate);
+  db.prepare('DELETE FROM order_level_allocations WHERE allocation_date = ?').run(testDate);
 
   await t.test('1. Stage File #1 (300 orders) and File #2 (290 orders) -> 590 Unique Orders', () => {
     // Generate 300 orders for File 1 across Account Alpha and Account Beta

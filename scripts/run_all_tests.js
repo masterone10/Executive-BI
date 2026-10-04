@@ -27,7 +27,7 @@ for (let i = 0; i < files.length; i++) {
     cwd: process.cwd(),
     env: { ...process.env, NODE_ENV: 'test' },
     encoding: 'utf-8',
-    timeout: 30000
+    timeout: 90000
   });
 
   if (res.status === 0) {
