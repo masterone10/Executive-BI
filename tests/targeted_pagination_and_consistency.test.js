@@ -106,6 +106,8 @@ test('PROBLEM 2: Dashboard KPI Data-Scope Consistency from SQLite', async () => 
   db.prepare('DELETE FROM vendoor_orders WHERE source_date = ?').run(consistencyDate);
   db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(consistencyDate);
   db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(consistencyDate);
+  db.prepare('DELETE FROM daily_metrics_snapshots WHERE work_date = ?').run(consistencyDate);
+  db.prepare('DELETE FROM performance_snapshots WHERE date = ?').run(consistencyDate);
 
   // 1. When empty, returns clean 0s with exists: false (NEVER data.json 40,410 / 29,671)
   const emptyDashboard = getOperationalDashboardData(consistencyDate);
@@ -171,6 +173,8 @@ test('PROBLEM 2: Dashboard KPI Data-Scope Consistency from SQLite', async () => 
   // Clean up
   db.prepare('DELETE FROM current_work_orders WHERE work_date = ?').run(consistencyDate);
   db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(consistencyDate);
+  db.prepare('DELETE FROM daily_metrics_snapshots WHERE work_date = ?').run(consistencyDate);
+  db.prepare('DELETE FROM performance_snapshots WHERE date = ?').run(consistencyDate);
 });
 
 test('PROBLEM 3: Smart Dispatcher (Adds eligible work, Never steals work)', () => {

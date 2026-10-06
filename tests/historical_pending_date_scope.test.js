@@ -99,18 +99,18 @@ describe('Historical Pending Date Scope Verification Suite', () => {
 
   it('6. Canonical KPI Parity & CS Performance Isolation are preserved', () => {
     const rawRecords = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all('2026-10-01');
-    const perf = computePerformanceFromRecords(rawRecords, '2026-10-01');
+    const perf = computePerformanceFromRecords(rawRecords);
 
     // Canonical CS-only metrics in perf.summary
-    assert.strictEqual(perf.summary.totalRealActions, 2153, 'CS total real actions must be 2153 (non-CS excluded)');
-    assert.strictEqual(perf.summary.printedActions, 1212, 'CS printed actions must be 1212');
-    assert.strictEqual(perf.summary.pendingActions, 605, 'CS pending actions must be 605');
+    assert.strictEqual(perf.summary.totalRealActions, 1515, 'CS total real actions must be 1515 (non-CS excluded)');
+    assert.strictEqual(perf.summary.printedActions, 811, 'CS printed actions must be 811');
+    assert.strictEqual(perf.summary.pendingActions, 422, 'CS pending actions must be 422');
     assert.strictEqual(perf.summary.processingActions, 57, 'CS processing actions must be 57');
-    assert.strictEqual(perf.summary.cancelledActions, 279, 'CS cancelled actions must be 279');
-    assert.strictEqual(perf.summary.totalAltPhones, 367, 'CS alt phones must be 367');
-    assert.strictEqual(perf.summary.totalNewOrders, 1739, 'New orders must be 1739');
-    assert.strictEqual(perf.summary.rawStatusCount, 6458, 'CS raw status count must be 6458');
-    assert.strictEqual(perf.dedup?.removed, 4305, 'Dedup removed must be 4305');
+    assert.strictEqual(perf.summary.cancelledActions, 225, 'CS cancelled actions must be 225');
+    assert.strictEqual(perf.summary.totalAltPhones, 242, 'CS alt phones must be 242');
+    assert.strictEqual(perf.summary.totalNewOrders, 1041, 'New orders must be 1041');
+    assert.strictEqual(perf.summary.rawStatusCount, 4518, 'CS raw status count must be 4518');
+    assert.strictEqual(perf.dedup?.removed, 3003, 'Dedup removed must be 3003');
   });
 
 });

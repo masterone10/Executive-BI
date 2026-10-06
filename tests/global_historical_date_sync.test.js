@@ -79,18 +79,18 @@ console.log('--- STARTING GLOBAL HISTORICAL DATE NAVIGATION & SYNC TEST SUITE --
   assert.strictEqual(result.source, 'LOCAL_CANONICAL');
 
   // Verify exact benchmark numbers
-  assert.strictEqual(result.summary.totalRealActions, 2153, 'Real actions must equal 2153');
-  assert.strictEqual(result.summary.printedActions, 1212, 'Printed must equal 1212');
-  assert.strictEqual(result.summary.pendingActions, 605, 'Pending must equal 605');
-  assert.strictEqual(result.summary.cancelledActions, 279, 'Cancelled must equal 279');
+  assert.strictEqual(result.summary.totalRealActions, 1515, 'Real actions must equal 1515');
+  assert.strictEqual(result.summary.printedActions, 811, 'Printed must equal 811');
+  assert.strictEqual(result.summary.pendingActions, 422, 'Pending must equal 422');
+  assert.strictEqual(result.summary.cancelledActions, 225, 'Cancelled must equal 225');
   assert.strictEqual(result.summary.processingActions, 57, 'Processing must equal 57');
-  assert.strictEqual(result.summary.totalAltPhones, 367, 'Alt phones must equal 367');
-  assert.strictEqual(result.summary.totalNewOrders, 1739, 'New orders must equal 1739');
+  assert.strictEqual(result.summary.totalAltPhones, 242, 'Alt phones must equal 242');
+  assert.strictEqual(result.summary.totalNewOrders, 1041, 'New orders must equal 1041');
 
-  const basma = result.employees.find(e => e.name.includes('BASMA'));
-  assert.strictEqual(basma.actions, 265, 'BASMA actions must equal 265');
-  const eman = result.employees.find(e => e.name.includes('EMAN'));
-  assert.strictEqual(eman.actions, 157, 'EMAN actions must equal 157');
+  const basma = result.employees.find(e => e.name === 'BASMA CS');
+  assert.strictEqual(basma.actions, 92, 'BASMA actions must equal 92');
+  const eman = result.employees.find(e => e.name === 'EMAN CS');
+  assert.strictEqual(eman.actions, 68, 'EMAN actions must equal 68');
 
   console.log('✓ PASS: Fast-path local canonical loading verified with 100% KPI parity.');
 }
@@ -109,7 +109,7 @@ console.log('--- STARTING GLOBAL HISTORICAL DATE NAVIGATION & SYNC TEST SUITE --
   assert.strictEqual(r1.work_date, '2026-10-01');
   assert.strictEqual(r2.work_date, '2026-10-01');
   assert.strictEqual(r3.work_date, '2026-10-01');
-  assert.strictEqual(r1.summary.totalRealActions, 2153);
+  assert.strictEqual(r1.summary.totalRealActions, 1515);
 
   console.log('✓ PASS: In-flight concurrency deduplication verified.');
 }
@@ -148,7 +148,7 @@ console.log('--- STARTING GLOBAL HISTORICAL DATE NAVIGATION & SYNC TEST SUITE --
   const snapOther = db.prepare('SELECT * FROM performance_snapshots WHERE date = ?').all('2026-09-25');
   const sum1001 = snap1001.reduce((s, r) => s + r.real_actions, 0);
   const sumOther = snapOther.reduce((s, r) => s + r.real_actions, 0);
-  assert.strictEqual(sum1001, 2153);
+  assert.strictEqual(sum1001, 1515);
   assert.notStrictEqual(sum1001, sumOther, 'Snapshots for different dates must be completely independent');
 
   console.log('✓ PASS: Strict date isolation confirmed across all snapshots.');

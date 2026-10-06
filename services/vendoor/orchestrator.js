@@ -20,6 +20,7 @@ import { computePerformanceFromRecords, savePerformanceSnapshotToDB } from '../p
 import { isCsEmployee } from '../parser.js';
 import { attachEligibleArrivedOrders, getDispatcherConfig, getEffectiveWorkDate } from './dispatcher.js';
 import { getCairoBusinessDate } from '../time_utils.js';
+import { canonicalWorkDate } from './logs.js';
 import { syncAndRestoreObservedTeam } from '../working_team_ops.js';
 import { evaluateAndRecordOrderPhoneDuplicate, isQualifyingPhoneMutationAction } from '../employee_evaluation.js';
 
@@ -759,27 +760,28 @@ export async function syncVendoorLogs(options = {}) {
 
         actionCounts[classification.classification] = (actionCounts[classification.classification] || 0) + 1;
 
-        // Resolve authoritative business date using operational cutoff
-        const opDateObj = getOperationalBusinessDate(rawTs);
-        const resolvedWorkDate = opDateObj ? opDateObj.business_date : (log.date || startDate);
+        // Resolve authoritative business date (Africa/Cairo calendar date 00:00 - 23:59:59.999)
+        const canonDate = canonicalWorkDate(log);
+        const resolvedWorkDate = canonDate || (log.date ? log.date.slice(0, 10) : startDate);
         if (resolvedWorkDate) {
           datesToRecompute.add(resolvedWorkDate);
-        }
-
-        // Deterministic Identity Match
-        const identity = resolveEmployeeIdentity(log.employee_name, { persistIdentity: true });
-        if (identity.employee_id) {
-          matchedEmployees.add(identity.employee_name);
-        } else {
-          unmatchedEmployees.add(log.employee_name);
         }
 
         const vKey = `${log.order_code}|${log.employee_name}|${rawTs}|${rawAction}`;
         if (existingVendoorKeys.has(vKey)) {
           totalDuplicated++;
+          continue;
+        }
+
+        totalAccepted++;
+        existingVendoorKeys.add(vKey);
+
+        // Deterministic Identity Match for newly received record
+        const identity = resolveEmployeeIdentity(log.employee_name, { persistIdentity: true });
+        if (identity.employee_id) {
+          matchedEmployees.add(identity.employee_name);
         } else {
-          totalAccepted++;
-          existingVendoorKeys.add(vKey);
+          unmatchedEmployees.add(log.employee_name);
         }
 
         // 1. Insert into persistent vendoor_logs
@@ -817,13 +819,15 @@ export async function syncVendoorLogs(options = {}) {
 
     tx();
 
-    // Recompute canonical performance snapshots for all relevant dates
+    // Recompute canonical performance snapshots for all relevant dates ONLY when new records were accepted
     try {
-      for (const d of datesToRecompute) {
-        const records = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all(d);
-        if (records && records.length > 0) {
-          const metrics = computePerformanceFromRecords(records, d);
-          savePerformanceSnapshotToDB(d, metrics);
+      if (totalAccepted > 0) {
+        for (const d of datesToRecompute) {
+          const records = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all(d);
+          if (records && records.length > 0) {
+            const metrics = computePerformanceFromRecords(records, d);
+            savePerformanceSnapshotToDB(d, metrics);
+          }
         }
       }
     } catch (snapErr) {
@@ -832,8 +836,10 @@ export async function syncVendoorLogs(options = {}) {
 
     // Auto-restore observed working team from real Vendoor logs if no manual team exists
     try {
-      for (const d of datesToRecompute) {
-        syncAndRestoreObservedTeam(d);
+      if (totalAccepted > 0) {
+        for (const d of datesToRecompute) {
+          syncAndRestoreObservedTeam(d);
+        }
       }
     } catch (wtErr) {
       console.warn('[Vendoor Sync] Working team auto-restore notice:', wtErr.message);
@@ -1082,6 +1088,13 @@ export function getAutonomousPollerStatus() {
  */
 async function executeAutonomousOrdersCycle(forceMode) {
   if (pollerState.orders.isCycleActive) return;
+  const cfg = getVendoorConfig();
+  if (!forceMode && !cfg.hasCredentials && !cfg.mockMode) {
+    return;
+  }
+  if (pollerState.orders.backoffUntil && Date.now() < pollerState.orders.backoffUntil) {
+    return;
+  }
   pollerState.orders.isCycleActive = true;
   pollerState.orders.status = 'RUNNING';
 
@@ -1103,15 +1116,24 @@ async function executeAutonomousOrdersCycle(forceMode) {
       pollerState.orders.lastSuccessAt = new Date().toISOString();
       pollerState.orders.consecutiveErrors = 0;
       pollerState.orders.lastError = null;
+      pollerState.orders.backoffUntil = 0;
     } else {
       pollerState.orders.status = 'ERROR';
       pollerState.orders.consecutiveErrors++;
       pollerState.orders.lastError = ordersRes.error || 'Orders sync returned failure';
+      if (/rate.*exceed|rate_limited|429/i.test(String(ordersRes.error || ''))) {
+        pollerState.orders.backoffUntil = Date.now() + 180000;
+        console.warn('[Autonomous Vendoor Poller] Orders rate limited; backing off 3 minutes.');
+      }
     }
   } catch (err) {
     pollerState.orders.status = 'ERROR';
     pollerState.orders.consecutiveErrors++;
     pollerState.orders.lastError = err.message;
+    if (/rate.*exceed|rate_limited|429/i.test(String(err.message || ''))) {
+      pollerState.orders.backoffUntil = Date.now() + 180000;
+      console.warn('[Autonomous Vendoor Poller] Orders rate limited; backing off 3 minutes.');
+    }
     console.log('[Autonomous Vendoor Poller] Orders cycle status:', err.message);
   } finally {
     pollerState.orders.isCycleActive = false;
@@ -1123,6 +1145,13 @@ async function executeAutonomousOrdersCycle(forceMode) {
  */
 async function executeAutonomousLogsCycle(forceMode) {
   if (pollerState.logs.isCycleActive) return;
+  const cfg = getVendoorConfig();
+  if (!forceMode && !cfg.hasCredentials && !cfg.mockMode) {
+    return;
+  }
+  if (pollerState.logs.backoffUntil && Date.now() < pollerState.logs.backoffUntil) {
+    return;
+  }
   pollerState.logs.isCycleActive = true;
   pollerState.logs.status = 'RUNNING';
 
@@ -1143,15 +1172,24 @@ async function executeAutonomousLogsCycle(forceMode) {
       pollerState.logs.lastSuccessAt = new Date().toISOString();
       pollerState.logs.consecutiveErrors = 0;
       pollerState.logs.lastError = null;
+      pollerState.logs.backoffUntil = 0;
     } else {
       pollerState.logs.status = 'ERROR';
       pollerState.logs.consecutiveErrors++;
       pollerState.logs.lastError = logsRes.error || 'Logs sync returned failure';
+      if (/rate.*exceed|rate_limited|429/i.test(String(logsRes.error || ''))) {
+        pollerState.logs.backoffUntil = Date.now() + 180000;
+        console.warn('[Autonomous Vendoor Poller] Logs rate limited; backing off 3 minutes.');
+      }
     }
   } catch (err) {
     pollerState.logs.status = 'ERROR';
     pollerState.logs.consecutiveErrors++;
     pollerState.logs.lastError = err.message;
+    if (/rate.*exceed|rate_limited|429/i.test(String(err.message || ''))) {
+      pollerState.logs.backoffUntil = Date.now() + 180000;
+      console.warn('[Autonomous Vendoor Poller] Logs rate limited; backing off 3 minutes.');
+    }
     console.log('[Autonomous Vendoor Poller] Logs cycle status:', err.message);
   } finally {
     pollerState.logs.isCycleActive = false;
@@ -1160,11 +1198,11 @@ async function executeAutonomousLogsCycle(forceMode) {
 
 /**
  * Centralized Autonomous Poller for Orders & Logs
- * Fully decoupled pipelines with independent 30s timers and single-flight locks
+ * Fully decoupled pipelines with independent timers and single-flight locks
  */
 export function startAutonomousVendoorPoller(options = {}) {
-  const ordersIntervalMs = Math.max(10000, parseInt(options.ordersIntervalMs || options.intervalMs, 10) || 30000);
-  const logsIntervalMs = Math.max(10000, parseInt(options.logsIntervalMs || options.intervalMs, 10) || 30000);
+  const ordersIntervalMs = Math.max(10000, parseInt(options.ordersIntervalMs || options.intervalMs, 10) || 60000);
+  const logsIntervalMs = Math.max(10000, parseInt(options.logsIntervalMs || options.intervalMs, 10) || 120000);
 
   pollerState.orders.intervalMs = ordersIntervalMs;
   pollerState.logs.intervalMs = logsIntervalMs;
@@ -1181,12 +1219,15 @@ export function startAutonomousVendoorPoller(options = {}) {
   pollerState.orders.isRunning = true;
   pollerState.logs.isRunning = true;
 
-  // Run initial cycles immediately
-  executeAutonomousOrdersCycle(options.forceMode).catch(() => {});
-  // Slight 1.5s offset for initial logs run to prevent cookie race
+  // Defer initial cycles so server starts and health checks succeed immediately
+  const initialOrdersDelay = options.immediate ? 0 : 5000;
+  const initialLogsDelay = options.immediate ? 1500 : 15000;
+  setTimeout(() => {
+    executeAutonomousOrdersCycle(options.forceMode).catch(() => {});
+  }, initialOrdersDelay);
   setTimeout(() => {
     executeAutonomousLogsCycle(options.forceMode).catch(() => {});
-  }, 1500);
+  }, initialLogsDelay);
 
   // Decoupled independent interval timers
   pollerState.orders.timerId = setInterval(() => {

@@ -14,7 +14,8 @@
 import * as XLSX from 'xlsx';
 import { vendoorFetch, VendoorClientError } from './client.js';
 import { normalizeVendoorLogRow, summarizeNormalizedLogs } from './normalize.js';
-import { getCairoBusinessDate, parseCairoTimestamp } from '../time_utils.js';
+import { getCairoBusinessDate, parseCairoTimestamp, extractCairoDateTimeComponents } from '../time_utils.js';
+import { getVendoorConfig } from './auth.js';
 
 /**
  * Validate date format (YYYY-MM-DD)
@@ -159,6 +160,12 @@ async function fetchSingleLogsChunk(startDate, endDate) {
  * @param {number} [options.chunkDays=2] Max days per internal request chunk
  */
 export async function fetchVendoorLogsRange(options = {}) {
+  const cfg = getVendoorConfig();
+  if (options.forceMode === 'mock' || cfg.mockMode) {
+    const { MockVendoorDataSource } = await import('./adapter.js');
+    return new MockVendoorDataSource().fetchLogs(options);
+  }
+
   const startDate = options.startDate || options.start_date || '';
   const endDate = options.endDate || options.end_date || startDate;
 
@@ -246,6 +253,8 @@ export async function fetchVendoorLogsRange(options = {}) {
     content_type: lastContentType,
     file_size_bytes: totalSizeBytes,
     chunks_requested: chunks.length,
+    pages_fetched: chunks.length,
+    pages_expected: chunks.length,
     requested_range: {
       start_date: startDate,
       end_date: endDate
@@ -265,8 +274,12 @@ export async function fetchVendoorLogsRange(options = {}) {
  */
 export function canonicalWorkDate(record) {
   if (!record) return null;
-  const tsStr = record.timestamp_str || record.event_datetime || record.timestamp || record.date;
+  const tsStr = record.timestamp_str || record.event_datetime || record.timestamp || record.date || record.work_date;
   if (!tsStr) return null;
+  const comps = extractCairoDateTimeComponents(tsStr);
+  if (comps && comps.cairoDate) {
+    return comps.cairoDate;
+  }
   const dt = parseCairoTimestamp(tsStr);
   if (!dt || isNaN(dt.getTime())) {
     // If string already contains YYYY-MM-DD at the beginning

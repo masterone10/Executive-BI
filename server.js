@@ -960,35 +960,98 @@ app.get('/api/historical/date-status/:date', (req, res) => {
 });
 
 // Automated Historical Date Load & Vendoor Sync API
-app.post('/api/historical/load-date', async (req, res) => {
+app.all(['/api/historical/load-date', '/api/historical/select-date'], async (req, res) => {
   try {
-    const date = req.body.date || req.body.work_date || req.query.date;
-    const forceSync = req.body.force_sync === true || req.body.forceSync === true;
+    const date = req.body?.date || req.body?.work_date || req.query.date || req.query.work_date;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'date parameter is required (YYYY-MM-DD)' });
+    }
+    const forceSync = req.body?.force_sync === true || req.body?.forceSync === true || req.query.force_sync === 'true';
     const result = await loadOrSyncHistoricalDate(date, { forceSync });
-    res.json(result);
+    const dashboardData = getOperationalDashboardData(date);
+    res.json({
+      success: true,
+      work_date: date,
+      ...result,
+      dashboard: dashboardData
+    });
   } catch (err) {
-    console.error(`Error in /api/historical/load-date for ${req.body?.date}:`, err);
-    res.status(500).json({ success: false, error: err.message, work_date: req.body?.date });
+    console.error(`Error in /api/historical/select-date for ${req.body?.date || req.query?.date}:`, err);
+    res.status(500).json({ success: false, error: err.message, work_date: req.body?.date || req.query?.date });
   }
 });
 
 // Canonical Historical Orders Endpoint (Date-Scoped, Single Source of Truth)
-app.get(['/api/historical/:date/orders', '/api/orders/historical/:date'], (req, res) => {
+app.get(['/api/orders', '/api/historical/:date/orders', '/api/orders/historical/:date'], (req, res) => {
   try {
-    const orders = getHistoricalOrdersForDate(req.params.date);
-    res.json({ success: true, work_date: req.params.date, count: orders.length, orders });
+    const date = req.params.date || req.query.date || req.query.work_date || getEffectiveWorkDate();
+    const result = getHistoricalOrdersList(date, req.query);
+    res.json({ success: true, work_date: date, total: result.total, limit: result.limit, offset: result.offset, orders: result.orders });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message, work_date: req.params.date });
+    res.status(500).json({ success: false, error: err.message, work_date: req.params.date || req.query.date });
   }
 });
 
 // Canonical Historical Pending Orders Endpoint (Date-Scoped, Zero Live Queue Contamination)
-app.get(['/api/historical/:date/pending-orders', '/api/pending-orders/historical/:date'], (req, res) => {
+app.get(['/api/pending-orders', '/api/historical/:date/pending-orders', '/api/pending-orders/historical/:date'], (req, res) => {
   try {
-    const pendingOrders = getHistoricalPendingOrders(req.params.date);
-    res.json({ success: true, work_date: req.params.date, count: pendingOrders.length, pending_orders: pendingOrders });
+    const date = req.params.date || req.query.date || req.query.work_date;
+    if (date) {
+      const pendingOrders = getHistoricalPendingOrders(date);
+      return res.json({ success: true, work_date: date, count: pendingOrders.length, pending_orders: pendingOrders });
+    }
+    const livePending = getCurrentLivePendingOrders();
+    res.json({ success: true, mode: 'LIVE', count: livePending.length, pending_orders: livePending });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message, work_date: req.params.date });
+    res.status(500).json({ success: false, error: err.message, work_date: req.params.date || req.query.date });
+  }
+});
+
+// Canonical KPI Summary Endpoint (Date-Scoped)
+app.get(['/api/kpi', '/api/kpis'], (req, res) => {
+  try {
+    const date = req.query.date || req.query.work_date || getEffectiveWorkDate();
+    const data = getOperationalDashboardData(date);
+    res.json({
+      success: true,
+      work_date: date,
+      summary: data.summary || {
+        realActions: data.log_totals?.actions || 0,
+        printedActions: data.log_totals?.printed || 0,
+        pendingActions: data.log_totals?.pending || 0,
+        cancelledActions: data.log_totals?.cancelled || 0,
+        processingActions: data.log_totals?.processing || 0,
+        totalAltPhones: data.log_totals?.alt || 0,
+        totalNewOrders: data.hr?.tot_new || 0
+      },
+      log_totals: data.log_totals,
+      status_totals: data.status_totals,
+      team_cancel_rate: data.team_cancel_rate,
+      team_pending_rate: data.team_pending_rate,
+      dedup: data.dedup,
+      employees_count: (data.employees || []).length
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Canonical Employee Performance Breakdown Endpoint (Date-Scoped)
+app.get(['/api/employees/performance', '/api/performance/employees'], (req, res) => {
+  try {
+    const date = req.query.date || req.query.work_date || getEffectiveWorkDate();
+    const data = getOperationalDashboardData(date);
+    res.json({
+      success: true,
+      work_date: date,
+      employees: data.employees || [],
+      rankings: data.rankings || {},
+      top10Performers: data.top10Performers || [],
+      mostActive: data.mostActive || [],
+      topCSContributor: data.topCSContributor || null
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -1196,6 +1259,29 @@ app.get('/api/work/accounts-detailed', (req, res) => {
   } catch (err) {
     console.error('Error in /api/work/accounts-detailed:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Single unified endpoint to bundle all allocation workspace initialization data
+app.get('/api/work/allocation-bundle', (req, res) => {
+  try {
+    const date = req.query.date || getCairoBusinessDate();
+    const overview = getCurrentWorkOverview(date);
+    const accounts = getCurrentAccountsWithCounts(date);
+    const workingTeam = getWorkingTeam(date);
+    const allocRaw = getAllocationForDate(date);
+    const allocation = allocRaw ? { exists: true, ...allocRaw } : { exists: false, date, items: [], by_employee: [] };
+    res.json({
+      success: true,
+      date,
+      overview,
+      accounts,
+      workingTeam,
+      allocation
+    });
+  } catch (err) {
+    console.error('Error in /api/work/allocation-bundle:', err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -3921,8 +4007,12 @@ if (!isTestExecution) {
           console.log('[AUTONOMOUS] Initial Vendoor auto-login notice:', err.message);
         });
       }
-      startAutonomousVendoorPoller({ intervalMs: 30000, ordersIntervalMs: 30000, logsIntervalMs: 30000 });
-      console.log('[AUTONOMOUS] Decoupled 30-second background Vendoor poller initialized.');
+      if (cfg.hasCredentials || cfg.mockMode) {
+        startAutonomousVendoorPoller({ intervalMs: 60000, ordersIntervalMs: 60000, logsIntervalMs: 120000 });
+        console.log('[AUTONOMOUS] Decoupled background Vendoor poller initialized (Orders 60s, Logs 120s with rate-limit backoff).');
+      } else {
+        console.log('[AUTONOMOUS] Background Vendoor poller idle (no active credentials configured).');
+      }
     } catch (pollerErr) {
       console.log('[AUTONOMOUS] Poller init notice:', pollerErr.message);
     }
@@ -3930,11 +4020,25 @@ if (!isTestExecution) {
 
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-      console.warn(`[WARN] Port ${PORT} already in use; another instance may be running.`);
+      console.error(`[FATAL] Port ${PORT} already in use. Exiting so supervisor can restart cleanly.`);
+      process.exit(1);
     } else {
       console.error('[ERROR] Server listen error:', err);
+      process.exit(1);
     }
   });
+
+  const handleShutdown = (sig) => {
+    console.log(`[SHUTDOWN] Signal ${sig} received, terminating server cleanly...`);
+    try { stopAutonomousVendoorPoller(); } catch (_) {}
+    server.close(() => {
+      console.log('[SHUTDOWN] Server closed cleanly.');
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 3000).unref();
+  };
+  process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+  process.on('SIGINT', () => handleShutdown('SIGINT'));
 }
 
 export { app, db };

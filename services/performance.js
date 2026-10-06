@@ -72,17 +72,24 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
         } else {
           statusText = null;
         }
-      } else if (r.status && KNOWN_STATUSES.has(r.status === 'Canceled' ? 'Cancelled' : r.status) && (r.status.toLowerCase() === actionText.toLowerCase() || /حالة.*(?:الطلب|الاوردر|الطلب)|(?:order|status).*(?:change|update|transition)/i.test(actionText))) {
+      } else if (r.status && KNOWN_STATUSES.has(r.status === 'Canceled' ? 'Cancelled' : r.status)) {
         statusText = r.status === 'Canceled' ? 'Cancelled' : r.status;
       } else {
-        statusText = null;
+        const canonical = extractCanonicalStatus(actionText, r.status);
+        if (KNOWN_STATUSES.has(canonical)) {
+          statusText = canonical;
+        } else {
+          statusText = null;
+        }
       }
     } else {
       statusText = null;
     }
 
     let isCS = false;
-    if (r.is_cs === 0 || r.is_cs === false || r.isCS === false) {
+    if (r.is_cs === 1 || r.is_cs === true || r.isCS === true) {
+      isCS = true;
+    } else if (r.is_cs === 0 || r.is_cs === false || r.isCS === false) {
       isCS = false;
     } else {
       isCS = isCsEmployee({ name: rawName, employee_name: rawName, department: r.department }, dbEmployeesMap);

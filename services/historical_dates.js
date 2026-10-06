@@ -86,10 +86,22 @@ export function getHistoricalDateRegistryStatus(workDate) {
   const totalOrders = Math.max(cwoOrdersCount, voOrdersCount);
   const totalLogs = Math.max(rawLogsCount, vendoorLogsCount);
 
-  // 3. Check snapshots
-  const dailySnap = db.prepare('SELECT id, metrics_json, created_at FROM daily_metrics_snapshots WHERE work_date = ?').get(cleanDate);
-  const perfSnapsCount = db.prepare('SELECT count(*) as c FROM performance_snapshots WHERE date = ?').get(cleanDate)?.c || 0;
-  const hasSnapshots = Boolean(dailySnap || perfSnapsCount > 0);
+  // 3. Check snapshots and auto-build if logs are present but snapshots are missing
+  let dailySnap = db.prepare('SELECT id, metrics_json, created_at FROM daily_metrics_snapshots WHERE work_date = ?').get(cleanDate);
+  let perfSnapsCount = db.prepare('SELECT count(*) as c FROM performance_snapshots WHERE date = ?').get(cleanDate)?.c || 0;
+  let hasSnapshots = Boolean(dailySnap || perfSnapsCount > 0);
+
+  if (totalLogs > 0 && !hasSnapshots) {
+    try {
+      const logs = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all(cleanDate);
+      if (logs && logs.length > 0) {
+        const metrics = computePerformanceFromRecords(logs);
+        savePerformanceSnapshotToDB(cleanDate, metrics);
+        dailySnap = db.prepare('SELECT id, metrics_json, created_at FROM daily_metrics_snapshots WHERE work_date = ?').get(cleanDate);
+        hasSnapshots = true;
+      }
+    } catch (_) {}
+  }
 
   // 4. Derive availability
   let availability = 'MISSING';
@@ -99,11 +111,11 @@ export function getHistoricalDateRegistryStatus(workDate) {
   if (inFlightHistoricalSyncs.has(cleanDate)) {
     availability = 'SYNCING';
     syncStatus = 'SYNCING';
-  } else if (totalLogs > 0 && hasSnapshots) {
+  } else if (totalLogs > 0) {
     availability = 'READY';
     completeness = 'COMPLETE';
     if (syncStatus === 'SYNCING') syncStatus = 'COMPLETED';
-  } else if (totalLogs > 0 || hasSnapshots || totalOrders > 0) {
+  } else if (hasSnapshots || totalOrders > 0) {
     availability = 'PARTIAL';
     completeness = 'PARTIAL';
   } else if (regRow && regRow.sync_status === 'FAILED') {
@@ -511,35 +523,38 @@ export async function loadOrSyncHistoricalDate(workDate, options = {}) {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
     `);
 
-    const tx = db.transaction(() => {
-      for (const log of acceptedLogs) {
-        const orderCode = log.order_code || log.order || 'UNKNOWN';
-        const rawName = log.employee_name || log.name || 'UNKNOWN';
-        const actionText = log.action || '';
-        const timestampStr = log.timestamp_str || log.event_datetime || `${cleanDate} 00:00:00`;
-        const actionClassification = log.action_classification || 'UNKNOWN';
-        const isProductive = log.is_productive ? 1 : 0;
-        const matchedEmpId = log.matched_employee_id || null;
-        const isCS = isCsEmployee({ name: rawName, employee_name: rawName }) ? 1 : 0;
+    const BATCH_SIZE = 1000;
+    for (let i = 0; i < acceptedLogs.length; i += BATCH_SIZE) {
+      const batch = acceptedLogs.slice(i, i + BATCH_SIZE);
+      const batchTx = db.transaction(() => {
+        for (const log of batch) {
+          const orderCode = log.order_code || log.order || 'UNKNOWN';
+          const rawName = log.employee_name || log.name || 'UNKNOWN';
+          const actionText = log.action || '';
+          const timestampStr = log.timestamp_str || log.event_datetime || `${cleanDate} 00:00:00`;
+          const actionClassification = log.action_classification || 'UNKNOWN';
+          const isProductive = log.is_productive ? 1 : 0;
+          const matchedEmpId = log.matched_employee_id || null;
+          const isCS = isCsEmployee({ name: rawName, employee_name: rawName }) ? 1 : 0;
 
-        insertVendoorLogStmt.run(
-          rawName, orderCode, actionText, actionClassification,
-          isProductive, timestampStr, cleanDate, matchedEmpId,
-          jobId
-        );
+          insertVendoorLogStmt.run(
+            rawName, orderCode, actionText, actionClassification,
+            isProductive, timestampStr, cleanDate, matchedEmpId,
+            jobId
+          );
 
-        insertRawLogStmt.run(
-          cleanDate, orderCode, rawName, log.status || 'Action Recorded', actionText,
-          timestampStr, isCS
-        );
-      }
-    });
-
-    tx();
+          insertRawLogStmt.run(
+            cleanDate, orderCode, rawName, log.status || 'Action Recorded', actionText,
+            timestampStr, isCS
+          );
+        }
+      });
+      batchTx();
+    }
 
     // 5. Compute Canonical Metrics via computePerformanceFromRecords
     const records = db.prepare('SELECT * FROM raw_log_records WHERE work_date = ?').all(cleanDate);
-    const metrics = computePerformanceFromRecords(records, cleanDate);
+    const metrics = computePerformanceFromRecords(records);
 
     // 6. Save Updated Snapshots
     savePerformanceSnapshotToDB(cleanDate, metrics);
@@ -720,7 +735,47 @@ export function getHistoricalOrdersForDate(workDate) {
 
   const ordersMap = new Map();
 
-  // 1. Check vendoor_orders specifically tied to this date (source_date or business_date)
+  // 1. Primary Source of Truth: Date-scoped raw logs for cleanDate
+  const rawLogs = db.prepare(`
+    SELECT id, order_code, employee_name, action, status, event_datetime, is_cs
+    FROM raw_log_records
+    WHERE work_date = ? AND order_code IS NOT NULL AND TRIM(order_code) != '' AND order_code != 'UNKNOWN'
+    ORDER BY event_datetime ASC, id ASC
+  `).all(cleanDate);
+
+  if (rawLogs && rawLogs.length > 0) {
+    for (const log of rawLogs) {
+      const code = log.order_code;
+      const derivedStatus = extractCanonicalStatus(log.action, log.status);
+      if (!ordersMap.has(code)) {
+        ordersMap.set(code, {
+          id: log.id,
+          order_code: code,
+          account: 'General Account',
+          status: derivedStatus || 'Action Recorded',
+          order_date: cleanDate,
+          source_file_slot: 1,
+          work_state: 'COMPLETED',
+          assigned_employee_id: null,
+          assigned_employee_name: log.employee_name || 'UNASSIGNED',
+          tracking_id: code,
+          first_action_time: log.event_datetime,
+          last_action_time: log.event_datetime
+        });
+      } else {
+        const existing = ordersMap.get(code);
+        if (derivedStatus && derivedStatus !== 'Action Recorded') {
+          existing.status = derivedStatus;
+        }
+        existing.last_action_time = log.event_datetime;
+        if (log.employee_name) {
+          existing.assigned_employee_name = log.employee_name;
+        }
+      }
+    }
+  }
+
+  // 2. Check vendoor_orders specifically tied to cleanDate (source_date or business_date)
   const voOrders = db.prepare(`
     SELECT 
       id, 
@@ -741,21 +796,30 @@ export function getHistoricalOrdersForDate(workDate) {
   `).all(cleanDate, cleanDate);
 
   for (const vo of voOrders) {
-    ordersMap.set(vo.order_code, {
-      id: vo.id,
-      order_code: vo.order_code,
-      account: vo.account || 'General Account',
-      status: vo.status || 'Pending',
-      order_date: cleanDate,
-      source_file_slot: vo.source_file_slot || 1,
-      work_state: vo.work_state || 'UNASSIGNED',
-      assigned_employee_id: vo.assigned_employee_id || null,
-      assigned_employee_name: vo.assigned_employee_name || 'UNASSIGNED',
-      tracking_id: vo.tracking_id || vo.order_code
-    });
+    if (!ordersMap.has(vo.order_code)) {
+      // If order was not in logs, its status is only considered if genuinely dated cleanDate
+      ordersMap.set(vo.order_code, {
+        id: vo.id,
+        order_code: vo.order_code,
+        account: vo.account || 'General Account',
+        status: vo.status || 'New',
+        order_date: cleanDate,
+        source_file_slot: vo.source_file_slot || 1,
+        work_state: vo.work_state || 'UNASSIGNED',
+        assigned_employee_id: vo.assigned_employee_id || null,
+        assigned_employee_name: vo.assigned_employee_name || 'UNASSIGNED',
+        tracking_id: vo.tracking_id || vo.order_code
+      });
+    } else {
+      // Enrich account if General Account
+      const ord = ordersMap.get(vo.order_code);
+      if (ord.account === 'General Account' && vo.account) {
+        ord.account = vo.account;
+      }
+    }
   }
 
-  // 2. Check current_work_orders strictly scoped by work_date or order_date matching cleanDate
+  // 3. Check current_work_orders strictly scoped by date (cleanDate only)
   const cwoOrders = db.prepare(`
     SELECT 
       id, 
@@ -769,11 +833,10 @@ export function getHistoricalOrdersForDate(workDate) {
       assigned_employee_name, 
       tracking_id
     FROM current_work_orders
-    WHERE (order_date = ? OR (work_date = ? AND order_date IS NULL))
-      AND COALESCE(order_date, work_date) IS NOT NULL
-      AND TRIM(COALESCE(order_date, work_date)) != ''
+    WHERE (order_date = ? OR work_date = ?)
+      AND COALESCE(order_date, work_date) = ?
     ORDER BY account ASC, order_code ASC
-  `).all(cleanDate, cleanDate);
+  `).all(cleanDate, cleanDate, cleanDate);
 
   for (const cwo of cwoOrders) {
     if (!ordersMap.has(cwo.order_code)) {
@@ -789,80 +852,10 @@ export function getHistoricalOrdersForDate(workDate) {
         assigned_employee_name: cwo.assigned_employee_name || 'UNASSIGNED',
         tracking_id: cwo.tracking_id || cwo.order_code
       });
-    }
-  }
-
-  // 3. Fallback to order_level_allocations scoped by allocation_date
-  const allocOrders = db.prepare(`
-    SELECT 
-      id, 
-      order_code, 
-      account, 
-      status, 
-      allocation_date as order_date, 
-      1 as source_file_slot, 
-      work_state, 
-      employee_id as assigned_employee_id, 
-      employee_name as assigned_employee_name, 
-      tracking_id
-    FROM order_level_allocations
-    WHERE allocation_date = ?
-    ORDER BY account ASC, order_code ASC
-  `).all(cleanDate);
-
-  for (const ao of allocOrders) {
-    if (!ordersMap.has(ao.order_code)) {
-      ordersMap.set(ao.order_code, {
-        id: ao.id,
-        order_code: ao.order_code,
-        account: ao.account || 'General Account',
-        status: ao.status || 'New',
-        order_date: cleanDate,
-        source_file_slot: 1,
-        work_state: ao.work_state || 'ASSIGNED',
-        assigned_employee_id: ao.assigned_employee_id || null,
-        assigned_employee_name: ao.assigned_employee_name || 'UNASSIGNED',
-        tracking_id: ao.tracking_id || ao.order_code
-      });
-    }
-  }
-
-  // 4. Derive from date-scoped logs if any orders are present in logs
-  const rawLogs = db.prepare(`
-    SELECT id, order_code, employee_name, action, status, event_datetime
-    FROM raw_log_records
-    WHERE work_date = ? AND order_code IS NOT NULL AND TRIM(order_code) != '' AND order_code != 'UNKNOWN'
-    ORDER BY event_datetime ASC, id ASC
-  `).all(cleanDate);
-
-  if (rawLogs && rawLogs.length > 0) {
-    for (const log of rawLogs) {
-      const code = log.order_code;
-      const derivedStatus = extractCanonicalStatus(log.action, log.status);
-      if (!ordersMap.has(code)) {
-        ordersMap.set(code, {
-          id: log.id,
-          order_code: code,
-          account: 'General Account',
-          status: derivedStatus,
-          order_date: cleanDate,
-          source_file_slot: 1,
-          work_state: 'COMPLETED',
-          assigned_employee_id: null,
-          assigned_employee_name: log.employee_name || 'UNASSIGNED',
-          tracking_id: code,
-          first_action_time: log.event_datetime,
-          last_action_time: log.event_datetime
-        });
-      } else {
-        const existing = ordersMap.get(code);
-        if (derivedStatus && derivedStatus !== 'Action Recorded') {
-          existing.status = derivedStatus;
-        }
-        existing.last_action_time = log.event_datetime;
-        if (log.employee_name) {
-          existing.assigned_employee_name = log.employee_name;
-        }
+    } else {
+      const ord = ordersMap.get(cwo.order_code);
+      if (ord.account === 'General Account' && cwo.account) {
+        ord.account = cwo.account;
       }
     }
   }

@@ -1,8 +1,9 @@
 import XLSX from 'xlsx';
 import { db } from '../db/index.js';
 import { parseDailyLogBuffer, parseDate, matchEmployeeInMaster, normalizeEmployeeName, isCSName, isCsEmployee, isOperationallyActiveCsEmployee } from './parser.js';
-import { computePerformanceFromRecords } from './performance.js';
+import { computePerformanceFromRecords, savePerformanceSnapshotToDB } from './performance.js';
 import { extractCanonicalStatus } from './vendoor/actions.js';
+import { getHistoricalOrdersForDate } from './historical_dates.js';
 import { compareOrderPhoneNumbers, getPhoneMatchAlertHistory } from './employee_evaluation.js';
 import {
   getCairoBusinessDate,
@@ -1379,21 +1380,25 @@ export function getAccountTracking(workDate, accountName) {
 export function getTrackingOverview(workDate) {
   const dailyLogUploaded = isDailyLogUploaded(workDate);
   const sources = getSourcesUploadStatus(workDate);
+  const today = getCairoBusinessDate();
+  const isHistorical = (String(workDate).trim() !== today);
 
   // 1. Opening inventory
-  let currentOrders = db.prepare(`
-    SELECT order_code, account, status, source_file_slot 
-    FROM current_work_orders 
-    WHERE work_date = ?
-  `).all(workDate);
+  let currentOrders = isHistorical
+    ? getHistoricalOrdersForDate(workDate)
+    : db.prepare(`
+        SELECT order_code, account, status, source_file_slot 
+        FROM current_work_orders 
+        WHERE work_date = ?
+      `).all(workDate);
 
-  // If current_work_orders has not been populated yet for workDate, check vendoor_orders
-  if (currentOrders.length === 0) {
+  // If current_work_orders has not been populated yet for today's workDate, check vendoor_orders
+  if (!isHistorical && currentOrders.length === 0) {
     const vOrders = db.prepare(`
       SELECT order_code, account, status 
       FROM vendoor_orders 
-      WHERE source_date = ?
-    `).all(workDate);
+      WHERE (source_date = ? OR business_date = ?)
+    `).all(workDate, workDate);
     if (vOrders.length > 0) {
       currentOrders = vOrders.map(v => ({
         order_code: v.order_code,
@@ -2697,20 +2702,69 @@ export function getOperationalDashboardData(workDate, options = {}) {
     return getHourlyTimeWindowEventData(targetDate, fromTime, toTime, options);
   }
 
-  // 1. Check daily_metrics_snapshots first for full day
-  const snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(targetDate);
+  // 1. Validate snapshot against canonical raw logs if present
+  const rawRows = db.prepare(`
+    SELECT employee_name, action, status, order_code, event_datetime, is_cs
+    FROM raw_log_records 
+    WHERE work_date = ?
+  `).all(targetDate);
+
+  let snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(targetDate);
+
+  if (rawRows.length > 0) {
+    let shouldRebuild = !snap || !snap.metrics_json;
+    if (!shouldRebuild) {
+      try {
+        const pSnap = JSON.parse(snap.metrics_json);
+        const canon = computePerformanceFromRecords(rawRows);
+        if (pSnap.summary?.totalRealActions !== canon.summary?.totalRealActions ||
+            pSnap.summary?.printedActions !== canon.summary?.printedActions ||
+            pSnap.summary?.pendingActions !== canon.summary?.pendingActions ||
+            pSnap.summary?.cancelledActions !== canon.summary?.cancelledActions ||
+            pSnap.summary?.processingActions !== canon.summary?.processingActions ||
+            pSnap.summary?.totalAltPhones !== canon.summary?.totalAltPhones ||
+            pSnap.summary?.rawStatusCount !== canon.summary?.rawStatusCount) {
+          shouldRebuild = true;
+        }
+      } catch {
+        shouldRebuild = true;
+      }
+    }
+
+    if (shouldRebuild) {
+      const canonMetrics = computePerformanceFromRecords(rawRows);
+      savePerformanceSnapshotToDB(targetDate, canonMetrics);
+      snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(targetDate);
+    }
+  }
+
+  // Check current_work_orders in SQLite for targetDate
+  let cwoNew = 0;
+  let cwoPending = 0;
+  try {
+    const cwoCounts = db.prepare(`
+      SELECT 
+        SUM(CASE WHEN status = 'New' THEN 1 ELSE 0 END) as c_new,
+        SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) as c_pending
+      FROM current_work_orders 
+      WHERE work_date = ?
+    `).get(targetDate);
+    cwoNew = cwoCounts?.c_new || 0;
+    cwoPending = cwoCounts?.c_pending || 0;
+  } catch (_) {}
+
   if (snap && snap.metrics_json) {
     try {
       const parsed = JSON.parse(snap.metrics_json);
       const emps = (Array.isArray(parsed.employees) ? parsed.employees : []).filter(e => isCsEmployee(e));
 
-      let totalActions = parsed.log_totals?.actions;
-      let totalPrinted = parsed.log_totals?.printed;
-      let totalPending = parsed.log_totals?.pending;
-      let totalCancelled = parsed.log_totals?.cancelled;
-      let totalProcessing = parsed.log_totals?.processing;
-      let totalAlt = parsed.log_totals?.alt;
-      let totalNew = parsed.hr?.tot_new ?? parsed.summary?.totalOrders ?? 0;
+      let totalActions = parsed.summary?.totalRealActions ?? parsed.log_totals?.actions;
+      let totalPrinted = parsed.summary?.printedActions ?? parsed.log_totals?.printed;
+      let totalPending = parsed.summary?.pendingActions ?? parsed.log_totals?.pending;
+      let totalCancelled = parsed.summary?.cancelledActions ?? parsed.log_totals?.cancelled;
+      let totalProcessing = parsed.summary?.processingActions ?? parsed.log_totals?.processing;
+      let totalAlt = parsed.summary?.totalAltPhones ?? parsed.log_totals?.alt;
+      let totalNew = cwoNew > 0 ? cwoNew : (parsed.hr?.tot_new ?? parsed.summary?.totalNewOrders ?? parsed.summary?.totalOrders ?? 0);
 
       if (totalActions === undefined) {
         totalActions = emps.reduce((s, e) => s + (e.actions || e.real_actions || 0), 0);
@@ -2732,21 +2786,21 @@ export function getOperationalDashboardData(workDate, options = {}) {
       }
 
       const log_totals = {
+        ...(parsed.log_totals || {}),
         actions: totalActions || 0,
         printed: totalPrinted || 0,
         pending: totalPending || 0,
         processing: totalProcessing || 0,
         cancelled: totalCancelled || 0,
-        alt: totalAlt || 0,
-        ...(parsed.log_totals || {})
+        alt: totalAlt || 0
       };
 
       const status_totals = {
+        ...(parsed.status_totals || {}),
         Printed: log_totals.printed,
-        Pending: log_totals.pending,
+        Pending: cwoPending > 0 ? cwoPending : log_totals.pending,
         Processing: log_totals.processing,
-        Cancelled: log_totals.cancelled,
-        ...(parsed.status_totals || {})
+        Cancelled: log_totals.cancelled
       };
 
       const team_cancel_rate = parsed.team_cancel_rate ?? (log_totals.actions > 0 ? Number(((log_totals.cancelled / log_totals.actions) * 100).toFixed(1)) : 0.0);
@@ -2775,6 +2829,9 @@ export function getOperationalDashboardData(workDate, options = {}) {
         tot_cancel: log_totals.cancelled,
         tot_add: parsed.added_orders || parsed.addedOrders?.totalAdded || 0
       };
+      if (cwoNew > 0) {
+        hr.tot_new = cwoNew;
+      }
 
       const daily = parsed.daily || [{
         date: targetDate,
@@ -2808,7 +2865,7 @@ export function getOperationalDashboardData(workDate, options = {}) {
       const dedup = parsed.dedup || { removed: 0, removed_pct: 0 };
 
       return {
-        exists: parsed.exists ?? (emps.length > 0 || log_totals.actions > 0),
+        exists: parsed.exists ?? (emps.length > 0 || log_totals.actions > 0 || totalNew > 0 || cwoPending > 0),
         date: targetDate,
         work_date: targetDate,
         time_window: { is_active: false },

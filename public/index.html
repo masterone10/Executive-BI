@@ -889,6 +889,13 @@ async function setGlobalSelectedDate(newDate, options = {}) {
   }
   globalDateAbortController = new AbortController();
 
+  // Clear client cache and reset memory state immediately
+  clearClientApiCache();
+  if (liveRealtimePollTimer && cleanDate !== getTodayDate()) {
+    clearInterval(liveRealtimePollTimer);
+    liveRealtimePollTimer = null;
+  }
+
   currentWorkDate = cleanDate;
   isHistoricalMode = (cleanDate !== getTodayDate());
 
@@ -976,7 +983,25 @@ async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindow
     const data = await apiFetch(url, signal ? { signal } : undefined);
     if (data && data.exists !== false && (data.employees || data.hr || data.log_totals || data.time_window || data.summary)) {
       const summary = data.summary || {};
+      const logTotals = {
+        ...(data.log_totals || {}),
+        actions: summary.totalRealActions !== undefined ? summary.totalRealActions : (data.log_totals?.actions || 0),
+        printed: summary.printedActions !== undefined ? summary.printedActions : (data.log_totals?.printed || 0),
+        pending: summary.pendingActions !== undefined ? summary.pendingActions : (data.log_totals?.pending || 0),
+        processing: summary.processingActions !== undefined ? summary.processingActions : (data.log_totals?.processing || 0),
+        cancelled: summary.cancelledActions !== undefined ? summary.cancelledActions : (data.log_totals?.cancelled || 0),
+        alt: summary.totalAltPhones !== undefined ? summary.totalAltPhones : (data.log_totals?.alt || 0)
+      };
+      const statusTotals = {
+        ...(data.status_totals || {}),
+        Printed: logTotals.printed,
+        Pending: logTotals.pending,
+        Processing: logTotals.processing,
+        Cancelled: logTotals.cancelled
+      };
+
       D = {
+        ...data,
         exists: true,
         date: dateStr,
         employees: data.employees || [],
@@ -984,22 +1009,8 @@ async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindow
         kpis: data.kpis || null,
         order_events: data.order_events || [],
         summary: summary,
-        log_totals: {
-          actions: summary.totalRealActions !== undefined ? summary.totalRealActions : (data.log_totals?.actions || 0),
-          printed: summary.printedActions !== undefined ? summary.printedActions : (data.log_totals?.printed || 0),
-          pending: summary.pendingActions !== undefined ? summary.pendingActions : (data.log_totals?.pending || 0),
-          processing: summary.processingActions !== undefined ? summary.processingActions : (data.log_totals?.processing || 0),
-          cancelled: summary.cancelledActions !== undefined ? summary.cancelledActions : (data.log_totals?.cancelled || 0),
-          alt: summary.totalAltPhones !== undefined ? summary.totalAltPhones : (data.log_totals?.alt || 0),
-          ...(data.log_totals || {})
-        },
-        status_totals: {
-          Printed: summary.printedActions !== undefined ? summary.printedActions : (data.status_totals?.Printed || 0),
-          Pending: summary.pendingActions !== undefined ? summary.pendingActions : (data.status_totals?.Pending || 0),
-          Processing: summary.processingActions !== undefined ? summary.processingActions : (data.status_totals?.Processing || 0),
-          Cancelled: summary.cancelledActions !== undefined ? summary.cancelledActions : (data.status_totals?.Cancelled || 0),
-          ...(data.status_totals || {})
-        },
+        log_totals: logTotals,
+        status_totals: statusTotals,
         rankings: {
           printed: data.rankings?.printed || [],
           pending: data.rankings?.pending || [],
@@ -1012,8 +1023,7 @@ async function fetchPerformanceDataForDate(dateStr, fromTime = currentTimeWindow
         dedup: data.dedup || summary.dedup || { removed: 0, removed_pct: 0 },
         team_cancel_rate: data.team_cancel_rate || summary.teamCancelRate || 0,
         team_pending_rate: data.team_pending_rate || 0,
-        addedOrders: data.addedOrders || { totalAdded: 0, totalAddedCS: 0, totalAddedNonCS: 0, fromCS: 0, fromOtherDepartments: 0, topCSContributors: [], allCSContributors: [] },
-        ...data
+        addedOrders: data.addedOrders || { totalAdded: 0, totalAddedCS: 0, totalAddedNonCS: 0, fromCS: 0, fromOtherDepartments: 0, topCSContributors: [], allCSContributors: [] }
       };
       D.rankings = D.rankings || {};
       D.rankings.printed = D.rankings.printed || [];
@@ -1126,6 +1136,7 @@ function extractAccountDisplayName(val) {
 const clientApiCache = new Map();
 const inFlightRequests = new Map();
 const CLIENT_CACHE_TTL = 4000;
+let globalRateLimitCooldownUntil = 0;
 
 function clearClientApiCache() {
   clientApiCache.clear();
@@ -1154,50 +1165,94 @@ async function apiFetch(url, options = {}) {
   }
 
   const fetchPromise = (async () => {
-    try {
-      const res = await fetch(url, options);
-      const contentType = res.headers.get('content-type') || '';
-      let data;
-
-      if (contentType.includes('application/json')) {
-        try {
-          data = await res.json();
-        } catch (e) {
-          data = null;
-        }
-      } else {
-        const rawText = await res.text();
-        try {
-          data = JSON.parse(rawText);
-        } catch (e) {
-          // Remove HTML tags, styles, scripts and redundant whitespace
-          const cleanText = rawText.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-                                   .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-                                   .replace(/<[^>]+>/g, ' ')
-                                   .replace(/\s+/g, ' ')
-                                   .trim();
-          const preview = cleanText.length > 250 ? cleanText.substring(0, 250) + '...' : cleanText;
-          throw new Error(preview || `Server returned HTTP ${res.status}: ${res.statusText}`);
-        }
+    const maxRetries = isGet ? 5 : 2;
+    let attempt = 0;
+    while (true) {
+      if (globalRateLimitCooldownUntil > Date.now()) {
+        const waitMs = Math.min(2500, globalRateLimitCooldownUntil - Date.now() + Math.floor(Math.random() * 200));
+        await new Promise(r => setTimeout(r, waitMs));
       }
 
-      if (!res.ok) {
-        const errMsg = (data && (data.error || data.message)) || `Server returned HTTP ${res.status}`;
-        throw new Error(errMsg);
-      }
+      try {
+        const res = await fetch(url, options);
+        const contentType = res.headers.get('content-type') || '';
+        let data;
+        let isRateLimit = res.status === 429;
 
-      if (isGet && data) {
-        clientApiCache.set(url, { timestamp: Date.now(), data });
-        if (clientApiCache.size > 150) {
-          const firstKey = clientApiCache.keys().next().value;
-          clientApiCache.delete(firstKey);
+        if (contentType.includes('application/json')) {
+          try {
+            data = await res.json();
+            if (data && (data.error || data.message)) {
+              const msg = String(data.error || data.message);
+              if (/rate.*exceed|rate_limit|too many requests/i.test(msg)) {
+                isRateLimit = true;
+              }
+            }
+          } catch (e) {
+            data = null;
+          }
+        } else {
+          const rawText = await res.text();
+          if (/rate.*exceed|rate_limit|too many requests/i.test(rawText)) {
+            isRateLimit = true;
+          }
+          try {
+            data = JSON.parse(rawText);
+          } catch (e) {
+            if ((isRateLimit || res.status === 429 || res.status === 502 || res.status === 503) && attempt < maxRetries) {
+              attempt++;
+              globalRateLimitCooldownUntil = Date.now() + Math.min(3000, 600 * attempt);
+              const delay = Math.min(4000, (attempt * 600) + Math.floor(Math.random() * 400));
+              await new Promise(r => setTimeout(r, delay));
+              continue;
+            }
+            // Remove HTML tags, styles, scripts and redundant whitespace
+            const cleanText = rawText.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                                     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                                     .replace(/<[^>]+>/g, ' ')
+                                     .replace(/\s+/g, ' ')
+                                     .trim();
+            const preview = cleanText.length > 250 ? cleanText.substring(0, 250) + '...' : cleanText;
+            throw new Error(preview || `Server returned HTTP ${res.status}: ${res.statusText}`);
+          }
         }
-      }
 
-      return data;
-    } finally {
-      if (isGet) {
-        inFlightRequests.delete(url);
+        if ((isRateLimit || res.status === 429 || res.status === 502 || res.status === 503) && attempt < maxRetries) {
+          attempt++;
+          globalRateLimitCooldownUntil = Date.now() + Math.min(3000, 600 * attempt);
+          const delay = Math.min(4000, (attempt * 600) + Math.floor(Math.random() * 400));
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+
+        if (!res.ok) {
+          const errMsg = (data && (data.error || data.message)) || `Server returned HTTP ${res.status}`;
+          throw new Error(errMsg);
+        }
+
+        if (isGet && data) {
+          clientApiCache.set(url, { timestamp: Date.now(), data });
+          if (clientApiCache.size > 150) {
+            const firstKey = clientApiCache.keys().next().value;
+            clientApiCache.delete(firstKey);
+          }
+        }
+
+        return data;
+      } catch (err) {
+        const isRate = /rate.*exceed|rate_limit|too many requests/i.test(err.message || '');
+        if (isRate && attempt < maxRetries) {
+          attempt++;
+          globalRateLimitCooldownUntil = Date.now() + Math.min(3000, 600 * attempt);
+          const delay = Math.min(4000, (attempt * 600) + Math.floor(Math.random() * 400));
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        throw err;
+      } finally {
+        if (isGet) {
+          inFlightRequests.delete(url);
+        }
       }
     }
   })();
@@ -1209,19 +1264,47 @@ async function apiFetch(url, options = {}) {
   return fetchPromise;
 }
 
+let workAllocAutoRetryTimer = null;
+
 async function loadWorkAllocationData() {
   const container = document.getElementById('workAllocContainer');
   // Immediately render toolbar into DOM so controls are accessible without waiting
   if (container && !document.getElementById('btnRejectAndUndoAllocation')) {
     renderWorkAllocationUI();
   }
+  if (workAllocAutoRetryTimer) {
+    clearTimeout(workAllocAutoRetryTimer);
+    workAllocAutoRetryTimer = null;
+  }
+
   try {
-    const [overviewRes, accRes, teamRes, allocRes] = await Promise.all([
-      apiFetch(`/api/work/current?date=${currentWorkDate}`),
-      apiFetch(`/api/work/accounts-detailed?date=${currentWorkDate}`),
-      apiFetch(`/api/working-team/${currentWorkDate}`),
-      apiFetch(`/api/allocations/${currentWorkDate}`).catch(() => ({ exists: false, items: [] }))
-    ]);
+    let overviewRes, accRes, teamRes, allocRes;
+
+    // Fast path: attempt unified bundle endpoint first
+    try {
+      const bundle = await apiFetch(`/api/work/allocation-bundle?date=${encodeURIComponent(currentWorkDate)}`);
+      if (bundle && bundle.success) {
+        overviewRes = bundle.overview;
+        accRes = bundle.accounts;
+        teamRes = bundle.workingTeam;
+        allocRes = bundle.allocation;
+      }
+    } catch (bundleErr) {
+      console.warn('Allocation bundle fetch notice, falling back to multi-fetch:', bundleErr.message);
+    }
+
+    // Fallback path if bundle wasn't available
+    if (!overviewRes || !accRes) {
+      [overviewRes, accRes, teamRes, allocRes] = await Promise.all([
+        apiFetch(`/api/work/current?date=${encodeURIComponent(currentWorkDate)}`),
+        apiFetch(`/api/work/accounts-detailed?date=${encodeURIComponent(currentWorkDate)}`),
+        apiFetch(`/api/working-team/${encodeURIComponent(currentWorkDate)}`),
+        apiFetch(`/api/allocations/${encodeURIComponent(currentWorkDate)}`).catch(() => ({ exists: false, items: [] }))
+      ]);
+    }
+
+    const existingNotice = document.getElementById('allocErrorNotice');
+    if (existingNotice) existingNotice.remove();
 
     currentAccountsList = (accRes || []).sort((a, b) => (b.total_orders || 0) - (a.total_orders || 0) || (a.account || '').localeCompare(b.account || ''));
     todayWorkingEmployees = (teamRes || []).filter(e => e.is_working && String(e.department || '').trim().toUpperCase() === 'CS');
@@ -1248,22 +1331,32 @@ async function loadWorkAllocationData() {
       if (existingNotice) existingNotice.remove();
       const noticeDiv = document.createElement('div');
       noticeDiv.id = 'allocErrorNotice';
+      const isRate = /rate.*exceed|rate_limit|too many requests/i.test(err.message || '');
       noticeDiv.innerHTML = `
         <div class="panel" style="border:1px solid #FECACA;background:#FEF2F2;padding:18px 22px;border-radius:12px;margin:16px 0">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
-            <span style="font-size:20px">⚠️</span>
-            <h3 style="margin:0;color:#991B1B">Failed to Load Work Allocation</h3>
+            <span style="font-size:20px">${isRate ? '⏳' : '⚠️'}</span>
+            <h3 style="margin:0;color:#991B1B">${isRate ? 'Syncing Work Allocation (Rate Cooldown Active)' : 'Failed to Load Work Allocation'}</h3>
           </div>
           <p style="color:#7F1D1D;font-size:13px;margin:0 0 12px 0">
             ${escapeHtml(err.message || 'An error occurred while loading work allocation data.')}
+            ${isRate ? ' — Auto-retrying automatically shortly...' : ''}
           </p>
           <div style="display:flex;gap:10px">
-            <button class="btn primary sm" onclick="loadWorkAllocationData()">↻ Retry</button>
+            <button class="btn primary sm" onclick="loadWorkAllocationData()">↻ Retry Now</button>
             <button class="btn sm" onclick="show('operations', 'working-team')">👥 Check Working Team</button>
           </div>
         </div>
       `;
       container.appendChild(noticeDiv);
+
+      if (isRate) {
+        workAllocAutoRetryTimer = setTimeout(() => {
+          if (document.getElementById('workAllocContainer')) {
+            loadWorkAllocationData();
+          }
+        }, 3000);
+      }
     }
   }
 }

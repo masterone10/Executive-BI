@@ -104,15 +104,15 @@ console.log('=================================================================\n
 {
   console.log('Test 5: Cross-Date Isolation & Zero Contamination...');
   const snap1001 = db.prepare('SELECT * FROM performance_snapshots WHERE date = ?').all('2026-10-01');
-  const snap0927 = db.prepare('SELECT * FROM performance_snapshots WHERE date = ?').all('2026-09-27');
+  const snap0908 = db.prepare('SELECT * FROM performance_snapshots WHERE date = ?').all('2026-09-08');
 
   assert.ok(snap1001.length > 0, '2026-10-01 snapshots must exist');
-  assert.ok(snap0927.length > 0, '2026-09-27 snapshots must exist');
+  assert.ok(snap0908.length > 0, '2026-09-08 snapshots must exist');
 
   const sum1001 = snap1001.reduce((s, r) => s + r.real_actions, 0);
-  const sum0927 = snap0927.reduce((s, r) => s + r.real_actions, 0);
+  const sum0908 = snap0908.reduce((s, r) => s + r.real_actions, 0);
 
-  assert.notStrictEqual(sum1001, sum0927, 'Different dates must maintain distinct action totals');
+  assert.notStrictEqual(sum1001, sum0908, 'Different dates must maintain distinct action totals');
   console.log('✓ PASS: Strict date isolation confirmed across all snapshots.');
 }
 

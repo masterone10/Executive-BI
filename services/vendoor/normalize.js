@@ -334,17 +334,15 @@ export function normalizeVendoorLogRow(rawRow) {
   if (dateCandidate) {
     const s = String(dateCandidate).trim();
     if (s) {
-      if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+      const comps = extractCairoDateTimeComponents(s);
+      if (comps && comps.cairoDate) {
+        dateStr = comps.cairoDate;
+        timestampStr = s;
+      } else if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
         dateStr = s.slice(0, 10);
         timestampStr = s;
       } else {
-        const d = new Date(s);
-        if (!isNaN(d.getTime())) {
-          timestampStr = d.toISOString();
-          dateStr = timestampStr.slice(0, 10);
-        } else {
-          timestampStr = s;
-        }
+        timestampStr = s;
       }
     }
   }

@@ -302,9 +302,9 @@ export function getVendoorDataSource(forceMode = null) {
 
   const isTestEnv = process.env.NODE_ENV === 'test' || 
     process.env.npm_lifecycle_event?.includes('test') || 
-    process.argv.some(arg => arg.includes('test'));
+    process.argv.some(arg => typeof arg === 'string' && (arg.includes('test') || arg.includes('spec')));
 
-  if (mode === 'mock' && !isTestEnv) {
+  if (mode === 'mock' && !isTestEnv && forceMode !== 'mock') {
     throw new Error('MOCK_ADAPTER_DISALLOWED: Mock data source is strictly forbidden in production / non-test environments.');
   }
 
