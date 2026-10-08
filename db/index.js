@@ -24,6 +24,10 @@ db.pragma('busy_timeout = 30000');
 db.pragma('foreign_keys = ON');
 
 export function cleanupMockContamination(database = db) {
+  if (!isTest) {
+    // In production or live environments, startup must NEVER perform destructive hard-coded data cleanup
+    return;
+  }
   try {
     database.prepare(`DELETE FROM vendoor_logs WHERE work_date = '2026-12-10' OR employee_name IN ('Ahmed Hassan', 'Sara Mahmoud', 'Mohamed Ali', 'Nour Ibrahim', 'Khaled Omar')`).run();
     database.prepare(`DELETE FROM raw_log_records WHERE work_date = '2026-12-10' OR employee_name IN ('Ahmed Hassan', 'Sara Mahmoud', 'Mohamed Ali', 'Nour Ibrahim', 'Khaled Omar')`).run();
@@ -39,7 +43,9 @@ export function cleanupMockContamination(database = db) {
 
 // Safe migrations function for existing and new databases
 export function runMigrations(database = db) {
-  cleanupMockContamination(database);
+  if (isTest) {
+    cleanupMockContamination(database);
+  }
   // Safe table migration: Ensure team_membership, status & notes exist in employees
   try {
     const cols = database.prepare("PRAGMA table_info(employees)").all();

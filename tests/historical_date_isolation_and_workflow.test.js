@@ -17,6 +17,9 @@ console.log('=================================================================')
 console.log('  HISTORICAL DATE REALITY & ISOLATION COMPREHENSIVE TEST SUITE');
 console.log('=================================================================\n');
 
+// Ensure 2026-10-01 mock date is loaded for test
+await loadOrSyncHistoricalDate('2026-10-01', { forceMode: 'mock' });
+
 // -------------------------------------------------------------
 // TEST 1: Canonical Available Business Dates API & Metadata
 // -------------------------------------------------------------

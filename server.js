@@ -100,7 +100,8 @@ import {
   createExcelWorkbook,
   createEmployeeAllocationWorkbook,
   createAccountWorkbook,
-  createZipFromEmployeeWorkbooks
+  createZipFromEmployeeWorkbooks,
+  createContextualExportWorkbook
 } from './export_excel.js';
 import {
   getSafeVendoorStatus,
@@ -200,11 +201,16 @@ import {
   loadOrSyncHistoricalDate,
   invalidateAvailableDatesCache
 } from './services/historical_dates.js';
+import {
+  getOperationalExceptions,
+  getEmployeeOperationalMetrics,
+  enrichOrderOperationalIntelligence
+} from './services/operational_intelligence.js';
 
 const requireSupervisor = requireRole([USER_ROLES.SUPERVISOR, USER_ROLES.MANAGER, USER_ROLES.ADMIN]);
 
 const app = express();
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT, 10) || 3000;
 const HOST = '0.0.0.0';
 const ROOT_DIR = process.cwd();
 const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
@@ -311,7 +317,7 @@ app.get('/api/config/weights', (req, res) => {
   res.json(getSystemWeights());
 });
 
-app.put('/api/config/weights', (req, res) => {
+app.put('/api/config/weights', requireSupervisor, (req, res) => {
   const { w_prod, w_print, w_pend, w_canc, w_proc, min_actions } = req.body;
   const update = db.prepare('INSERT INTO system_configs (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime("now")');
   const tx = db.transaction(() => {
@@ -381,7 +387,7 @@ app.get('/api/employees/:id', (req, res) => {
   }
 });
 
-app.post('/api/employees', (req, res) => {
+app.post('/api/employees', requireSupervisor, (req, res) => {
   const { name, department, active, status, team_membership, notes } = req.body || {};
   if (!name || typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ success: false, error: 'Employee name is required' });
@@ -439,7 +445,7 @@ app.post('/api/employees', (req, res) => {
   }
 });
 
-app.put('/api/employees/:id', (req, res) => {
+app.put('/api/employees/:id', requireSupervisor, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id) || id <= 0) {
     return res.status(400).json({ success: false, error: 'Invalid employee ID' });
@@ -521,7 +527,7 @@ app.put('/api/employees/:id', (req, res) => {
   }
 });
 
-app.patch('/api/employees/:id/status', (req, res) => {
+app.patch('/api/employees/:id/status', requireSupervisor, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id) || id <= 0) {
     return res.status(400).json({ success: false, error: 'Invalid employee ID' });
@@ -595,7 +601,7 @@ app.get('/api/employees/:id/departure-impact', (req, res) => {
   }
 });
 
-app.post('/api/employees/:id/mark-departed', (req, res) => {
+app.post('/api/employees/:id/mark-departed', requireSupervisor, (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const { departureDate, departureReason, reason, operator, reassignSafeOrders, workDate } = req.body || {};
@@ -638,7 +644,7 @@ app.get('/api/review-queue', (req, res) => {
   }
 });
 
-app.post('/api/review-queue/:id/resolve', (req, res) => {
+app.post('/api/review-queue/:id/resolve', requireSupervisor, (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const { target_employee_id, notes, operator } = req.body || {};
@@ -662,7 +668,7 @@ app.get('/api/operations/working-team/detailed', (req, res) => {
   }
 });
 
-app.post('/api/operations/working-team/toggle', (req, res) => {
+app.post('/api/operations/working-team/toggle', requireSupervisor, (req, res) => {
   try {
     const { date, employee_id, is_working } = req.body || {};
     if (!employee_id) {
@@ -676,7 +682,7 @@ app.post('/api/operations/working-team/toggle', (req, res) => {
   }
 });
 
-app.post('/api/operations/working-team/auto-restore', (req, res) => {
+app.post('/api/operations/working-team/auto-restore', requireSupervisor, (req, res) => {
   try {
     const workDate = req.body?.date || req.query?.date || getCairoBusinessDate();
     const forceReset = Boolean(req.body?.reset_manual);
@@ -760,7 +766,7 @@ app.get('/api/team-membership', (req, res) => {
   }
 });
 
-app.put('/api/team-membership/:id', (req, res) => {
+app.put('/api/team-membership/:id', requireSupervisor, (req, res) => {
   try {
     const { id } = req.params;
     const { team_membership } = req.body;
@@ -771,7 +777,7 @@ app.put('/api/team-membership/:id', (req, res) => {
   }
 });
 
-app.post('/api/team-membership/bulk', (req, res) => {
+app.post('/api/team-membership/bulk', requireSupervisor, (req, res) => {
   try {
     const { updates } = req.body;
     if (!Array.isArray(updates)) {
@@ -818,8 +824,8 @@ const handleSaveWorkingTeam = (req, res) => {
   }
 };
 
-app.post('/api/working-team/:date', handleSaveWorkingTeam);
-app.put('/api/working-team/:date', handleSaveWorkingTeam);
+app.post('/api/working-team/:date', requireSupervisor, handleSaveWorkingTeam);
+app.put('/api/working-team/:date', requireSupervisor, handleSaveWorkingTeam);
 
 // -------------------------------------------------------------
 // 3B. ACCOUNT RULES & ACCOUNT EXCEPTIONS
@@ -842,7 +848,7 @@ app.get(['/api/accounts/all', '/api/accounts-all'], (req, res) => {
   }
 });
 
-app.post('/api/account-rules', (req, res) => {
+app.post('/api/account-rules', requireSupervisor, (req, res) => {
   try {
     const result = saveAccountRule(req.body);
     res.json(result);
@@ -851,7 +857,7 @@ app.post('/api/account-rules', (req, res) => {
   }
 });
 
-app.delete('/api/account-rules/:id', (req, res) => {
+app.delete('/api/account-rules/:id', requireSupervisor, (req, res) => {
   try {
     const result = deleteAccountRule(req.params.id);
     res.json(result);
@@ -869,7 +875,7 @@ app.get('/api/account-exceptions', (req, res) => {
   }
 });
 
-app.post('/api/account-exceptions', (req, res) => {
+app.post('/api/account-exceptions', requireSupervisor, (req, res) => {
   try {
     const result = saveAccountException(req.body);
     res.json(result);
@@ -878,7 +884,7 @@ app.post('/api/account-exceptions', (req, res) => {
   }
 });
 
-app.delete('/api/account-exceptions/:id', (req, res) => {
+app.delete('/api/account-exceptions/:id', requireSupervisor, (req, res) => {
   try {
     const result = deleteAccountException(req.params.id);
     res.json(result);
@@ -890,7 +896,7 @@ app.delete('/api/account-exceptions/:id', (req, res) => {
 // -------------------------------------------------------------
 // 3C. SYSTEM DATABASE BACKUP & SAFE RESTORE
 // -------------------------------------------------------------
-app.post('/api/system/backup', async (req, res) => {
+app.post('/api/system/backup', requireSupervisor, async (req, res) => {
   try {
     const result = await createDatabaseBackup(req.body?.filename);
     res.json(result);
@@ -922,7 +928,7 @@ app.get('/api/system/backups', (req, res) => {
   }
 });
 
-app.post('/api/system/restore', (req, res) => {
+app.post('/api/system/restore', requireSupervisor, (req, res) => {
   try {
     const filename = req.body?.filename;
     if (!filename) return res.status(400).json({ error: 'filename is required for restore' });
@@ -1229,10 +1235,91 @@ app.get('/api/work/current', (req, res) => {
   try {
     const date = req.query.date || getCairoBusinessDate();
     const overview = getCurrentWorkOverview(date);
+    
+    // Enrich orders with 3 locked operational intelligence rules
+    if (overview && Array.isArray(overview.orders)) {
+      overview.orders = overview.orders.map(enrichOrderOperationalIntelligence);
+    }
+    
+    // Include operational exceptions summary
+    const exceptions = getOperationalExceptions(date, {
+      employee_name: req.query.employee_name,
+      account: req.query.account
+    });
+    overview.operational_exceptions = exceptions;
+
     res.json(overview);
   } catch (err) {
     console.error('Error in /api/work/current:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Operational Intelligence — Locked Requirements Endpoints
+app.get('/api/operational-intelligence/exceptions', (req, res) => {
+  try {
+    const date = req.query.date || getCairoBusinessDate();
+    const exceptions = getOperationalExceptions(date, {
+      employee_name: req.query.employee_name,
+      account: req.query.account
+    });
+    res.json({ success: true, ...exceptions });
+  } catch (err) {
+    console.error('Error in /api/operational-intelligence/exceptions:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/operational-intelligence/employee/:employeeName', (req, res) => {
+  try {
+    const date = req.query.date || getCairoBusinessDate();
+    const metrics = getEmployeeOperationalMetrics(date, req.params.employeeName);
+    res.json({ success: true, ...metrics });
+  } catch (err) {
+    console.error('Error in /api/operational-intelligence/employee:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get(['/api/work/order/:orderCode', '/api/orders/:orderCode'], (req, res) => {
+  try {
+    const code = req.params.orderCode;
+    const date = req.query.date || getCairoBusinessDate();
+    
+    // Try current_work_orders first
+    let row = db.prepare('SELECT * FROM current_work_orders WHERE order_code = ?').get(code);
+    if (!row) {
+      // Fallback to vendoor_orders or raw_log_records
+      try {
+        row = db.prepare('SELECT * FROM vendoor_orders WHERE order_code = ?').get(code);
+      } catch (_) {}
+    }
+    if (!row) {
+      try {
+        row = db.prepare('SELECT * FROM raw_log_records WHERE order_code = ? ORDER BY id DESC LIMIT 1').get(code);
+      } catch (_) {}
+    }
+
+    if (!row) {
+      return res.status(404).json({ success: false, error: 'Order not found', order_code: code });
+    }
+
+    const enriched = enrichOrderOperationalIntelligence(row);
+    
+    // Also pull tracking timeline
+    let timeline = [];
+    try {
+      timeline = db.prepare('SELECT * FROM order_tracking_events WHERE order_code = ? ORDER BY id DESC LIMIT 20').all(code);
+    } catch (_) {}
+
+    res.json({
+      success: true,
+      order: enriched,
+      timeline
+    });
+  } catch (err) {
+    console.error('Error in /api/work/order:', err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -2163,6 +2250,11 @@ app.get('/api/orders/current/:date', (req, res) => {
     limit: parseInt(limit, 10) || 100,
     offset: parseInt(offset, 10) || 0
   });
+
+  if (ordersData && Array.isArray(ordersData.orders)) {
+    ordersData.orders = ordersData.orders.map(enrichOrderOperationalIntelligence);
+  }
+
   const poolStatus = getSpecificOrdersPoolStatus(date);
   res.json({
     ...ordersData,
@@ -2973,6 +3065,136 @@ app.get(['/api/added-orders', '/api/reports/added-orders'], (req, res) => {
   }
 });
 
+// Canonical Contextual Export Endpoint (POST /api/exports/xlsx)
+// Implements Sections 43-51, 72-75 of Master Architecture Contract
+app.post('/api/exports/xlsx', async (req, res) => {
+  try {
+    const viewCtx = req.body || {};
+    const page = String(viewCtx.page || viewCtx.mainPage || 'overview').toLowerCase();
+    const tab = String(viewCtx.tab || viewCtx.subPage || 'main').toLowerCase();
+    const workDate = String(viewCtx.business_date || viewCtx.date || getEffectiveWorkDate()).trim();
+    const timeFrom = viewCtx.time_window?.from || viewCtx.from || null;
+    const timeTo = viewCtx.time_window?.to || viewCtx.to || null;
+    const filters = viewCtx.filters || {};
+    const search = viewCtx.search || '';
+
+    let dataset = { rows: [], columns: [], summary: {} };
+
+    // 1. Resolve dataset based on active page/tab
+    if (page === 'work' && tab === 'allocation') {
+      const orderAlloc = typeof getOrderLevelAllocation === 'function' ? getOrderLevelAllocation(workDate) : null;
+      const allocData = typeof getAllocationForDate === 'function' ? getAllocationForDate(workDate) : null;
+      let orders = orderAlloc?.orders || [];
+      if (orders.length === 0) {
+        orders = db.prepare(`
+          SELECT 
+            order_code, account, status, 
+            assigned_employee_name, work_state,
+            created_at as allocated_at
+          FROM current_work_orders 
+          WHERE work_date = ? AND assigned_employee_id IS NOT NULL
+        `).all(workDate);
+      }
+      if (orders.length === 0 && allocData?.items) {
+        orders = allocData.items.map(it => ({
+          order_code: `BATCH-${it.id}`,
+          account: it.account,
+          status: it.status,
+          assigned_employee_name: it.employee_name,
+          allocated_at: it.created_at
+        }));
+      }
+      dataset.columns = ['Order Code', 'Account', 'Status', 'Assigned Employee', 'Allocated At'];
+      dataset.rows = orders.map(o => ({
+        'Order Code': o.order_code,
+        'Account': o.account,
+        'Status': o.status,
+        'Assigned Employee': o.assigned_employee_name || 'UNASSIGNED',
+        'Allocated At': o.allocated_at || workDate
+      }));
+      dataset.summary = {
+        'Total Allocated Orders': orders.length,
+        'Unique Accounts': new Set(orders.map(o => o.account)).size,
+        'CS Agents Assigned': new Set(orders.map(o => o.assigned_employee_name).filter(Boolean)).size
+      };
+    } else if (page === 'work' && (tab === 'orders' || tab === 'orders-pool')) {
+      const ordersRes = getCurrentOrders(workDate, { limit: 5000 });
+      const orders = ordersRes.orders || [];
+      dataset.columns = ['Order Code', 'Account', 'Status', 'Work State', 'Assigned Employee', 'Date'];
+      dataset.rows = orders.map(o => ({
+        'Order Code': o.order_code,
+        'Account': o.account,
+        'Status': o.status,
+        'Work State': o.work_state || 'UNASSIGNED',
+        'Assigned Employee': o.assigned_employee_name || 'UNASSIGNED',
+        'Date': o.order_date || workDate
+      }));
+      dataset.summary = {
+        'Total Orders in Pool': orders.length,
+        'New Orders': orders.filter(o => o.status === 'New').length,
+        'Pending Orders': orders.filter(o => o.status === 'Pending').length
+      };
+    } else if (page === 'team') {
+      const team = getWorkingTeam(workDate);
+      dataset.columns = ['ID', 'Employee Name', 'Department', 'Team Membership', 'Status', 'Is Working Today', 'Source'];
+      dataset.rows = team.map(e => ({
+        'ID': e.id,
+        'Employee Name': e.name,
+        'Department': e.department,
+        'Team Membership': e.team_membership || 'Both',
+        'Status': e.status || 'ACTIVE',
+        'Is Working Today': e.is_working ? 'Yes' : 'No',
+        'Source': e.source || 'MANUAL'
+      }));
+      dataset.summary = {
+        'Total CS Team': team.length,
+        'Working Today': team.filter(e => e.is_working).length
+      };
+    } else {
+      // Default: Overview & Performance Scorecard
+      const snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(workDate);
+      const data = snap && snap.metrics_json ? JSON.parse(snap.metrics_json) : getOperationalDashboardData(workDate);
+      const empList = data.employees || [];
+      dataset.columns = ['Rank', 'Employee', 'Total Actions', 'Printed', 'Print %', 'Pending', 'Pend %', 'Processing', 'Cancelled', 'Cancel %', 'Alt Phone', 'Grade'];
+      dataset.rows = empList.map(e => ({
+        'Rank': e.rank || '-',
+        'Employee': e.name,
+        'Total Actions': e.actions || 0,
+        'Printed': e.printed || 0,
+        'Print %': `${e.own_printed_rate || 0}%`,
+        'Pending': e.pending || 0,
+        'Pend %': `${e.own_pending_rate || 0}%`,
+        'Processing': e.processing || 0,
+        'Cancelled': e.cancelled || 0,
+        'Cancel %': `${e.own_cancel_rate || 0}%`,
+        'Alt Phone': e.alt || 0,
+        'Grade': e.grade || '-'
+      }));
+      dataset.summary = {
+        'Total CS Actions': data.log_totals?.actions || 0,
+        'Total Printed': data.log_totals?.printed || 0,
+        'Total Cancelled': data.log_totals?.cancelled || 0,
+        'Team Cancel Rate': `${data.team_cancel_rate || 0}%`
+      };
+    }
+
+    const wb = createContextualExportWorkbook(viewCtx, dataset);
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const filename = `CS_ExecutiveBI_${page}_${tab}_${workDate}.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(buffer);
+  } catch (err) {
+    console.error('Contextual export failed:', err);
+    return res.status(500).json({
+      success: false,
+      code: 'EXPORT_FAILED',
+      error: `EXPORT_FAILED: ${err.message}`
+    });
+  }
+});
+
 app.get(['/api/export/excel', '/Executive_Report_v3.xlsx'], (req, res) => {
   const reqDate = req.query.date || getEffectiveWorkDate();
   try {
@@ -2981,15 +3203,15 @@ app.get(['/api/export/excel', '/Executive_Report_v3.xlsx'], (req, res) => {
     const wb = createExcelWorkbook(data);
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="Executive_Report_v3.xlsx"');
+    res.setHeader('Content-Disposition', `attachment; filename="CS_ExecutiveBI_Executive_Report_${reqDate}.xlsx"`);
     return res.send(buffer);
   } catch (err) {
     console.error('Failed to generate dynamic Excel:', err);
-    const fallbackPath = path.join(PUBLIC_DIR, 'Executive_Report_v3.xlsx');
-    if (fs.existsSync(fallbackPath)) {
-      return res.sendFile(fallbackPath);
-    }
-    return res.status(500).send('Failed to generate Excel report');
+    return res.status(500).json({
+      success: false,
+      code: 'EXPORT_FAILED',
+      error: `EXPORT_FAILED: Failed to generate Excel report for date ${reqDate}. ${err.message}`
+    });
   }
 });
 
@@ -3005,7 +3227,7 @@ app.get('/api/integrations/vendoor/status', (req, res) => {
   }
 });
 
-app.post('/api/integrations/vendoor/credentials', (req, res) => {
+app.post('/api/integrations/vendoor/credentials', requireSupervisor, (req, res) => {
   try {
     const { email, password, baseUrl, action } = req.body || {};
     if (action === 'clear') {
@@ -3079,7 +3301,7 @@ app.get('/api/integrations/vendoor/history', (req, res) => {
 // -------------------------------------------------------------
 // 9. VENDOOR PHASE 2: SYNC, IDENTITY MATCHING & PRODUCTIVITY
 // -------------------------------------------------------------
-app.post('/api/integrations/vendoor/sync/orders', async (req, res) => {
+app.post('/api/integrations/vendoor/sync/orders', requireSupervisor, async (req, res) => {
   try {
     const { fromDate, toDate, maxPages, pageSize, statusFilter, forceMode, businessDate, workDate, isHistoricalSync } = req.body || {};
     const result = await syncVendoorOrders({
@@ -3098,7 +3320,7 @@ app.post('/api/integrations/vendoor/sync/orders', async (req, res) => {
   }
 });
 
-app.post('/api/integrations/vendoor/sync/logs', async (req, res) => {
+app.post('/api/integrations/vendoor/sync/logs', requireSupervisor, async (req, res) => {
   try {
     const { startDate, endDate, start_date, end_date, forceMode } = req.body || {};
     const result = await syncVendoorLogs({
@@ -3112,7 +3334,7 @@ app.post('/api/integrations/vendoor/sync/logs', async (req, res) => {
   }
 });
 
-app.post(['/api/integrations/vendoor/logs/import-week', '/api/vendoor/logs/import-week'], async (req, res) => {
+app.post(['/api/integrations/vendoor/logs/import-week', '/api/vendoor/logs/import-week'], requireSupervisor, async (req, res) => {
   try {
     const { startDate, endDate, start_date, end_date, forceMode } = req.body || {};
     const result = await importWeeklyVendoorLogs({
@@ -3242,7 +3464,7 @@ app.get('/api/integrations/vendoor/poller/status', (req, res) => {
   }
 });
 
-app.post('/api/integrations/vendoor/poller/start', (req, res) => {
+app.post('/api/integrations/vendoor/poller/start', requireSupervisor, (req, res) => {
   try {
     const intervalMs = parseInt(req.body?.intervalMs, 10) || 60000;
     const result = startAutonomousVendoorPoller({ intervalMs, forceMode: req.body?.forceMode });
@@ -3252,7 +3474,7 @@ app.post('/api/integrations/vendoor/poller/start', (req, res) => {
   }
 });
 
-app.post('/api/integrations/vendoor/poller/stop', (req, res) => {
+app.post('/api/integrations/vendoor/poller/stop', requireSupervisor, (req, res) => {
   try {
     const result = stopAutonomousVendoorPoller();
     return res.json(result);
@@ -3271,7 +3493,7 @@ app.get('/api/integrations/vendoor/identity/queue', (req, res) => {
   }
 });
 
-app.post('/api/integrations/vendoor/identity/map', (req, res) => {
+app.post('/api/integrations/vendoor/identity/map', requireSupervisor, (req, res) => {
   try {
     const { vendoor_name, employee_id, notes } = req.body || {};
     if (!vendoor_name || !employee_id) {
@@ -3284,7 +3506,7 @@ app.post('/api/integrations/vendoor/identity/map', (req, res) => {
   }
 });
 
-app.delete('/api/integrations/vendoor/identity/:id', (req, res) => {
+app.delete('/api/integrations/vendoor/identity/:id', requireSupervisor, (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const result = deleteExplicitIdentityMapping(id);
@@ -3317,7 +3539,7 @@ app.get('/api/vendoor/dispatcher/status', (req, res) => {
   }
 });
 
-app.post('/api/vendoor/dispatcher/cycle', async (req, res) => {
+app.post('/api/vendoor/dispatcher/cycle', requireSupervisor, async (req, res) => {
   try {
     const { dryRun, workDate, forceRun } = req.body || {};
     const result = await runDispatcherCycle({
@@ -3332,7 +3554,7 @@ app.post('/api/vendoor/dispatcher/cycle', async (req, res) => {
   }
 });
 
-app.post('/api/vendoor/dispatcher/start', (req, res) => {
+app.post('/api/vendoor/dispatcher/start', requireSupervisor, (req, res) => {
   try {
     const { interval_ms } = req.body || {};
     const result = startContinuousDispatcher(interval_ms);
@@ -3342,7 +3564,7 @@ app.post('/api/vendoor/dispatcher/start', (req, res) => {
   }
 });
 
-app.post('/api/vendoor/dispatcher/stop', (req, res) => {
+app.post('/api/vendoor/dispatcher/stop', requireSupervisor, (req, res) => {
   try {
     const result = stopContinuousDispatcher();
     return res.json({ success: true, ...result });
@@ -3351,7 +3573,7 @@ app.post('/api/vendoor/dispatcher/stop', (req, res) => {
   }
 });
 
-app.post('/api/vendoor/dispatcher/config', (req, res) => {
+app.post('/api/vendoor/dispatcher/config', requireSupervisor, (req, res) => {
   try {
     const updates = req.body || {};
     for (const [k, v] of Object.entries(updates)) {

@@ -351,3 +351,76 @@ export async function createZipFromEmployeeWorkbooks(employeeAllocations) {
   const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   return zipBuffer;
 }
+
+/**
+ * Creates a Canonical Contextual Export Workbook for any active UI view/screen
+ * Satisfies Sections 43-51, 72-75 of Master Architecture Contract
+ */
+export function createContextualExportWorkbook(viewContext = {}, dataset = {}) {
+  const wb = XLSX.utils.book_new();
+
+  const page = (viewContext.page || viewContext.mainPage || 'overview').toUpperCase();
+  const tab = (viewContext.tab || viewContext.subPage || 'main').toUpperCase();
+  const dateStr = viewContext.business_date || viewContext.date || new Date().toISOString().split('T')[0];
+  const timeFrom = viewContext.time_window?.from || viewContext.from || null;
+  const timeTo = viewContext.time_window?.to || viewContext.to || null;
+  const timeLabel = (timeFrom && timeTo) ? `${timeFrom} → ${timeTo}` : 'Full Business Day (All Hours)';
+  const filters = viewContext.filters || {};
+  const searchStr = viewContext.search || '';
+
+  const rows = dataset.rows || [];
+  const columns = dataset.columns || (rows.length > 0 ? Object.keys(rows[0]) : ['Message']);
+  const summary = dataset.summary || {};
+
+  // Sheet 1: Metadata / Export Header
+  const metaRows = [
+    ['CS EXECUTIVE BI — CANONICAL CONTEXTUAL EXPORT'],
+    ['CONFIDENTIAL & ENTERPRISE AUDIT GRADE'],
+    [],
+    ['METADATA FIELD', 'ACTIVE CONTEXT VALUE'],
+    ['Main Screen / Page', page],
+    ['Sub-Section / Tab', tab],
+    ['Business Date (Cairo)', dateStr],
+    ['Time Window Interval', timeLabel],
+    ['Time Semantics', '[from, to) half-open interval'],
+    ['Search Query', searchStr || '(None)'],
+    ['Active Filters', Object.keys(filters).length > 0 ? JSON.stringify(filters) : '(None)'],
+    ['Total Exported Rows', rows.length],
+    ['Generated Timestamp', new Date().toISOString()],
+    ['Data Authority', 'Canonical Central Backend Resolver']
+  ];
+
+  if (Object.keys(summary).length > 0) {
+    metaRows.push([]);
+    metaRows.push(['CONTEXT SUMMARY METRICS', 'VALUE']);
+    for (const [k, v] of Object.entries(summary)) {
+      metaRows.push([k, typeof v === 'object' ? JSON.stringify(v) : v]);
+    }
+  }
+
+  const wsMeta = XLSX.utils.aoa_to_sheet(metaRows);
+  wsMeta['!cols'] = [{ wch: 30 }, { wch: 50 }];
+  XLSX.utils.book_append_sheet(wb, wsMeta, 'Export Metadata');
+
+  // Sheet 2: Data Records
+  const headerRow = columns;
+  const dataRows = [headerRow];
+
+  for (const r of rows) {
+    if (Array.isArray(r)) {
+      dataRows.push(r);
+    } else if (typeof r === 'object' && r !== null) {
+      dataRows.push(columns.map(col => r[col] !== undefined ? r[col] : ''));
+    }
+  }
+
+  if (dataRows.length === 1) {
+    dataRows.push(['No data matching current filters in this view']);
+  }
+
+  const wsData = XLSX.utils.aoa_to_sheet(dataRows);
+  wsData['!cols'] = columns.map(c => ({ wch: Math.max(14, String(c).length + 4) }));
+  XLSX.utils.book_append_sheet(wb, wsData, `${page}_${tab}`.slice(0, 31));
+
+  return wb;
+}

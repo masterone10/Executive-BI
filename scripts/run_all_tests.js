@@ -53,11 +53,13 @@ console.log(`Duration:         ${durationSec}s`);
 if (failedFiles > 0) {
   console.log('\nFAILURES DETAILS:');
   for (const f of failures) {
-    console.log(`--- ${f.file} ---`);
-    console.log(f.output.slice(-500));
+    console.log(`\n====================================================`);
+    console.log(`FAILING TEST: ${f.file}`);
+    console.log(`====================================================`);
+    console.log(f.output || '(No output recorded)');
   }
   process.exit(1);
 } else {
-  console.log('\nALL 54 TEST FILES PASSED SUCCESSFULLY!');
+  console.log(`\nALL ${passedFiles} TEST FILES PASSED SUCCESSFULLY!`);
   process.exit(0);
 }

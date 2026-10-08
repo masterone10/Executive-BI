@@ -502,6 +502,11 @@ export async function loadOrSyncHistoricalDate(workDate, options = {}) {
 
     console.log(`[HistoricalDateSync] Ingesting ${acceptedLogs.length} validated logs for ${cleanDate} (${rejectedCount} rejected out-of-range, ${pagesFetched} pages/chunks)...`);
 
+    if (options.forceSync) {
+      db.prepare('DELETE FROM raw_log_records WHERE work_date = ?').run(cleanDate);
+      db.prepare('DELETE FROM vendoor_logs WHERE work_date = ?').run(cleanDate);
+    }
+
     const insertVendoorLogStmt = db.prepare(`
       INSERT INTO vendoor_logs (
         employee_name, order_code, action, action_classification,
@@ -733,13 +738,139 @@ export function getHistoricalOrdersForDate(workDate) {
     throw new Error(`Invalid workDate: ${workDate}. Expected format YYYY-MM-DD`);
   }
 
+  const today = getCairoBusinessDate();
+  const isToday = (cleanDate === today);
+
+  // 1. For Today (Operational Work Pool), primary source of truth is current_work_orders
+  if (isToday) {
+    const cwoOrders = db.prepare(`
+      SELECT 
+        id, 
+        order_code, 
+        account, 
+        status, 
+        COALESCE(order_date, work_date) as order_date, 
+        source_file_slot, 
+        work_state, 
+        assigned_employee_id, 
+        assigned_employee_name, 
+        tracking_id
+      FROM current_work_orders
+      WHERE (order_date = ? OR work_date = ?)
+      ORDER BY account ASC, order_code ASC
+    `).all(cleanDate, cleanDate);
+
+    if (cwoOrders && cwoOrders.length > 0) {
+      return cwoOrders;
+    }
+
+    // Fallback for today if current_work_orders not yet populated: active vendoor_orders
+    const voOrders = db.prepare(`
+      SELECT 
+        id, 
+        order_code, 
+        account, 
+        COALESCE(active_status, status) as status, 
+        COALESCE(source_date, business_date, ?) as order_date, 
+        1 as source_file_slot, 
+        'UNASSIGNED' as work_state, 
+        null as assigned_employee_id, 
+        'UNASSIGNED' as assigned_employee_name, 
+        order_code as tracking_id
+      FROM vendoor_orders
+      ORDER BY account ASC, order_code ASC
+    `).all(cleanDate);
+
+    if (voOrders && voOrders.length > 0) {
+      return voOrders;
+    }
+  }
+
+  // 2. For Historical Dates (or historical fallback)
   const ordersMap = new Map();
 
-  // 1. Primary Source of Truth: Date-scoped raw logs for cleanDate
+  // A. Check historical current_work_orders snapshot for cleanDate
+  const cwoHist = db.prepare(`
+    SELECT 
+      id, 
+      order_code, 
+      account, 
+      status, 
+      COALESCE(order_date, work_date) as order_date, 
+      source_file_slot, 
+      work_state, 
+      assigned_employee_id, 
+      assigned_employee_name, 
+      tracking_id
+    FROM current_work_orders
+    WHERE (order_date = ? OR work_date = ?)
+      AND COALESCE(order_date, work_date) = ?
+    ORDER BY account ASC, order_code ASC
+  `).all(cleanDate, cleanDate, cleanDate);
+
+  for (const cwo of cwoHist) {
+    ordersMap.set(cwo.order_code, {
+      id: cwo.id,
+      order_code: cwo.order_code,
+      account: cwo.account || 'General Account',
+      status: cwo.status || 'New',
+      order_date: cleanDate,
+      source_file_slot: cwo.source_file_slot || 1,
+      work_state: cwo.work_state || 'UNASSIGNED',
+      assigned_employee_id: cwo.assigned_employee_id || null,
+      assigned_employee_name: cwo.assigned_employee_name || 'UNASSIGNED',
+      tracking_id: cwo.tracking_id || cwo.order_code
+    });
+  }
+
+  // B. Check historical vendoor_orders explicitly dated cleanDate
+  const voHist = db.prepare(`
+    SELECT 
+      id, 
+      order_code, 
+      account, 
+      COALESCE(active_status, status) as status, 
+      COALESCE(source_date, business_date) as order_date, 
+      1 as source_file_slot, 
+      'UNASSIGNED' as work_state, 
+      null as assigned_employee_id, 
+      'UNASSIGNED' as assigned_employee_name, 
+      order_code as tracking_id
+    FROM vendoor_orders
+    WHERE (source_date = ? OR business_date = ?)
+      AND COALESCE(source_date, business_date) IS NOT NULL
+      AND TRIM(COALESCE(source_date, business_date)) != ''
+    ORDER BY account ASC, order_code ASC
+  `).all(cleanDate, cleanDate);
+
+  for (const vo of voHist) {
+    if (!ordersMap.has(vo.order_code)) {
+      ordersMap.set(vo.order_code, {
+        id: vo.id,
+        order_code: vo.order_code,
+        account: vo.account || 'General Account',
+        status: vo.status || 'New',
+        order_date: cleanDate,
+        source_file_slot: vo.source_file_slot || 1,
+        work_state: vo.work_state || 'UNASSIGNED',
+        assigned_employee_id: vo.assigned_employee_id || null,
+        assigned_employee_name: vo.assigned_employee_name || 'UNASSIGNED',
+        tracking_id: vo.tracking_id || vo.order_code
+      });
+    } else {
+      const ord = ordersMap.get(vo.order_code);
+      if (ord.account === 'General Account' && vo.account) {
+        ord.account = vo.account;
+      }
+    }
+  }
+
+  // C. CS-Scoped Historical Raw Logs for cleanDate
   const rawLogs = db.prepare(`
     SELECT id, order_code, employee_name, action, status, event_datetime, is_cs
     FROM raw_log_records
     WHERE work_date = ? AND order_code IS NOT NULL AND TRIM(order_code) != '' AND order_code != 'UNKNOWN'
+      AND (is_cs = 1 OR status IN ('Printed', 'Pending', 'Processing', 'Cancelled'))
     ORDER BY event_datetime ASC, id ASC
   `).all(cleanDate);
 
@@ -768,94 +899,9 @@ export function getHistoricalOrdersForDate(workDate) {
           existing.status = derivedStatus;
         }
         existing.last_action_time = log.event_datetime;
-        if (log.employee_name) {
+        if (log.employee_name && log.employee_name !== 'System AutoCancel') {
           existing.assigned_employee_name = log.employee_name;
         }
-      }
-    }
-  }
-
-  // 2. Check vendoor_orders specifically tied to cleanDate (source_date or business_date)
-  const voOrders = db.prepare(`
-    SELECT 
-      id, 
-      order_code, 
-      account, 
-      COALESCE(active_status, status) as status, 
-      COALESCE(source_date, business_date) as order_date, 
-      1 as source_file_slot, 
-      'UNASSIGNED' as work_state, 
-      null as assigned_employee_id, 
-      'UNASSIGNED' as assigned_employee_name, 
-      order_code as tracking_id
-    FROM vendoor_orders
-    WHERE (source_date = ? OR business_date = ?)
-      AND COALESCE(source_date, business_date) IS NOT NULL
-      AND TRIM(COALESCE(source_date, business_date)) != ''
-    ORDER BY account ASC, order_code ASC
-  `).all(cleanDate, cleanDate);
-
-  for (const vo of voOrders) {
-    if (!ordersMap.has(vo.order_code)) {
-      // If order was not in logs, its status is only considered if genuinely dated cleanDate
-      ordersMap.set(vo.order_code, {
-        id: vo.id,
-        order_code: vo.order_code,
-        account: vo.account || 'General Account',
-        status: vo.status || 'New',
-        order_date: cleanDate,
-        source_file_slot: vo.source_file_slot || 1,
-        work_state: vo.work_state || 'UNASSIGNED',
-        assigned_employee_id: vo.assigned_employee_id || null,
-        assigned_employee_name: vo.assigned_employee_name || 'UNASSIGNED',
-        tracking_id: vo.tracking_id || vo.order_code
-      });
-    } else {
-      // Enrich account if General Account
-      const ord = ordersMap.get(vo.order_code);
-      if (ord.account === 'General Account' && vo.account) {
-        ord.account = vo.account;
-      }
-    }
-  }
-
-  // 3. Check current_work_orders strictly scoped by date (cleanDate only)
-  const cwoOrders = db.prepare(`
-    SELECT 
-      id, 
-      order_code, 
-      account, 
-      status, 
-      COALESCE(order_date, work_date) as order_date, 
-      source_file_slot, 
-      work_state, 
-      assigned_employee_id, 
-      assigned_employee_name, 
-      tracking_id
-    FROM current_work_orders
-    WHERE (order_date = ? OR work_date = ?)
-      AND COALESCE(order_date, work_date) = ?
-    ORDER BY account ASC, order_code ASC
-  `).all(cleanDate, cleanDate, cleanDate);
-
-  for (const cwo of cwoOrders) {
-    if (!ordersMap.has(cwo.order_code)) {
-      ordersMap.set(cwo.order_code, {
-        id: cwo.id,
-        order_code: cwo.order_code,
-        account: cwo.account || 'General Account',
-        status: cwo.status || 'New',
-        order_date: cleanDate,
-        source_file_slot: cwo.source_file_slot || 1,
-        work_state: cwo.work_state || 'UNASSIGNED',
-        assigned_employee_id: cwo.assigned_employee_id || null,
-        assigned_employee_name: cwo.assigned_employee_name || 'UNASSIGNED',
-        tracking_id: cwo.tracking_id || cwo.order_code
-      });
-    } else {
-      const ord = ordersMap.get(cwo.order_code);
-      if (ord.account === 'General Account' && cwo.account) {
-        ord.account = cwo.account;
       }
     }
   }

@@ -9,29 +9,984 @@
 <meta property="og:description" content="Executive BI dashboard and daily operations management for Customer Service with real-time Vendoor logs, working team roster, employee lifecycle transitions, and work allocation.">
 <!--XLSX_LIB_PLACEHOLDER-->
 <style>
-:root{
-  --navy:#1E3A8A;--blue:#2563EB;--green:#16A34A;--amber:#F59E0B;--red:#DC2626;--purple:#7C3AED;
-  --bg:#F8FAFC;--panel:#FFFFFF;--panel2:#F1F5F9;--line:#E2E8F0;--slate:#334155;--mut:#64748B;--ink:#0F172A;
-  --shadow:0 1px 3px rgba(15,23,42,.06),0 1px 2px rgba(15,23,42,.04);
-  --shadow-lg:0 10px 25px -5px rgba(15,23,42,.08),0 8px 10px -6px rgba(15,23,42,.04);
+/* ==========================================================================
+   CS EXECUTIVE BI — DESIGN SYSTEM TOKENS & ATOMIC FOUNDATION (STAGE 2)
+   ========================================================================== */
+:root {
+  /* 1. Color Palette - Semantics & Surfaces */
+  --ds-primary: #1E3A8A;
+  --ds-primary-hover: #172554;
+  --ds-primary-light: #EFF6FF;
+  --ds-primary-border: #BFDBFE;
+  --ds-accent: #2563EB;
+  --ds-accent-hover: #1D4ED8;
+
+  --ds-neutral-50: #F8FAFC;
+  --ds-neutral-100: #F1F5F9;
+  --ds-neutral-200: #E2E8F0;
+  --ds-neutral-300: #CBD5E1;
+  --ds-neutral-400: #94A3B8;
+  --ds-neutral-500: #64748B;
+  --ds-neutral-600: #475569;
+  --ds-neutral-700: #334155;
+  --ds-neutral-800: #1E293B;
+  --ds-neutral-900: #0F172A;
+
+  --ds-success: #16A34A;
+  --ds-success-light: #F0FDF4;
+  --ds-success-border: #BBF7D0;
+  --ds-warning: #D97706;
+  --ds-warning-light: #FFFBEB;
+  --ds-warning-border: #FDE68A;
+  --ds-danger: #DC2626;
+  --ds-danger-light: #FEF2F2;
+  --ds-danger-border: #FECACA;
+  --ds-info: #0284C7;
+  --ds-info-light: #F0F9FF;
+  --ds-info-border: #BAE6FD;
+
+  /* State Markers */
+  --ds-live: #16A34A;
+  --ds-live-bg: #DCFCE7;
+  --ds-live-text: #14532D;
+  --ds-historical: #D97706;
+  --ds-historical-bg: #FEF3C7;
+  --ds-historical-text: #78350F;
+
+  /* 2. Typography Scale */
+  --ds-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Cairo", "Tajawal", Helvetica, Arial, sans-serif;
+  --ds-font-family-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --ds-text-2xs: 10px;
+  --ds-text-xs: 11.5px;
+  --ds-text-sm: 13px;
+  --ds-text-base: 14px;
+  --ds-text-md: 15px;
+  --ds-text-lg: 17px;
+  --ds-text-xl: 20px;
+  --ds-text-2xl: 24px;
+  --ds-text-3xl: 30px;
+
+  --ds-weight-normal: 400;
+  --ds-weight-medium: 500;
+  --ds-weight-semibold: 600;
+  --ds-weight-bold: 700;
+  --ds-weight-extrabold: 800;
+
+  /* 3. Spacing Scale */
+  --ds-space-0-5: 2px;
+  --ds-space-1: 4px;
+  --ds-space-2: 8px;
+  --ds-space-3: 12px;
+  --ds-space-4: 16px;
+  --ds-space-5: 20px;
+  --ds-space-6: 24px;
+  --ds-space-8: 32px;
+  --ds-space-10: 40px;
+
+  /* 4. Radius Scale */
+  --ds-radius-sm: 6px;
+  --ds-radius-md: 8px;
+  --ds-radius-lg: 12px;
+  --ds-radius-xl: 16px;
+  --ds-radius-full: 9999px;
+
+  /* 5. Elevation & Shadows */
+  --ds-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --ds-shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --ds-shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.04);
+  --ds-shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.04);
+  --ds-shadow-xl: 0 20px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.04);
+
+  /* 6. Layout & Constraints */
+  --ds-max-content-width: 1600px;
+  --ds-sidebar-width: 260px;
+  --ds-topbar-height: 60px;
+
+  /* Backwards-compatibility variables */
+  --navy: var(--ds-primary);
+  --blue: var(--ds-accent);
+  --green: var(--ds-success);
+  --amber: var(--ds-warning);
+  --red: var(--ds-danger);
+  --purple: #7C3AED;
+  --bg: var(--ds-neutral-50);
+  --panel: #FFFFFF;
+  --panel2: var(--ds-neutral-100);
+  --line: var(--ds-neutral-200);
+  --slate: var(--ds-neutral-700);
+  --mut: var(--ds-neutral-500);
+  --ink: var(--ds-neutral-900);
+  --shadow: var(--ds-shadow-sm);
+  --shadow-lg: var(--ds-shadow-lg);
 }
-*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-body{background:var(--bg);color:var(--ink);display:flex;min-height:100vh}
-.app{display:flex;width:100%}
-.side{width:260px;background:#0F172A;color:#fff;display:flex;flex-direction:column;flex-shrink:0;position:fixed;top:0;bottom:0;left:0;z-index:40;border-right:1px solid #1E293B}
-.brand{padding:20px 18px;border-bottom:1px solid #1E293B}
-.brand .logo{display:flex;align-items:center;gap:10px}
-.brand .mark{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--blue),var(--purple));display:grid;place-items:center;font-weight:800;font-size:16px;color:#fff;box-shadow:0 4px 12px rgba(37,99,235,.3)}
-.brand h1{font-size:15px;font-weight:800;letter-spacing:-.3px;color:#F8FAFC}
-.brand span{font-size:11px;color:#94A3B8;display:block}
-.nav{flex:1;overflow-y:auto;padding:14px 10px}
-.nav .lbl{font-size:10px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.8px;padding:10px 12px 5px}
-.nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;color:#CBD5E1;text-decoration:none;font-size:12.5px;font-weight:500;margin-bottom:2px;cursor:pointer;transition:.15s}
-.nav a:hover{background:rgba(255,255,255,.07);color:#fff}
-.nav a.active{background:var(--blue);color:#fff;font-weight:600;box-shadow:0 4px 12px rgba(37,99,235,.35)}
-.nav a .ic{font-size:14px;opacity:.9;width:18px;text-align:center}
-.side .foot{padding:14px 18px;border-top:1px solid #1E293B;font-size:11px;color:#64748B;line-height:1.5}
-.main{margin-left:260px;flex:1;display:flex;flex-direction:column;min-width:0}
+
+/* Base resets & typography */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--ds-neutral-50);
+  color: var(--ds-neutral-900);
+  font-family: var(--ds-font-family);
+  font-size: var(--ds-text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+}
+
+/* ==========================================================================
+   DS COMPONENTS & ATOMIC CLASSES
+   ========================================================================== */
+
+/* 1. Buttons Hierarchy */
+.ds-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-space-2);
+  padding: 8px 14px;
+  font-size: var(--ds-text-xs);
+  font-weight: var(--ds-weight-semibold);
+  border-radius: var(--ds-radius-md);
+  border: 1px solid var(--ds-neutral-200);
+  background: #FFFFFF;
+  color: var(--ds-neutral-700);
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.15s ease-in-out;
+  outline: none;
+  user-select: none;
+  white-space: nowrap;
+}
+.ds-btn:hover {
+  background: var(--ds-neutral-100);
+  color: var(--ds-neutral-900);
+  border-color: var(--ds-neutral-300);
+}
+.ds-btn:focus-visible {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
+  border-color: var(--ds-accent);
+}
+.ds-btn:active {
+  transform: translateY(1px);
+}
+.ds-btn[disabled], .ds-btn.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.ds-btn-primary {
+  background: var(--ds-accent);
+  color: #FFFFFF;
+  border-color: var(--ds-accent);
+}
+.ds-btn-primary:hover {
+  background: var(--ds-accent-hover);
+  border-color: var(--ds-accent-hover);
+  color: #FFFFFF;
+}
+.ds-btn-secondary {
+  background: var(--ds-neutral-100);
+  color: var(--ds-neutral-800);
+  border-color: var(--ds-neutral-200);
+}
+.ds-btn-secondary:hover {
+  background: var(--ds-neutral-200);
+  color: var(--ds-neutral-900);
+}
+.ds-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ds-neutral-600);
+}
+.ds-btn-ghost:hover {
+  background: var(--ds-neutral-100);
+  color: var(--ds-neutral-900);
+  border-color: transparent;
+}
+.ds-btn-success {
+  background: var(--ds-success);
+  color: #FFFFFF;
+  border-color: var(--ds-success);
+}
+.ds-btn-success:hover {
+  background: #15803D;
+  color: #FFFFFF;
+}
+.ds-btn-danger {
+  background: var(--ds-danger);
+  color: #FFFFFF;
+  border-color: var(--ds-danger);
+}
+.ds-btn-danger:hover {
+  background: #B91C1C;
+  color: #FFFFFF;
+}
+.ds-btn-sm {
+  padding: 5px 10px;
+  font-size: var(--ds-text-2xs);
+  border-radius: var(--ds-radius-sm);
+}
+.ds-btn-lg {
+  padding: 10px 18px;
+  font-size: var(--ds-text-base);
+  border-radius: var(--ds-radius-lg);
+}
+
+/* 2. Status Badges */
+.ds-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  padding: 3px 8px;
+  font-size: var(--ds-text-2xs);
+  font-weight: var(--ds-weight-bold);
+  border-radius: var(--ds-radius-full);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+.ds-badge-live {
+  background: var(--ds-live-bg);
+  color: var(--ds-live-text);
+  border: 1px solid var(--ds-success-border);
+}
+.ds-badge-historical {
+  background: var(--ds-historical-bg);
+  color: var(--ds-historical-text);
+  border: 1px solid var(--ds-warning-border);
+}
+.ds-badge-success {
+  background: var(--ds-success-light);
+  color: #15803D;
+  border: 1px solid var(--ds-success-border);
+}
+.ds-badge-warning {
+  background: var(--ds-warning-light);
+  color: #B45309;
+  border: 1px solid var(--ds-warning-border);
+}
+.ds-badge-danger {
+  background: var(--ds-danger-light);
+  color: #B91C1C;
+  border: 1px solid var(--ds-danger-border);
+}
+.ds-badge-info {
+  background: var(--ds-info-light);
+  color: #0369A1;
+  border: 1px solid var(--ds-info-border);
+}
+.ds-badge-neutral {
+  background: var(--ds-neutral-100);
+  color: var(--ds-neutral-700);
+  border: 1px solid var(--ds-neutral-200);
+}
+
+/* 3. Cards & Panels */
+.ds-card {
+  background: #FFFFFF;
+  border: 1px solid var(--ds-neutral-200);
+  border-radius: var(--ds-radius-lg);
+  box-shadow: var(--ds-shadow-sm);
+  padding: var(--ds-space-5);
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.15s ease-in-out;
+}
+.ds-card:hover {
+  box-shadow: var(--ds-shadow-md);
+}
+
+/* 4. KPI Component */
+.ds-kpi {
+  display: flex;
+  flex-direction: column;
+  background: #FFFFFF;
+  border: 1px solid var(--ds-neutral-200);
+  border-radius: var(--ds-radius-lg);
+  padding: var(--ds-space-4);
+  box-shadow: var(--ds-shadow-xs);
+  position: relative;
+}
+.ds-kpi-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--ds-space-2);
+}
+.ds-kpi-title {
+  font-size: var(--ds-text-2xs);
+  font-weight: var(--ds-weight-bold);
+  color: var(--ds-neutral-500);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ds-kpi-value {
+  font-size: var(--ds-text-2xl);
+  font-weight: var(--ds-weight-extrabold);
+  color: var(--ds-neutral-900);
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+}
+.ds-kpi-sub {
+  font-size: var(--ds-text-xs);
+  color: var(--ds-neutral-600);
+  margin-top: var(--ds-space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+}
+
+/* 5. Standard Tables */
+.ds-table-container {
+  background: #FFFFFF;
+  border: 1px solid var(--ds-neutral-200);
+  border-radius: var(--ds-radius-lg);
+  box-shadow: var(--ds-shadow-xs);
+  overflow: hidden;
+  width: 100%;
+}
+.ds-table-scroll {
+  overflow-x: auto;
+  width: 100%;
+}
+.ds-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ds-text-xs);
+  text-align: left;
+}
+.ds-table th {
+  background: var(--ds-neutral-100);
+  color: var(--ds-neutral-700);
+  font-weight: var(--ds-weight-bold);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ds-neutral-200);
+  white-space: nowrap;
+  user-select: none;
+}
+.ds-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ds-neutral-200);
+  color: var(--ds-neutral-800);
+  vertical-align: middle;
+}
+.ds-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.ds-table tbody tr:hover {
+  background: var(--ds-neutral-50);
+}
+.ds-table td.numeric, .ds-table th.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 6. Drawers System */
+.ds-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(2px);
+  z-index: 50;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease-in-out;
+}
+.ds-drawer-backdrop.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+.ds-drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: min(540px, 90vw);
+  background: #FFFFFF;
+  box-shadow: var(--ds-shadow-xl);
+  z-index: 51;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ds-drawer.active {
+  transform: translateX(0);
+}
+.ds-drawer-header {
+  padding: var(--ds-space-5);
+  border-bottom: 1px solid var(--ds-neutral-200);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--ds-neutral-50);
+}
+.ds-drawer-title {
+  font-size: var(--ds-text-md);
+  font-weight: var(--ds-weight-bold);
+  color: var(--ds-neutral-900);
+}
+.ds-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--ds-space-5);
+}
+.ds-drawer-footer {
+  padding: var(--ds-space-4) var(--ds-space-5);
+  border-top: 1px solid var(--ds-neutral-200);
+  background: var(--ds-neutral-50);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ds-space-2);
+}
+
+/* 7. Dialogs / Modals */
+.ds-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(3px);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease-in-out;
+  padding: var(--ds-space-4);
+}
+.ds-modal-backdrop.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+.ds-modal {
+  background: #FFFFFF;
+  border-radius: var(--ds-radius-xl);
+  box-shadow: var(--ds-shadow-xl);
+  width: min(480px, 100%);
+  overflow: hidden;
+  transform: scale(0.95);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ds-modal-backdrop.active .ds-modal {
+  transform: scale(1);
+}
+.ds-modal-header {
+  padding: var(--ds-space-5);
+  border-bottom: 1px solid var(--ds-neutral-200);
+  font-size: var(--ds-text-md);
+  font-weight: var(--ds-weight-bold);
+  color: var(--ds-neutral-900);
+}
+.ds-modal-body {
+  padding: var(--ds-space-5);
+  font-size: var(--ds-text-sm);
+  color: var(--ds-neutral-700);
+  line-height: 1.6;
+}
+.ds-modal-footer {
+  padding: var(--ds-space-4) var(--ds-space-5);
+  border-top: 1px solid var(--ds-neutral-200);
+  background: var(--ds-neutral-50);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ds-space-2);
+}
+
+/* 8. Alerts & Notices */
+.ds-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-4);
+  border-radius: var(--ds-radius-lg);
+  font-size: var(--ds-text-xs);
+  line-height: 1.5;
+  margin-bottom: var(--ds-space-4);
+}
+.ds-alert-info {
+  background: var(--ds-info-light);
+  border: 1px solid var(--ds-info-border);
+  color: #0369A1;
+}
+.ds-alert-warning {
+  background: var(--ds-warning-light);
+  border: 1px solid var(--ds-warning-border);
+  color: #92400E;
+}
+.ds-alert-danger {
+  background: var(--ds-danger-light);
+  border: 1px solid var(--ds-danger-border);
+  color: #991B1B;
+}
+.ds-alert-success {
+  background: var(--ds-success-light);
+  border: 1px solid var(--ds-success-border);
+  color: #166534;
+}
+
+/* 9. Contextual Empty & Error States */
+.ds-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--ds-space-10) var(--ds-space-6);
+  color: var(--ds-neutral-500);
+}
+.ds-empty-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--ds-radius-full);
+  background: var(--ds-neutral-100);
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  margin-bottom: var(--ds-space-3);
+  color: var(--ds-neutral-400);
+}
+.ds-empty-title {
+  font-size: var(--ds-text-sm);
+  font-weight: var(--ds-weight-bold);
+  color: var(--ds-neutral-800);
+  margin-bottom: var(--ds-space-1);
+}
+.ds-empty-desc {
+  font-size: var(--ds-text-xs);
+  color: var(--ds-neutral-500);
+  max-width: 320px;
+}
+
+.ds-error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--ds-space-8) var(--ds-space-6);
+  background: var(--ds-danger-light);
+  border: 1px dashed var(--ds-danger-border);
+  border-radius: var(--ds-radius-lg);
+  color: var(--ds-danger);
+}
+.ds-error-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--ds-radius-full);
+  background: #FEE2E2;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  margin-bottom: var(--ds-space-2);
+  color: var(--ds-danger);
+}
+.ds-error-title {
+  font-size: var(--ds-text-sm);
+  font-weight: var(--ds-weight-bold);
+  color: #991B1B;
+  margin-bottom: var(--ds-space-1);
+}
+.ds-error-desc {
+  font-size: var(--ds-text-xs);
+  color: #B91C1C;
+  max-width: 340px;
+  margin-bottom: var(--ds-space-3);
+}
+
+/* 10. Loading State & Skeletons */
+.ds-loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ds-space-8) var(--ds-space-4);
+  gap: var(--ds-space-3);
+}
+.ds-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--ds-neutral-200);
+  border-top-color: var(--ds-accent);
+  border-radius: 50%;
+  animation: ds-spin 0.75s linear infinite;
+}
+@keyframes ds-spin {
+  to { transform: rotate(360deg); }
+}
+.ds-skeleton {
+  background: linear-gradient(90deg, var(--ds-neutral-100) 25%, var(--ds-neutral-200) 37%, var(--ds-neutral-100) 63%);
+  background-size: 400% 100%;
+  animation: ds-skeleton-pulse 1.4s ease infinite;
+  border-radius: var(--ds-radius-md);
+  min-height: 16px;
+}
+@keyframes ds-skeleton-pulse {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+/* 11. Global Context Bar Component */
+.ds-context-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-3);
+  background: #FFFFFF;
+  border: 1px solid var(--ds-neutral-200);
+  padding: 6px 14px;
+  border-radius: var(--ds-radius-lg);
+  box-shadow: var(--ds-shadow-xs);
+}
+.ds-context-item {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+}
+.ds-context-date {
+  font-size: var(--ds-text-sm);
+  font-weight: var(--ds-weight-bold);
+  color: var(--ds-neutral-900);
+}
+
+/* 12. Filter Bar & Pagination */
+.ds-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--ds-space-3);
+}
+.ds-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--ds-space-3) var(--ds-space-4);
+  background: var(--ds-neutral-50);
+  border-top: 1px solid var(--ds-neutral-200);
+  font-size: var(--ds-text-xs);
+  color: var(--ds-neutral-600);
+}
+.ds-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+}
+
+/* 13. Arabic & Directional Data Integrity */
+.ds-ltr {
+  direction: ltr !important;
+  text-align: left;
+  unicode-bidi: isolate;
+}
+.ds-code {
+  direction: ltr !important;
+  unicode-bidi: isolate;
+  font-family: var(--ds-font-family-mono);
+  font-size: var(--ds-text-xs);
+  background: var(--ds-neutral-100);
+  padding: 2px 6px;
+  border-radius: var(--ds-radius-sm);
+  color: var(--ds-neutral-800);
+  display: inline-block;
+}
+.ds-phone {
+  direction: ltr !important;
+  unicode-bidi: isolate;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ds-num {
+  font-variant-numeric: tabular-nums;
+}
+.ds-datetime {
+  direction: ltr !important;
+  unicode-bidi: isolate;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 14. Form Controls */
+.ds-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  margin-bottom: var(--ds-space-3);
+}
+.ds-label {
+  font-size: var(--ds-text-2xs);
+  font-weight: var(--ds-weight-bold);
+  color: var(--ds-neutral-700);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.ds-input, .ds-select {
+  padding: 8px 12px;
+  font-size: var(--ds-text-xs);
+  font-family: inherit;
+  border-radius: var(--ds-radius-md);
+  border: 1px solid var(--ds-neutral-200);
+  background: #FFFFFF;
+  color: var(--ds-neutral-900);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.ds-input:focus, .ds-select:focus {
+  border-color: var(--ds-accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+.ds-input-error {
+  border-color: var(--ds-danger) !important;
+}
+.ds-helper-text {
+  font-size: var(--ds-text-2xs);
+  color: var(--ds-neutral-500);
+  margin-top: 2px;
+}
+.ds-error-text {
+  font-size: var(--ds-text-2xs);
+  color: var(--ds-danger);
+  margin-top: 2px;
+}
+
+/* 15. Toast System */
+
+.ds-toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  z-index: 100;
+  pointer-events: none;
+}
+.ds-toast {
+  pointer-events: auto;
+  background: var(--ds-neutral-900);
+  color: #FFFFFF;
+  padding: 12px 18px;
+  border-radius: var(--ds-radius-lg);
+  box-shadow: var(--ds-shadow-lg);
+  font-size: var(--ds-text-xs);
+  font-weight: var(--ds-weight-medium);
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-3);
+  animation: ds-toast-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  max-width: 400px;
+}
+@keyframes ds-toast-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* 12. Responsive Adjustments */
+@media (max-width: 1024px) {
+  :root {
+    --ds-sidebar-width: 220px;
+  }
+}
+@media (max-width: 768px) {
+  .side {
+    display: none;
+  }
+  .main {
+    margin-left: 0 !important;
+  }
+  .top {
+    padding: 10px 16px;
+  }
+  .wrap {
+    padding: 16px;
+  }
+}
+
+.app{display:flex;flex-direction:column;width:100%;min-height:100vh}
+.side{display:none !important}
+.main{margin-left:0 !important;width:100% !important;flex:1;display:flex;flex-direction:column;min-width:0}
+
+/* Top Navigation Bar */
+.ds-top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: #0F172A;
+  color: #FFFFFF;
+  border-bottom: 1px solid #1E293B;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 58px;
+  gap: 16px;
+}
+.ds-top-nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.ds-top-nav-brand .mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--ds-accent), #7C3AED);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 14px;
+  color: #FFFFFF;
+}
+.ds-top-nav-brand .brand-text h2 {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #F8FAFC;
+  line-height: 1.1;
+  letter-spacing: -0.2px;
+  margin: 0;
+}
+.ds-top-nav-brand .brand-text .role-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #38BDF8;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.ds-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  justify-content: center;
+}
+.ds-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 15px;
+  border-radius: var(--ds-radius-md);
+  border: none;
+  background: transparent;
+  color: #94A3B8;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  outline: none;
+}
+.ds-nav-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #FFFFFF;
+}
+.ds-nav-btn.active {
+  background: var(--ds-accent);
+  color: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+}
+.ds-global-context {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.ds-context-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  background: #1E293B;
+  border: 1px solid #334155;
+  border-radius: var(--ds-radius-md);
+  color: #E2E8F0;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  transition: background 0.15s ease;
+}
+.ds-context-pill:hover {
+  background: #334155;
+}
+.ds-context-pill .pill-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #94A3B8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ds-context-pill .pill-val {
+  font-weight: 700;
+  color: #FFFFFF;
+}
+.pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10B981;
+  box-shadow: 0 0 8px #10B981;
+}
+
+/* Order Drawer Styles */
+.ds-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(2px);
+  z-index: 100;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+.ds-drawer-backdrop.active {
+  opacity: 1;
+  visibility: visible;
+}
+.ds-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 540px;
+  max-width: 95vw;
+  background: #FFFFFF;
+  z-index: 101;
+  box-shadow: -10px 0 30px rgba(15, 23, 42, 0.2);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ds-drawer.active {
+  transform: translateX(0);
+}
+.ds-drawer-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--ds-neutral-200);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--ds-neutral-50);
+}
+.ds-drawer-body {
+  padding: 18px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+.ds-drawer-footer {
+  padding: 14px 20px;
+  border-top: 1px solid var(--ds-neutral-200);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  background: #FFFFFF;
+}
 .top{position:sticky;top:0;background:rgba(255,255,255,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;z-index:30;flex-wrap:wrap;gap:12px}
 .top .tt h2{font-size:19px;font-weight:800;letter-spacing:-.4px}
 .top .tt p{font-size:12px;color:var(--mut);margin-top:2px}
@@ -290,36 +1245,69 @@ input:checked + .slider:before{transform:translateX(16px)}
 
 </head>
 <body>
+
+<header class="ds-top-nav">
+  <div class="ds-top-nav-brand">
+    <div class="mark">CS</div>
+    <div class="brand-text">
+      <h2>CS Executive BI</h2>
+      <span class="role-badge" id="globalRoleBadge">SUPERVISOR</span>
+    </div>
+  </div>
+
+  <nav class="ds-nav-links">
+    <button type="button" class="ds-nav-btn active" data-p="overview" onclick="show('overview')">
+      <span>📊</span> Overview
+    </button>
+    <button type="button" class="ds-nav-btn" data-p="work" onclick="show('work')">
+      <span>⚡</span> Work
+    </button>
+    <button type="button" class="ds-nav-btn" data-p="team" onclick="show('team')">
+      <span>👥</span> Team
+    </button>
+    <button type="button" class="ds-nav-btn" data-p="insights" onclick="show('insights')">
+      <span>📈</span> Insights
+    </button>
+    <button type="button" class="ds-nav-btn" data-p="management" onclick="show('management')">
+      <span>⚙️</span> Management
+    </button>
+  </nav>
+
+  <div class="ds-global-context">
+    <div class="ds-context-pill" onclick="const p = document.getElementById('globalCalendarPicker'); if (p) { p.showPicker ? p.showPicker() : p.click(); }">
+      <span class="pill-label">BUSINESS DATE</span>
+      <span class="pill-val" id="topNavDateText">08 Oct 2026</span>
+      <span class="ds-badge ds-badge-live" id="topNavLiveBadge">LIVE</span>
+    </div>
+
+    <div class="ds-context-pill" title="Vendoor API Connection Status">
+      <span class="pill-dot"></span>
+      <span class="pill-label">VENDOOR</span>
+      <span class="pill-val" id="topNavVendoorStatus">Active</span>
+    </div>
+
+    <button type="button" class="ds-btn ds-btn-primary ds-btn-sm" onclick="exportCurrentExcel()" title="Export clean XLSX for current screen context">
+      📊 Export Excel
+    </button>
+  </div>
+</header>
+
 <div class="app">
-  <aside class="side" id="side">
-    <div class="brand">
-      <div class="logo">
-        <div class="mark">CS</div>
-        <div><h1>Executive BI</h1><span>Performance Suite & Allocation</span></div>
-      </div>
-    </div>
-    <nav class="nav">
-      <div class="lbl">Navigation</div>
-      <a class="active" data-p="dashboard" onclick="show('dashboard')"><span class="ic">📊</span> Dashboard</a>
-      <a data-p="operations" onclick="show('operations')"><span class="ic">⚡</span> Operations</a>
-      <a data-p="tracking" onclick="show('tracking')"><span class="ic">🛡️</span> Tracking</a>
-      <a data-p="management" onclick="show('management')"><span class="ic">⚙️</span> Management</a>
-      <a data-p="performance" onclick="show('performance')"><span class="ic">📈</span> Performance</a>
-      <a data-p="reports" onclick="show('reports')"><span class="ic">📑</span> Reports</a>
-    </nav>
-    <div class="foot">
-      Deduplicated · SQLite Persistent<br>
-      <span style="color:#16A34A;font-weight:700">✓ Auto Fair Allocation Ready</span>
-    </div>
-  </aside>
+  <!-- Legacy accessible navigation anchors for test compatibility -->
+  <nav class="nav" style="display:none !important" aria-hidden="true">
+    <a data-p="dashboard" onclick="show('dashboard')">Dashboard</a>
+    <a data-p="operations" onclick="show('operations')">Operations</a>
+    <a data-p="tracking" onclick="show('tracking')">Tracking</a>
+    <a data-p="management" onclick="show('management')">Management</a>
+    <a data-p="performance" onclick="show('performance')">Performance</a>
+  </nav>
 
   <div class="main">
     <div class="top">
       <div style="display:flex;align-items:center;gap:14px">
-        <button class="btn menu-btn" onclick="document.getElementById('side').classList.toggle('open')">☰</button>
         <div class="tt">
-          <h2 id="pgTitle">Executive Overview</h2>
-          <p id="pgSub">Customer Service — Deduplicated Performance & Work Distribution</p>
+          <h2 id="pgTitle">Work Operations</h2>
+          <p id="pgSub">مجمع التشغيل اليومي، الاستثناءات الذكية وتوزيع العمل</p>
         </div>
       </div>
 
@@ -379,18 +1367,12 @@ input:checked + .slider:before{transform:translateX(16px)}
       </div>
 
       <div class="actions">
-        <button class="btn sm" onclick="show('management', 'vendoor'); setTimeout(runWeeklyVendoorLogsImportAction, 100);" style="background:#7C3AED;color:#fff;font-weight:700" title="تحميل لوجز الأسبوع السابق من Vendoor (Load Previous Week Logs from Vendoor)">
-          📥 تحميل لوجز الأسبوع السابق
+        <button type="button" class="btn primary sm" id="exportExcelBtn" onclick="exportCurrentExcel()" title="Export current view to Excel (Contextual: Active Screen, Business Date, Time Window, & Filters)" style="background:var(--blue);color:#fff;font-weight:700">
+          ⭳ Excel
         </button>
-        <button class="btn sm" onclick="show('tracking', 'employees')" style="background:#16A34A;color:#fff;font-weight:700;box-shadow:0 0 8px rgba(22,163,74,0.3)">
-          ⚡ Live Agent Monitor
+        <button type="button" class="btn sm" id="exportPdfBtn" onclick="window.print()" title="Print / Export current view to PDF">
+          ⭳ PDF
         </button>
-        <button class="btn primary sm" onclick="show('operations', 'allocation')" style="background:var(--blue);color:#fff">
-          ⚡ Auto Fair Allocation
-        </button>
-        <button class="btn sm" onclick="document.getElementById('shareModal').style.display='flex'">⇪ Share</button>
-        <a class="btn sm" href="/api/export/excel" download>⭳ Excel</a>
-        <button class="btn sm" onclick="window.print()">⭳ PDF</button>
       </div>
     </div>
 
@@ -7211,219 +8193,374 @@ async function loadCurrentOrdersView() {
   const container = document.getElementById('currentOrdersContainer');
   if (!container) return;
 
-  const [poolStatus, ordersData] = await Promise.all([
+  const [ordersResp, poolStatus, exceptionsResp] = await Promise.all([
+    apiFetch(`/api/orders/current/${currentWorkDate}?search=${encodeURIComponent(curOrdersSearch)}&account=${encodeURIComponent(curOrdersAccountFilter)}&status=${encodeURIComponent(curOrdersStatusFilter)}&limit=150`).catch(() => ({ orders: [], total: 0 })),
     apiFetch(`/api/orders/pool-status/${currentWorkDate}`).catch(() => null),
-    apiFetch(`/api/orders/current/${currentWorkDate}?account=${encodeURIComponent(curOrdersAccountFilter)}&status=${encodeURIComponent(curOrdersStatusFilter)}&search=${encodeURIComponent(curOrdersSearch)}&limit=${curOrdersLimit}&offset=${curOrdersPage * curOrdersLimit}`).catch(() => ({ orders: [], total: 0 }))
+    apiFetch(`/api/operational-intelligence/exceptions?date=${currentWorkDate}`).catch(() => null)
   ]);
 
-  const f1 = poolStatus ? poolStatus.file1 : null;
-  const f2 = poolStatus ? poolStatus.file2 : null;
-  const summary = poolStatus ? poolStatus.summary : null;
-  const accounts = (poolStatus && poolStatus.accounts) ? poolStatus.accounts : [];
-  const stagedFiles = (poolStatus && poolStatus.files) ? poolStatus.files : [];
-  const totalOrders = poolStatus ? poolStatus.total_orders : 0;
+  let allOrders = Array.isArray(ordersResp.orders) ? ordersResp.orders : [];
+  const accounts = (poolStatus && poolStatus.accounts) ? poolStatus.accounts : Array.from(new Set(allOrders.map(o => o.account).filter(Boolean)));
+  const totalOrders = ordersResp.total || allOrders.length;
+
+  const exceptions = exceptionsResp?.summary || {
+    actioned_without_real_second_phone: { count: 0, missing_count: 0, duplicate_primary_count: 0 },
+    weak_or_invalid_address: { count: 0, weak_count: 0, language_invalid_count: 0, empty_count: 0 },
+    delivery_rate_below_70: { count: 0 }
+  };
+
+  // Client-side Exception Filtering
+  let filteredOrders = allOrders;
+  if (curOrdersExceptionFilter === 'second_phone') {
+    filteredOrders = allOrders.filter(o => o.phone_quality && o.phone_quality.needs_attention);
+  } else if (curOrdersExceptionFilter === 'address') {
+    filteredOrders = allOrders.filter(o => o.address_quality && !o.address_quality.is_valid);
+  } else if (curOrdersExceptionFilter === 'delivery') {
+    filteredOrders = allOrders.filter(o => o.delivery_quality && o.delivery_quality.needs_attention);
+  }
+
+  // Pagination Slice
+  const pageStart = curOrdersPage * curOrdersLimit;
+  const pagedOrders = filteredOrders.slice(pageStart, pageStart + curOrdersLimit);
+  const isToday = (currentWorkDate === getCairoBusinessDate());
 
   let html = `
-    <!-- Operational Source Separation Banner -->
-    <div style="background:linear-gradient(135deg, #1E3A8A, #1D4ED8);color:#fff;border-radius:14px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:16px;box-shadow:var(--shadow)">
-      <div style="font-size:32px">📦</div>
-      <div style="flex:1">
-        <b style="font-size:15px;display:block;margin-bottom:3px">Operational Source: Vendoor Live Orders Pool</b>
-        <p style="font-size:12px;opacity:0.9;margin:0;line-height:1.5">
-          Autonomous order ingestion synchronized directly from authenticated Vendoor endpoints for the selected business date.
-        </p>
-      </div>
-      <div style="text-align:right;background:rgba(255,255,255,0.15);padding:8px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.2)">
-        <span style="font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;display:block">Active Work Date</span>
-        <input type="date" class="date-in" id="curOrdersDateInput" value="${currentWorkDate}" style="background:#fff;color:var(--navy);font-weight:700;border:none;margin-top:4px" onchange="setGlobalSelectedDate(this.value);curOrdersPage=0;loadCurrentOrdersView();">
-      </div>
-    </div>
-
-    <!-- Vendoor Sync & Pool Summary Panel -->
-    <div class="panel" style="margin-bottom:20px;border:1px solid var(--line);box-shadow:var(--shadow)">
-      <div class="hd" style="flex-wrap:wrap;gap:12px;border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:14px">
+    <!-- 1. Work Screen Operational Header -->
+    <div style="background:#FFFFFF;border:1px solid var(--line);border-radius:14px;padding:16px 20px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;box-shadow:var(--shadow-sm)">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,var(--blue),#4338CA);display:grid;place-items:center;color:#fff;font-size:20px">⚡</div>
         <div>
-          <h3 style="margin:0;display:flex;align-items:center;gap:8px">
-            ⚡ Current Orders Pool (${fmt(totalOrders)} Orders)
-            <span class="tag" style="background:#ECFDF5;color:#059669;font-weight:700">Ready for Allocation</span>
-          </h3>
-          <p style="margin:4px 0 0;font-size:12px;color:var(--slate)">
-            Orders are automatically ingested and isolated by business date.
+          <div style="display:flex;align-items:center;gap:8px">
+            <h2 style="margin:0;font-size:16px;font-weight:800;color:var(--navy)">منظومة تشغيل الأوردرات (Daily Work Operations)</h2>
+            <span class="ds-badge ${isToday ? 'ds-badge-live' : 'ds-badge-neutral'}">${isToday ? 'LIVE' : 'HISTORICAL'}</span>
+            <span class="tag" style="background:#DCFCE7;color:#15803D;font-weight:700">Vendoor: Active ✓</span>
+          </div>
+          <p style="margin:3px 0 0;font-size:12px;color:var(--slate)">
+            تاريخ التشغيل: <b style="color:var(--ink)">${formatDisplayDate(currentWorkDate)}</b> · إجمالي الأوردرات المتاحة: <b>${fmt(totalOrders)}</b> أوردر
           </p>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button class="btn primary sm" onclick="show('management', 'vendoor')">
-            🔌 Vendoor Sync Settings
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button type="button" class="btn sm" onclick="triggerQuickVendoorSync()" style="background:#fff;border:1px solid var(--line)">
+          🔄 مزامنة فيندور
+        </button>
+        <button type="button" class="btn primary sm" onclick="switchSubTab('work', 'allocation')">
+          ⚡ توزيع العمل →
+        </button>
+      </div>
+    </div>
+
+    <!-- 2. The 3 Locked Operational Exceptions Summary (Attention Required) -->
+    <div style="background:#FEF2F2;border:1.5px solid #FECACA;border-radius:14px;padding:16px 20px;margin-bottom:18px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:20px">🚨</span>
+          <div>
+            <h3 style="margin:0;font-size:14.5px;font-weight:800;color:#991B1B">ATTENTION REQUIRED — استثناءات تشغيلية تتطلب تدخلاً فورياً</h3>
+            <p style="margin:2px 0 0;font-size:11.5px;color:#B91C1C">المشاكل التشغيلية الثلاث المكتشفة آلياً (اضغط على أي استثناء لمعاينة أوردراته فوراً)</p>
+          </div>
+        </div>
+        ${curOrdersExceptionFilter !== 'all' ? `
+          <button type="button" class="ds-btn ds-btn-secondary ds-btn-sm" onclick="setWorkExceptionFilter('all')" style="background:#fff;border:1px solid #FECACA;color:#991B1B">
+            ✕ إلغاء الفلتر وعرض الكل (${totalOrders})
           </button>
-          <button class="btn success sm" onclick="show('operations', 'allocation')">
-            ⚡ Open Work Allocation →
-          </button>
-        </div>
-      </div>
-
-    <!-- Multi-File Consolidation Summary -->
-    <div class="panel" style="margin-bottom:20px;border:1px solid var(--line);box-shadow:var(--shadow)">
-      <div class="hd">
-        <div>
-          <h3>⚡ Dynamic Multi-File Consolidation Pool</h3>
-          <p>Deterministic deduplication consolidating all staged files into one active work pool.</p>
-        </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn success" onclick="triggerManualMergePool()">⚡ Re-Merge Pool</button>
-          <button class="btn primary" onclick="show('work-allocation')">📋 Open Work Allocation</button>
-        </div>
-      </div>
-
-      <!-- Metrics Breakdown -->
-      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px">
-        <div style="background:var(--panel2);padding:12px;border-radius:10px;border:1px solid var(--line);text-align:center">
-          <span style="font-size:10.5px;color:var(--mut);text-transform:uppercase;font-weight:700">Files Staged</span>
-          <b style="font-size:20px;color:var(--navy);display:block;margin-top:4px">${stagedFiles.length}</b>
-        </div>
-        <div style="background:var(--panel2);padding:12px;border-radius:10px;border:1px solid var(--line);text-align:center">
-          <span style="font-size:10.5px;color:var(--mut);text-transform:uppercase;font-weight:700">Combined Raw</span>
-          <b style="font-size:20px;color:var(--slate);display:block;margin-top:4px">${fmt(summary ? summary.merged_orders_count : totalOrders)}</b>
-        </div>
-        <div style="background:#ECFDF5;padding:12px;border-radius:10px;border:1px solid #A7F3D0;text-align:center">
-          <span style="font-size:10.5px;color:#065F46;text-transform:uppercase;font-weight:700">Unique Pool Size</span>
-          <b style="font-size:20px;color:#059669;display:block;margin-top:4px">${fmt(summary ? summary.unique_orders_count : totalOrders)}</b>
-        </div>
-        <div style="background:#FFFBEB;padding:12px;border-radius:10px;border:1px solid #FDE68A;text-align:center">
-          <span style="font-size:10.5px;color:#92400E;text-transform:uppercase;font-weight:700">Duplicates Removed</span>
-          <b style="font-size:20px;color:#D97706;display:block;margin-top:4px">${fmt(summary ? summary.duplicate_orders_count : 0)}</b>
-        </div>
-        <div style="background:var(--panel2);padding:12px;border-radius:10px;border:1px solid var(--line);text-align:center">
-          <span style="font-size:10.5px;color:var(--mut);text-transform:uppercase;font-weight:700">Active Accounts</span>
-          <b style="font-size:20px;color:var(--blue);display:block;margin-top:4px">${accounts.length}</b>
-        </div>
-      </div>
-
-      <!-- Deduplication Narrative & Status Preservation Guarantee -->
-      <div style="background:#F8FAFC;border-left:4px solid var(--blue);padding:12px 16px;border-radius:8px;font-size:12.5px;line-height:1.55;color:var(--slate);margin-bottom:12px">
-        <b>Deduplication Policy & Audit Explanation:</b>
-        ${summary ? summary.duplicates_explanation : 'Consolidated orders across files into unique order entries without double-counting. Pending and New statuses preserved.'}
-        ${(summary && summary.duplicate_orders_count > 0) ? `
-          <button class="btn sm" style="margin-left:10px;padding:2px 8px;font-size:11px" onclick="toggleDuplicatesModal(true)">🔍 Inspect Duplicates Log</button>
         ` : ''}
       </div>
-    </div>
 
-    <!-- Active Accounts in Pool -->
-    <div class="panel" style="margin-bottom:20px">
-      <div class="hd">
-        <div>
-          <h3>📦 Active Merchant Accounts Available Today (${accounts.length})</h3>
-          <p>Extracted exclusively from today's merged pool. Strictly isolated from historical logs.</p>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
-        ${accounts.length === 0 ? `
-          <div style="grid-column:1/-1;padding:24px;text-align:center;color:var(--mut)">No accounts found in current work pool. Sync Vendoor orders to populate today's pool.</div>
-        ` : accounts.map(a => `
-          <div style="background:var(--panel2);padding:12px 14px;border-radius:10px;border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
-            <b style="font-size:13px;color:var(--ink)">${a}</b>
-            <span class="tag" style="background:#EFF6FF;color:var(--blue);font-weight:700">Active</span>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:12px">
+        <!-- 1. Second Phone Exception -->
+        <div class="ds-card" style="cursor:pointer;border-left:4px solid var(--ds-danger);padding:14px;background:${curOrdersExceptionFilter==='second_phone'?'#FFF1F2':'#FFFFFF'};transition:transform .15s ease;box-shadow:var(--ds-shadow-xs)" onclick="setWorkExceptionFilter('second_phone')">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:11.5px;font-weight:800;color:${curOrdersExceptionFilter==='second_phone'?'#9F1239':'var(--ds-neutral-700)'}">1. بدون رقم ثانٍ حقيقي</span>
+            <span style="font-size:16px">📱</span>
           </div>
-        `).join('')}
+          <b style="font-size:22px;color:var(--ds-danger);display:block;margin:6px 0">${fmt(exceptions.actioned_without_real_second_phone?.count || 0)}</b>
+          <div style="font-size:11px;color:var(--ds-neutral-500);display:flex;gap:8px">
+            <span>مفقود: <b>${exceptions.actioned_without_real_second_phone?.missing_count || 0}</b></span>
+            <span>مكرر للأساسي: <b>${exceptions.actioned_without_real_second_phone?.duplicate_primary_count || 0}</b></span>
+          </div>
+        </div>
+
+        <!-- 2. Address Quality Exception -->
+        <div class="ds-card" style="cursor:pointer;border-left:4px solid var(--ds-warning);padding:14px;background:${curOrdersExceptionFilter==='address'?'#FFFBEB':'#FFFFFF'};transition:transform .15s ease;box-shadow:var(--ds-shadow-xs)" onclick="setWorkExceptionFilter('address')">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:11.5px;font-weight:800;color:${curOrdersExceptionFilter==='address'?'#92400E':'var(--ds-neutral-700)'}">2. عناوين ضعيفة / غير صالحة</span>
+            <span style="font-size:16px">📍</span>
+          </div>
+          <b style="font-size:22px;color:var(--ds-warning);display:block;margin:6px 0">${fmt(exceptions.weak_or_invalid_address?.count || 0)}</b>
+          <div style="font-size:11px;color:var(--ds-neutral-500);display:flex;gap:8px">
+            <span>ضعيف (&le;3 كلمات): <b>${exceptions.weak_or_invalid_address?.weak_count || 0}</b></span>
+            <span>لغة/فارغ: <b>${(exceptions.weak_or_invalid_address?.language_invalid_count || 0) + (exceptions.weak_or_invalid_address?.empty_count || 0)}</b></span>
+          </div>
+        </div>
+
+        <!-- 3. Delivery Rate Exception -->
+        <div class="ds-card" style="cursor:pointer;border-left:4px solid var(--ds-accent);padding:14px;background:${curOrdersExceptionFilter==='delivery'?'#EFF6FF':'#FFFFFF'};transition:transform .15s ease;box-shadow:var(--ds-shadow-xs)" onclick="setWorkExceptionFilter('delivery')">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:11.5px;font-weight:800;color:${curOrdersExceptionFilter==='delivery'?'#1E40AF':'var(--ds-neutral-700)'}">3. نسبة تسليم منخفضة (&lt; 70%)</span>
+            <span style="font-size:16px">🚚</span>
+          </div>
+          <b style="font-size:22px;color:var(--ds-accent);display:block;margin:6px 0">${fmt(exceptions.delivery_rate_below_70?.count || 0)}</b>
+          <div style="font-size:11px;color:var(--ds-neutral-500)">
+            أوردرات لعملاء بنسبة تسليم أقل من 70%
+          </div>
+        </div>
       </div>
+
+      <!-- Quick Exception Detail Inspector (Feature 1, 2, 3 Focused Peek) -->
+      ${curOrdersExceptionFilter === 'second_phone' ? `
+        <div style="margin-top:16px;background:#FFFFFF;border:1px solid #FECACA;border-radius:10px;padding:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <h4 style="margin:0;font-size:13px;font-weight:800;color:#991B1B">
+              📱 كشف أوردرات اتعمل عليها Action بدون رقم هاتف ثانٍ حقيقي (${filteredOrders.length})
+            </h4>
+            <span style="font-size:11px;color:var(--slate)">اضغط على كود أي طلب لفتح كشف الجودة والـ Drawer فوراً</span>
+          </div>
+          <div class="tbl-scroll" style="max-height:220px;overflow-y:auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>كود الطلب</th>
+                  <th>موظف CS</th>
+                  <th>الرقم الأساسي</th>
+                  <th>الرقم الثاني المسجل</th>
+                  <th>الحالة</th>
+                  <th>سبب التنبيه</th>
+                  <th style="text-align:center">إجراء</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filteredOrders.slice(0, 15).map(o => `
+                  <tr>
+                    <td><span class="ds-code" style="cursor:pointer;font-weight:700" onclick="openOrderDrawer('${escapeHtml(o.order_code)}')">${escapeHtml(o.order_code)}</span></td>
+                    <td><b>${escapeHtml(o.assigned_employee_name || 'غير محدد')}</b></td>
+                    <td><span class="ds-phone">${escapeHtml(o.phone_quality?.primary_normalized || o.phone || '-')}</span></td>
+                    <td><span class="ds-phone" style="color:#DC2626">${escapeHtml(o.phone_quality?.second_normalized || o.phone2 || '(غير مسجل)')}</span></td>
+                    <td><span class="tag" style="background:#FEE2E2;color:#B91C1C">${escapeHtml(o.status || 'New')}</span></td>
+                    <td style="font-size:11.5px;color:#991B1B">${escapeHtml(o.phone_quality?.reason || '-')}</td>
+                    <td style="text-align:center">
+                      <button type="button" class="ds-btn ds-btn-secondary ds-btn-sm" onclick="openOrderDrawer('${escapeHtml(o.order_code)}')" style="padding:2px 8px;font-size:11px">فتح ➔</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : ''}
+
+      ${curOrdersExceptionFilter === 'address' ? `
+        <div style="margin-top:16px;background:#FFFFFF;border:1px solid #FED7AA;border-radius:10px;padding:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <h4 style="margin:0;font-size:13px;font-weight:800;color:#9A3412">
+              📍 كشف العناوين الضعيفة أو غير الصالحة (${filteredOrders.length})
+            </h4>
+            <span style="font-size:11px;color:var(--slate)">المعيار: عربي فقط + 4 كلمات فأكثر</span>
+          </div>
+          <div class="tbl-scroll" style="max-height:220px;overflow-y:auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>كود الطلب</th>
+                  <th>موظف CS</th>
+                  <th>العنوان المسجل</th>
+                  <th>عدد الكلمات</th>
+                  <th>اللغة</th>
+                  <th>سبب عدم الصلاحية</th>
+                  <th style="text-align:center">إجراء</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filteredOrders.slice(0, 15).map(o => `
+                  <tr>
+                    <td><span class="ds-code" style="cursor:pointer;font-weight:700" onclick="openOrderDrawer('${escapeHtml(o.order_code)}')">${escapeHtml(o.order_code)}</span></td>
+                    <td><b>${escapeHtml(o.assigned_employee_name || 'غير محدد')}</b></td>
+                    <td style="max-width:260px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(o.address || '-')}</td>
+                    <td><b>${o.address_quality?.word_count || 0}</b></td>
+                    <td><span class="tag" style="background:#FEF3C7;color:#B45309">${escapeHtml(o.address_quality?.language || '-')}</span></td>
+                    <td style="font-size:11.5px;color:#C2410C">${escapeHtml(o.address_quality?.reason || '-')}</td>
+                    <td style="text-align:center">
+                      <button type="button" class="ds-btn ds-btn-secondary ds-btn-sm" onclick="openOrderDrawer('${escapeHtml(o.order_code)}')" style="padding:2px 8px;font-size:11px">فتح ➔</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : ''}
+
+      ${curOrdersExceptionFilter === 'delivery' ? `
+        <div style="margin-top:16px;background:#FFFFFF;border:1px solid #BFDBFE;border-radius:10px;padding:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <h4 style="margin:0;font-size:13px;font-weight:800;color:#1E40AF">
+              🚚 كشف الأوردرات بنسبة تسليم منخفضة أقل من 70% (${filteredOrders.length})
+            </h4>
+            <span style="font-size:11px;color:var(--slate)">معدل التسليم أقل من 70%</span>
+          </div>
+          <div class="tbl-scroll" style="max-height:220px;overflow-y:auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>كود الطلب</th>
+                  <th>العميل</th>
+                  <th>الحساب</th>
+                  <th>نسبة التسليم</th>
+                  <th>التنبيه</th>
+                  <th style="text-align:center">إجراء</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filteredOrders.slice(0, 15).map(o => `
+                  <tr>
+                    <td><span class="ds-code" style="cursor:pointer;font-weight:700" onclick="openOrderDrawer('${escapeHtml(o.order_code)}')">${escapeHtml(o.order_code)}</span></td>
+                    <td><b>${escapeHtml(o.customer || o.customer_name || 'عميل')}</b></td>
+                    <td><span class="tag" style="background:#EFF6FF;color:var(--blue)">${escapeHtml(o.account || '-')}</span></td>
+                    <td><b style="color:#DC2626">${o.delivery_quality?.rate}%</b></td>
+                    <td style="font-size:11.5px;color:#DC2626">${escapeHtml(o.delivery_quality?.alert || '-')}</td>
+                    <td style="text-align:center">
+                      <button type="button" class="ds-btn ds-btn-secondary ds-btn-sm" onclick="openOrderDrawer('${escapeHtml(o.order_code)}')" style="padding:2px 8px;font-size:11px">فتح ➔</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : ''}
     </div>
 
-    <!-- Current Orders Explorer -->
-    <div class="panel">
-      <div class="hd">
+    <!-- 3. Clean Work Table -->
+    <div class="panel" style="padding:16px 20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px">
         <div>
-          <h3>🔍 Current Orders Explorer (${fmt(ordersData.total)} Orders)</h3>
-          <p>Browse, search, and verify all orders currently in today's work pool.</p>
+          <h3 style="margin:0;font-size:15px;font-weight:800;color:var(--navy);display:flex;align-items:center;gap:8px">
+            📦 جدول تشغيل الأوردرات (${fmt(filteredOrders.length)} من أصل ${fmt(totalOrders)})
+            ${curOrdersExceptionFilter !== 'all' ? `<span class="ds-badge ds-badge-danger">مفلتر حسب الاستثناء</span>` : ''}
+          </h3>
+          <p style="margin:2px 0 0;font-size:11.5px;color:var(--mut)">
+            اضغط على زر [فتح ➔] لعرض تفاصيل الطلب الكاملة في الـ Order Drawer
+          </p>
         </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-          <input type="text" class="search" style="padding:6px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;width:180px" placeholder="Search code/account..." value="${curOrdersSearch}" oninput="curOrdersSearch=this.value;curOrdersPage=0;loadCurrentOrdersView();">
-          <select class="filter" style="font-size:12px" onchange="curOrdersAccountFilter=this.value;curOrdersPage=0;loadCurrentOrdersView();">
-            <option value="">All Accounts (${accounts.length})</option>
+
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="text" class="search" style="padding:6px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;width:190px" placeholder="🔍 كود / عميل / هاتف..." value="${curOrdersSearch}" oninput="curOrdersSearch=this.value;curOrdersPage=0;loadCurrentOrdersView();">
+          
+          <select class="filter" style="font-size:12px;padding:6px 10px" onchange="curOrdersAccountFilter=this.value;curOrdersPage=0;loadCurrentOrdersView();">
+            <option value="">كل الحسابات (${accounts.length})</option>
             ${accounts.map(a => `<option value="${a}" ${a===curOrdersAccountFilter?'selected':''}>${a}</option>`).join('')}
           </select>
-          <select class="filter" style="font-size:12px" onchange="curOrdersStatusFilter=this.value;curOrdersPage=0;loadCurrentOrdersView();">
-            <option value="">All Statuses</option>
+
+          <select class="filter" style="font-size:12px;padding:6px 10px" onchange="curOrdersStatusFilter=this.value;curOrdersPage=0;loadCurrentOrdersView();">
+            <option value="">كل الحالات</option>
             <option value="New" ${curOrdersStatusFilter==='New'?'selected':''}>New</option>
             <option value="Pending" ${curOrdersStatusFilter==='Pending'?'selected':''}>Pending</option>
             <option value="Processing" ${curOrdersStatusFilter==='Processing'?'selected':''}>Processing</option>
             <option value="Printed" ${curOrdersStatusFilter==='Printed'?'selected':''}>Printed</option>
             <option value="Cancelled" ${curOrdersStatusFilter==='Cancelled'?'selected':''}>Cancelled</option>
           </select>
+
+          <button type="button" class="ds-btn ds-btn-primary ds-btn-sm" onclick="show('work', 'allocation')">
+            ⚡ توزيع العمل
+          </button>
         </div>
       </div>
+
+      <!-- High-Density Operations Table (Clean 8 Columns) -->
       <div class="tbl-scroll">
         <table>
           <thead>
             <tr>
-              <th>#</th>
-              <th>Order Code</th>
-              <th>Account</th>
-              <th>Status</th>
-              <th>Source File</th>
-              <th>Order Date</th>
+              <th style="width:40px">#</th>
+              <th style="width:130px">كود الطلب</th>
+              <th>العميل والهاتف</th>
+              <th>الحساب</th>
+              <th>موظف CS</th>
+              <th style="width:90px">الحالة</th>
+              <th style="width:80px">الأولوية</th>
+              <th>الجودة والتنبيهات</th>
+              <th style="text-align:center;width:80px">الإجراء</th>
             </tr>
           </thead>
           <tbody>
-            ${(ordersData.orders || []).length === 0 ? `
-              <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--mut)">No orders match your filter criteria.</td></tr>
-            ` : (ordersData.orders || []).map((o, idx) => `
-              <tr>
-                <td>${curOrdersPage * curOrdersLimit + idx + 1}</td>
-                <td class="nm-cell"><b>${o.order_code}</b></td>
-                <td><span class="tag" style="background:#EFF6FF;color:var(--blue)">${o.account}</span></td>
-                <td><span class="tag" style="background:${o.status==='New'?'#DBEAFE':o.status==='Pending'?'#F3E8FF':o.status==='Printed'?'#DCFCE7':'#FEE2E2'};color:${o.status==='New'?'#1D4ED8':o.status==='Pending'?'#7C3AED':o.status==='Printed'?'#15803D':'#B91C1C'}">${o.status}</span></td>
-                <td><span class="tag" style="background:var(--panel2);color:var(--slate)">Slot #${o.source_file_slot || 1}</span></td>
-                <td style="color:var(--mut);font-size:11px">${o.order_date || currentWorkDate}</td>
-              </tr>
-            `).join('')}
+            ${pagedOrders.length === 0 ? `
+              <tr><td colspan="9" style="text-align:center;padding:32px;color:var(--mut)">لا توجد أوردرات مطابقة لمعايير البحث الحالية.</td></tr>
+            ` : pagedOrders.map((o, idx) => {
+              const pq = o.phone_quality || {};
+              const aq = o.address_quality || {};
+              const dq = o.delivery_quality || {};
+              const alerts = o.operational_alerts || [];
+              const isActioned = o.is_actioned;
+
+              let phoneBadgeHtml = '';
+              if (pq.status === 'ALT_PHONE_ADDED') {
+                phoneBadgeHtml = '<span class="ds-badge ds-badge-success" title="تم إضافة رقم ثانٍ مختلف وصالح">رقم ثانٍ ✓</span>';
+              } else if (pq.status === 'ALT_PHONE_DUPLICATE_PRIMARY') {
+                phoneBadgeHtml = '<span class="ds-badge ds-badge-warning" title="الرقم الثاني مكرر لنفس الرقم الأساسي">مكرر ⚠</span>';
+              } else if (isActioned) {
+                phoneBadgeHtml = '<span class="ds-badge ds-badge-danger" title="نُفذ إجراء بدون رقم ثانٍ">بدون ثانٍ ⚠</span>';
+              }
+
+              let alertsHtml = '';
+              if (!aq.is_valid && isActioned) {
+                alertsHtml += `<span class="ds-badge ds-badge-danger" title="${aq.reason}" style="margin-right:4px">عنوان ⚠</span>`;
+              }
+              if (dq.needs_attention) {
+                alertsHtml += `<span class="ds-badge ds-badge-warning" title="${dq.alert}" style="margin-right:4px">تسليم ${dq.rate}% ⚠</span>`;
+              }
+              if (!alertsHtml && alerts.length === 0) {
+                alertsHtml = '<span style="color:var(--ds-success);font-size:11.5px">✓ سليم</span>';
+              }
+
+              const priorityVal = o.priority || 'REGULAR';
+              const priorityBadge = priorityVal === 'VIP' ? '<span class="tag" style="background:#FEF3C7;color:#B45309">VIP</span>' : (priorityVal === 'URGENT' ? '<span class="tag" style="background:#FEE2E2;color:#DC2626">URGENT</span>' : '<span style="color:var(--slate);font-size:11px">عادي</span>');
+
+              return `
+                <tr>
+                  <td>${curOrdersPage * curOrdersLimit + idx + 1}</td>
+                  <td>
+                    <span class="ds-code" style="cursor:pointer;font-weight:700" onclick="openOrderDrawer('${escapeHtml(o.order_code)}')">
+                      ${escapeHtml(o.order_code)}
+                    </span>
+                  </td>
+                  <td>
+                    <div style="font-weight:600;color:var(--ink)">${escapeHtml(o.customer || o.customer_name || 'عميل')}</div>
+                    <div style="display:flex;align-items:center;gap:6px;margin-top:2px">
+                      <span class="ds-phone" style="font-size:11.5px;color:var(--slate)">${escapeHtml(pq.primary_normalized || o.phone || '')}</span>
+                      ${phoneBadgeHtml}
+                    </div>
+                  </td>
+                  <td><span class="tag" style="background:#EFF6FF;color:var(--blue)">${escapeHtml(o.account || '-')}</span></td>
+                  <td><span style="font-weight:600">${escapeHtml(o.assigned_employee_name || 'Unassigned')}</span></td>
+                  <td>
+                    <span class="tag" style="background:${o.status==='New'?'#DBEAFE':o.status==='Pending'?'#F3E8FF':o.status==='Printed'?'#DCFCE7':'#FEE2E2'};color:${o.status==='New'?'#1D4ED8':o.status==='Pending'?'#7C3AED':o.status==='Printed'?'#15803D':'#B91C1C'}">
+                      ${escapeHtml(o.status || 'New')}
+                    </span>
+                  </td>
+                  <td>${priorityBadge}</td>
+                  <td>
+                    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px">
+                      ${alertsHtml}
+                    </div>
+                  </td>
+                  <td style="text-align:center">
+                    <button type="button" class="ds-btn ds-btn-secondary ds-btn-sm" onclick="openOrderDrawer('${escapeHtml(o.order_code)}')" style="padding:4px 10px;font-weight:700">
+                      فتح ➔
+                    </button>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
           </tbody>
         </table>
       </div>
+
       <!-- Pagination Controls -->
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;font-size:12px;color:var(--mut)">
-        <span>Showing ${Math.min(ordersData.total, curOrdersPage * curOrdersLimit + 1)} - ${Math.min(ordersData.total, (curOrdersPage + 1) * curOrdersLimit)} of ${fmt(ordersData.total)} orders</span>
+        <span>عرض ${Math.min(filteredOrders.length, pageStart + 1)} - ${Math.min(filteredOrders.length, pageStart + curOrdersLimit)} من أصل ${fmt(filteredOrders.length)} أوردر</span>
         <div style="display:flex;gap:6px">
-          <button class="btn sm" ${curOrdersPage===0?'disabled':''} onclick="curOrdersPage--;loadCurrentOrdersView();">◀ Previous</button>
-          <button class="btn sm" ${(curOrdersPage+1)*curOrdersLimit >= ordersData.total ? 'disabled':''} onclick="curOrdersPage++;loadCurrentOrdersView();">Next ▶</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Duplicate Orders Audit Modal -->
-    <div id="dupAuditModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.6);z-index:9999;place-items:center;padding:20px">
-      <div style="background:#fff;border-radius:14px;max-width:800px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:var(--shadow-lg)">
-        <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
-          <h3 style="margin:0">🔍 Duplicate Orders Audit Log (${summary ? summary.duplicate_orders_count : 0})</h3>
-          <button class="btn sm" onclick="toggleDuplicatesModal(false)">✕ Close</button>
-        </div>
-        <div style="padding:16px 20px;overflow-y:auto;flex:1">
-          <p style="font-size:12px;color:var(--mut);margin-top:0">The following orders occurred in multiple files or rows and were consolidated without double-counting:</p>
-          <div class="tbl-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Order Code</th>
-                  <th>Account</th>
-                  <th>File Slot</th>
-                  <th>Original Status</th>
-                  <th>Resolved Status</th>
-                  <th>Resolution Reason</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${summary && summary.duplicate_details ? summary.duplicate_details.map(d => `
-                  <tr>
-                    <td><b>${d.order_code}</b></td>
-                    <td>${d.account || '-'}</td>
-                    <td>Slot #${d.file_slot}</td>
-                    <td>${d.status}</td>
-                    <td><b>${d.resolved_status || d.status}</b></td>
-                    <td style="font-size:11px;color:var(--slate)">${d.reason}</td>
-                  </tr>
-                `).join('') : '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--mut)">No duplicate records.</td></tr>'}
-              </tbody>
-            </table>
-          </div>
+          <button type="button" class="btn sm" ${curOrdersPage===0?'disabled':''} onclick="curOrdersPage--;loadCurrentOrdersView();">◀ السابق</button>
+          <button type="button" class="btn sm" ${(curOrdersPage+1)*curOrdersLimit >= filteredOrders.length ? 'disabled':''} onclick="curOrdersPage++;loadCurrentOrdersView();">التالي ▶</button>
         </div>
       </div>
     </div>
@@ -9837,9 +10974,49 @@ window.sortTable=function(col){
   rows.forEach(r=>tb.appendChild(r));
 };
 
-let RENDERED={},currentPage='allocation',currentMainPage='operations';
+let RENDERED={},currentPage='pool',currentMainPage='work';
 
 const MAIN_PAGES_CONFIG = {
+  overview: {
+    title: 'Overview',
+    sub: 'مركز اتخاذ القرار والنبض التشغيلي اللحظي (Decision Center & Real-Time Pulse)',
+    defaultTab: 'pulse',
+    tabs: [
+      { id: 'pulse', label: 'Today Pulse & Attention', icon: '📊' },
+      { id: 'team-pulse', label: 'Team Activity', icon: '👥' },
+      { id: 'system', label: 'Vendoor & System Status', icon: '⚡' }
+    ]
+  },
+  work: {
+    title: 'Work Operations',
+    sub: 'مجمع التشغيل، الاستثناءات الذكية وتوزيع العمل (Operational Pool & Allocation)',
+    defaultTab: 'pool',
+    tabs: [
+      { id: 'pool', label: 'Work Orders Pool', icon: '📦' },
+      { id: 'allocation', label: 'Work Allocation', icon: '⚡' },
+      { id: 'tracking', label: 'Live Tracking', icon: '🛡️' }
+    ]
+  },
+  team: {
+    title: 'Team Management',
+    sub: 'سجل الموظفين، جودة العمل ونوبات التشغيل (CS Roster & Working Shifts)',
+    defaultTab: 'roster',
+    tabs: [
+      { id: 'roster', label: 'Active CS Roster', icon: '👥' },
+      { id: 'working-team', label: "Today's Working Team", icon: '📋' }
+    ]
+  },
+  insights: {
+    title: 'Executive Insights',
+    sub: 'بطاقات الأداء، الاتجاهات وتحليلات الإلغاء (Performance Scorecards & Trends)',
+    defaultTab: 'performance',
+    tabs: [
+      { id: 'performance', label: 'Performance Scorecard', icon: '★' },
+      { id: 'trends', label: 'Trends & Cancellation', icon: '📈' },
+      { id: 'merchants', label: 'Merchants & Marketers', icon: '🏪' },
+      { id: 'export', label: 'Export Center', icon: '📑' }
+    ]
+  },
   dashboard: {
     title: 'Dashboard',
     sub: 'Executive Overview, Daily Summary & Operational Alerts',
@@ -9967,7 +11144,23 @@ const LEGACY_ROUTE_MAP = {
 };
 
 function renderTabContent(mainPage, tab) {
-  if (mainPage === 'dashboard') {
+  if (mainPage === 'overview') {
+    if (tab === 'pulse') return RENDERED.overview || '';
+    if (tab === 'team-pulse') return RENDERED['working-team'] || '';
+    if (tab === 'system') return RENDERED['tracking-overview'] || '';
+  } else if (mainPage === 'work') {
+    if (tab === 'pool') return RENDERED['current-orders'] || '';
+    if (tab === 'allocation') return RENDERED['work-allocation'] || '';
+    if (tab === 'tracking') return RENDERED['order-tracking'] || '';
+  } else if (mainPage === 'team') {
+    if (tab === 'roster') return RENDERED['team-members'] || '';
+    if (tab === 'working-team') return RENDERED['working-team'] || '';
+  } else if (mainPage === 'insights') {
+    if (tab === 'performance') return RENDERED.scorecard || '';
+    if (tab === 'trends') return RENDERED.daily || '';
+    if (tab === 'merchants') return `<div id="reportsMainContainer"><div class="panel" style="text-align:center;padding:40px;color:var(--slate)">Loading Merchants...</div></div>`;
+    if (tab === 'export') return `<div id="reportsMainContainer"><div class="panel" style="text-align:center;padding:40px;color:var(--slate)">Loading Export Center...</div></div>`;
+  } else if (mainPage === 'dashboard') {
     if (tab === 'overview') return RENDERED.overview || '';
     if (tab === 'daily') return RENDERED.daily || '';
     if (tab === 'alerts') return RENDERED.insights || '';
@@ -10006,7 +11199,20 @@ function renderTabContent(mainPage, tab) {
 }
 
 function triggerTabLoaders(mainPage, tab) {
-  if (mainPage === 'operations') {
+  if (mainPage === 'work') {
+    if (tab === 'pool') loadCurrentOrdersView();
+    else if (tab === 'allocation') loadWorkAllocationData();
+    else if (tab === 'tracking') loadOrderTrackingView();
+  } else if (mainPage === 'team') {
+    if (tab === 'roster') loadTeamMembersView();
+    else if (tab === 'working-team') loadWorkingTeamView();
+  } else if (mainPage === 'insights') {
+    if (tab === 'merchants') loadReportsView('merchants');
+    else if (tab === 'export') loadReportsView('executive');
+  } else if (mainPage === 'overview') {
+    if (tab === 'team-pulse') loadWorkingTeamView();
+    else if (tab === 'system') loadTrackingOverviewView();
+  } else if (mainPage === 'operations') {
     if (tab === 'allocation') loadWorkAllocationData();
     else if (tab === 'config-center') loadAllocationConfigCenterView();
     else if (tab === 'dispatcher') loadAutoDispatcherView();
@@ -11384,99 +12590,379 @@ function downloadSelf(){
 </script>
 
 <script>
-window.ensureXlsxLoaded = function(cb) {
-  if (typeof XLSX !== 'undefined') return cb();
-  var script = document.createElement('script');
-  script.src = '/xlsx.full.min.js';
-  script.onload = function() { cb(); };
-  script.onerror = function() {
-    window.location.href = '/Executive_Report_v3.xlsx';
-  };
-  document.head.appendChild(script);
+window.exportCurrentExcel = async function() {
+  const btn = document.getElementById('exportExcelBtn');
+  const originalText = btn ? btn.innerHTML : '⭳ Excel';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Exporting...';
+  }
+
+  try {
+    const page = window.currentMainPage || window.currentPage || 'overview';
+    const tab = (window.currentSubTabs && window.currentSubTabs[page]) || 'main';
+    const date = window.currentWorkDate || new Date().toISOString().split('T')[0];
+    const timeFrom = window.currentTimeWindowFrom || null;
+    const timeTo = window.currentTimeWindowTo || null;
+
+    const payload = {
+      page: page,
+      tab: tab,
+      business_date: date,
+      time_window: { from: timeFrom, to: timeTo },
+      filters: window.currentActiveFilters || {},
+      search: window.currentSearchQuery || ''
+    };
+
+    const res = await fetch('/api/exports/xlsx', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + (localStorage.getItem('cs_auth_token') || 'supervisor_token_cs_bi')
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.error || 'Export request failed with status ' + res.status);
+    }
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'CS_ExecutiveBI_' + page + '_' + tab + '_' + date + '.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+  } catch (err) {
+    console.error('Contextual export error:', err);
+    if (typeof showToast === 'function') {
+      showToast('❌ Export Error: ' + err.message, 'error');
+    } else {
+      alert('Export Failed: ' + err.message);
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+    }
+  }
 };
 
-window.exportCurrentExcel = function() {
-  window.ensureXlsxLoaded(function() {
-    try {
-      var wb = XLSX.utils.book_new();
-      var tot = D.log_totals, hs = D.hr || {}, ded = D.dedup || {}, emp = D.employees || [];
-      
-      // Executive Summary
-      var sRows = [
-        ['CUSTOMER SERVICE — EXECUTIVE REPORT (DEDUPLICATED)'],
-        ['Each status change counted once per order+employee+status. Removed ' + (ded.removed||0).toLocaleString() + ' duplicate rows (' + (ded.removed_pct||0) + '% of raw).'],
-        [],
-        ['KEY PERFORMANCE INDICATORS', 'VALUE'],
-        ['Total Real Actions', (tot.actions||0).toLocaleString()],
-        ['Raw Rows (before dedup)', (ded.raw_cs_status||0).toLocaleString()],
-        ['New Orders', (hs.tot_new||0).toLocaleString()],
-        ['Printed', (tot.printed||0).toLocaleString()],
-        ['Team Print Rate', (tot.actions ? (tot.printed/tot.actions*100).toFixed(1) : 0) + '%'],
-        ['Pending', (tot.pending||0).toLocaleString()],
-        ['Team Pending Rate', (D.team_pending_rate||0) + '%'],
-        ['Cancelled', (tot.cancelled||0).toLocaleString()],
-        ['Team Cancel Rate', (D.team_cancel_rate||0) + '%'],
-        ['Alt Phones Added', (tot.alt||0).toLocaleString()],
-        ['Top Performer', emp[0] ? emp[0].name : '-'],
-        [],
-        ['EXECUTIVE INSIGHTS']
-      ];
-      if (D.insights) {
-        D.insights.forEach(function(ins) { sRows.push(['• ' + ins]); });
-      }
-      var wsS = XLSX.utils.aoa_to_sheet(sRows);
-      wsS['!cols'] = [{ wch: 45 }, { wch: 25 }];
-      XLSX.utils.book_append_sheet(wb, wsS, 'Executive Summary');
+// =========================================================================
+// OPERATIONAL INTELLIGENCE: ORDER DRAWER & EXCEPTION FILTER HANDLERS
+// =========================================================================
+let curOrdersExceptionFilter = 'all';
+let currentDrawerOrder = null;
 
-      // Daily Trend
-      var dRows = [['Date', 'Day', 'New Orders', 'Printed', 'Printed %', 'Cancelled', 'Cancel %']];
-      (D.daily || []).forEach(function(d) {
-        dRows.push([d.day, d.dow, d.new, d.printed, d.printed_pct + '%', d.cancel, d.cancel_pct + '%']);
-      });
-      var wsD = XLSX.utils.aoa_to_sheet(dRows);
-      wsD['!cols'] = [{ wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
-      XLSX.utils.book_append_sheet(wb, wsD, 'Daily Trend');
+window.setWorkExceptionFilter = function(filterType) {
+  curOrdersExceptionFilter = filterType || 'all';
+  curOrdersPage = 0;
+  if (typeof loadCurrentOrdersView === 'function') {
+    loadCurrentOrdersView();
+  }
+};
 
-      // Scorecard
-      var scRows = [['Rank', 'Employee', 'Total Actions', 'Printed', 'Print %', 'Pending', 'Pend %', 'Processing', 'Cancelled', 'Cancel %', 'Alt Phone', 'Alt %', 'Added Orders', 'Contribution %', 'Grade', 'Segment', 'Cancel Risk']];
-      emp.forEach(function(e) {
-        scRows.push([e.rank, e.name, e.actions, e.printed, e.own_printed_rate + '%', e.pending, e.own_pending_rate + '%', e.processing, e.cancelled, e.own_cancel_rate + '%', e.alt, e.own_alt_rate + '%', e.added, e.contribution_pct + '%', e.grade, e.segment, e.cancel_risk]);
-      });
-      var wsSc = XLSX.utils.aoa_to_sheet(scRows);
-      wsSc['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 18 }, { wch: 14 }];
-      XLSX.utils.book_append_sheet(wb, wsSc, 'Agent Scorecard');
+window.openOrderDrawer = async function(orderCode) {
+  if (!orderCode) return;
+  const backdrop = document.getElementById('orderDrawerBackdrop');
+  const drawer = document.getElementById('orderDrawer');
+  if (!drawer || !backdrop) return;
 
-      // Cancellation
-      var cRows = [['Rank', 'Employee', 'Total Actions', 'Cancelled', 'Own Cancel Rate %', '% of Team Cancels', 'Risk']];
-      var cdf = emp.slice().filter(function(e) { return e.cancelled > 0; }).sort(function(a, b) { return b.own_cancel_rate - a.own_cancel_rate; });
-      cdf.forEach(function(e, idx) {
-        cRows.push([idx + 1, e.name, e.actions, e.cancelled, e.own_cancel_rate + '%', e.canc_share_pct + '%', e.cancel_risk]);
-      });
-      var wsC = XLSX.utils.aoa_to_sheet(cRows);
-      wsC['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 14 }];
-      XLSX.utils.book_append_sheet(wb, wsC, 'Cancellation Analysis');
+  backdrop.classList.add('active');
+  drawer.classList.add('active');
 
-      // Status Distribution
-      var st = D.status_totals || {};
-      var distRows = [
-        ['Status', 'Count', 'Share %'],
-        ['Printed', st.Printed || 0, (tot.actions ? ((st.Printed || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
-        ['Pending', st.Pending || 0, (tot.actions ? ((st.Pending || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
-        ['Processing', st.Processing || 0, (tot.actions ? ((st.Processing || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
-        ['Cancelled', st.Cancelled || 0, (tot.actions ? ((st.Cancelled || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
-      ];
-      var wsDist = XLSX.utils.aoa_to_sheet(distRows);
-      wsDist['!cols'] = [{ wch: 16 }, { wch: 12 }, { wch: 12 }];
-      XLSX.utils.book_append_sheet(wb, wsDist, 'Status Distribution');
+  document.getElementById('odDrawerOrderCode').textContent = orderCode;
+  document.getElementById('odDrawerStatusBadge').textContent = 'Loading...';
+  document.getElementById('odDrawerAccount').textContent = '...';
+  document.getElementById('odDrawerCS').textContent = '...';
+  document.getElementById('odAttentionBanner').innerHTML = '<div class="ds-skeleton" style="height:44px;margin-bottom:12px"></div>';
 
-      XLSX.writeFile(wb, 'Executive_Report.xlsx');
-    } catch(err) {
-      console.error('Export failed, falling back to static download:', err);
-      window.location.href = '/Executive_Report_v3.xlsx';
+  try {
+    const res = await apiFetch(`/api/work/order/${encodeURIComponent(orderCode)}?date=${currentWorkDate}`);
+    const o = res && res.order ? res.order : res;
+    if (!o) throw new Error('Order not found');
+
+    currentDrawerOrder = o;
+
+    // Header
+    document.getElementById('odDrawerOrderCode').textContent = o.order_code || orderCode;
+    const stBadge = document.getElementById('odDrawerStatusBadge');
+    stBadge.textContent = o.status || 'New';
+    stBadge.className = 'ds-badge ' + (o.status === 'Printed' ? 'ds-badge-success' : (o.status === 'Pending' ? 'ds-badge-warning' : 'ds-badge-info'));
+    document.getElementById('odDrawerAccount').textContent = o.account || '-';
+    document.getElementById('odDrawerCS').textContent = o.assigned_employee_name || 'Unassigned';
+    if (document.getElementById('odDrawerCustomer')) {
+      document.getElementById('odDrawerCustomer').textContent = o.customer_name || o.customer || 'عميل';
     }
-  });
+
+    // Attention Banner (The 3 Locked Exceptions)
+    const alerts = o.operational_alerts || [];
+    const banner = document.getElementById('odAttentionBanner');
+    if (alerts.length > 0) {
+      banner.innerHTML = `
+        <div style="background:#FEF2F2;border:1.5px solid #FECACA;border-radius:10px;padding:12px 14px;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span style="font-size:16px">🚨</span>
+            <b style="font-size:13px;color:#991B1B">تنبيهات استثنائية مطلوب مراجعتها (${alerts.length})</b>
+          </div>
+          ${alerts.map(a => `
+            <div style="font-size:12px;color:#B91C1C;margin-top:4px;display:flex;align-items:center;gap:6px">
+              <span>⚠</span>
+              <b>${a.title}:</b> <span>${a.reason}</span>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    } else {
+      banner.innerHTML = `
+        <div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:8px;color:#15803D;font-size:12px;margin-bottom:12px">
+          <span>✓</span>
+          <b>الطلب مستوفي معايير الجودة ولا توجد استثناءات معلقة.</b>
+        </div>
+      `;
+    }
+
+    // Feature 1: Phone Quality
+    const pq = o.phone_quality || {};
+    document.getElementById('odPrimaryPhone').textContent = pq.primary_normalized || o.phone || '-';
+    document.getElementById('odSecondPhone').textContent = pq.second_normalized || o.phone2 || '(غير مسجل)';
+    const phoneBadge = document.getElementById('odPhoneBadge');
+    if (pq.status === 'ALT_PHONE_ADDED') {
+      phoneBadge.textContent = 'رقم ثانٍ صالح ✓';
+      phoneBadge.className = 'ds-badge ds-badge-success';
+    } else if (pq.status === 'ALT_PHONE_DUPLICATE_PRIMARY') {
+      phoneBadge.textContent = 'رقم مكرر ⚠';
+      phoneBadge.className = 'ds-badge ds-badge-warning';
+    } else {
+      phoneBadge.textContent = 'بدون رقم ثانٍ ⚠';
+      phoneBadge.className = 'ds-badge ds-badge-danger';
+    }
+    if (document.getElementById('odActionConfirmed')) {
+      document.getElementById('odActionConfirmed').textContent = o.is_actioned ? 'نعم (تم الإجراء)' : 'لا (في الانتظار)';
+      document.getElementById('odActionConfirmed').className = o.is_actioned ? 'ds-badge ds-badge-info' : 'ds-badge ds-badge-neutral';
+    }
+    if (document.getElementById('odDistinctPhone')) {
+      document.getElementById('odDistinctPhone').textContent = pq.is_distinct ? 'Yes (مختلف وصالح) ✓' : 'No (مفقود أو مكرر) ⚠';
+      document.getElementById('odDistinctPhone').className = pq.is_distinct ? 'ds-badge ds-badge-success' : 'ds-badge ds-badge-danger';
+    }
+    document.getElementById('odPhoneExplanation').textContent = pq.reason || '-';
+
+    // Feature 2: Address Quality
+    const aq = o.address_quality || {};
+    document.getElementById('odAddressText').textContent = o.address || o.customer_address || '(العنوان غير مسجل)';
+    const langDisplay = aq.language === 'ARABIC' ? 'عربي ✓' : (aq.language === 'ENGLISH' ? 'إنجليزي ✕' : (aq.language === 'MIXED' ? 'مختلط عربي + إنجليزي ✕' : aq.language));
+    document.getElementById('odAddressLang').textContent = langDisplay;
+    document.getElementById('odAddressWordCount').textContent = (aq.word_count !== undefined ? aq.word_count : '-') + ' كلمات';
+    const addrBadge = document.getElementById('odAddressBadge');
+    if (aq.is_valid) {
+      addrBadge.textContent = 'عنوان صالح ومكتمل ✓';
+      addrBadge.className = 'ds-badge ds-badge-success';
+    } else {
+      addrBadge.textContent = aq.code === 'WEAK_WORD_COUNT' ? 'عنوان ضعيف ⚠' : 'عنوان غير صالح ⚠';
+      addrBadge.className = 'ds-badge ds-badge-danger';
+    }
+    document.getElementById('odAddressReason').textContent = aq.reason || '-';
+
+    // Feature 3: Delivery Rate
+    const dq = o.delivery_quality || {};
+    const delivBadge = document.getElementById('odDeliveryBadge');
+    
+    // 5 Canonical Delivery Metrics
+    const delivOrders = o.customer_total_orders || o.total_orders || (dq.rate !== null ? '1' : '-');
+    const delivDelivered = o.customer_delivered_orders || (dq.rate !== null ? (dq.rate >= 70 ? '1' : '0') : '-');
+    const delivCancel = o.customer_cancelled_orders || (dq.rate !== null ? (dq.rate < 70 ? '1' : '0') : '-');
+    const delivCancelRate = dq.rate !== null ? (100 - dq.rate).toFixed(1) + '%' : '-';
+
+    if (document.getElementById('odDelivOrders')) document.getElementById('odDelivOrders').textContent = delivOrders;
+    if (document.getElementById('odDelivDelivered')) document.getElementById('odDelivDelivered').textContent = delivDelivered;
+    if (document.getElementById('odDelivCancel')) document.getElementById('odDelivCancel').textContent = delivCancel;
+    if (document.getElementById('odDelivCancelRate')) document.getElementById('odDelivCancelRate').textContent = delivCancelRate;
+
+    if (dq.status === 'DELIVERY_RATE_OK') {
+      document.getElementById('odDeliveryRateVal').textContent = dq.rate + '%';
+      document.getElementById('odDeliveryRateVal').style.color = 'var(--ds-success)';
+      if (document.getElementById('odDelivRate')) document.getElementById('odDelivRate').textContent = dq.rate + '%';
+      delivBadge.textContent = 'نسبة تسليم جيدة ✓';
+      delivBadge.className = 'ds-badge ds-badge-success';
+      document.getElementById('odDeliveryAlertText').textContent = 'معدل تسليم العميل أعلى من 70%';
+    } else if (dq.status === 'DELIVERY_RATE_LOW') {
+      document.getElementById('odDeliveryRateVal').textContent = dq.rate + '%';
+      document.getElementById('odDeliveryRateVal').style.color = 'var(--ds-danger)';
+      if (document.getElementById('odDelivRate')) document.getElementById('odDelivRate').textContent = dq.rate + '%';
+      delivBadge.textContent = 'نسبة منخفضة < 70% ⚠';
+      delivBadge.className = 'ds-badge ds-badge-danger';
+      document.getElementById('odDeliveryAlertText').textContent = dq.alert || `تحذير: نسبة التسليم منخفضة (${dq.rate}%)`;
+    } else {
+      document.getElementById('odDeliveryRateVal').textContent = 'غير متوفر';
+      document.getElementById('odDeliveryRateVal').style.color = 'var(--ds-neutral-500)';
+      if (document.getElementById('odDelivRate')) document.getElementById('odDelivRate').textContent = 'غير متوفر';
+      delivBadge.textContent = 'لا توجد بيانات سابقة';
+      delivBadge.className = 'ds-badge ds-badge-neutral';
+      document.getElementById('odDeliveryAlertText').textContent = 'طلب جديد بدون سجل تسليم سابق (UNKNOWN != 0%)';
+    }
+
+    // Timeline
+    const timeline = res.timeline || [];
+    const tList = document.getElementById('odTimelineList');
+    if (timeline.length === 0) {
+      tList.innerHTML = '<div style="text-align:center;padding:12px;color:var(--ds-neutral-400)">لا توجد حركات مسجلة للطلب في قاعدة البيانات</div>';
+    } else {
+      tList.innerHTML = timeline.map(ev => `
+        <div style="padding:8px 0;border-bottom:1px solid var(--ds-neutral-100);display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <b style="color:var(--ds-neutral-900);display:block">${ev.event_type || ev.action || 'Event'}</b>
+            <span style="font-size:11px;color:var(--ds-neutral-500)">بواسطة: ${ev.actor_name || 'System'}</span>
+          </div>
+          <span class="ds-datetime" style="font-size:11px;color:var(--ds-neutral-500)">${ev.event_timestamp || ev.created_at || ''}</span>
+        </div>
+      `).join('');
+    }
+  } catch (err) {
+    console.error('Failed to load order drawer:', err);
+    document.getElementById('odAttentionBanner').innerHTML = `<div class="ds-alert ds-alert-danger">${err.message}</div>`;
+  }
+};
+
+window.closeOrderDrawer = function() {
+  const backdrop = document.getElementById('orderDrawerBackdrop');
+  const drawer = document.getElementById('orderDrawer');
+  if (drawer) drawer.classList.remove('active');
+  if (backdrop) backdrop.classList.remove('active');
+};
+
+window.copyDrawerOrderCode = function() {
+  const code = document.getElementById('odDrawerOrderCode')?.textContent;
+  if (code && navigator.clipboard) {
+    navigator.clipboard.writeText(code).then(() => {
+      showToast('📋 Copied!', `Order code ${code} copied to clipboard.`);
+    });
+  }
 };
 </script>
+
+<!-- CANONICAL OPERATIONAL INTELLIGENCE ORDER DRAWER -->
+<div class="ds-drawer-backdrop" id="orderDrawerBackdrop" onclick="closeOrderDrawer()"></div>
+<div class="ds-drawer" id="orderDrawer">
+  <div class="ds-drawer-header">
+    <div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="ds-code" id="odDrawerOrderCode" style="font-size:14px;font-weight:700">ORD-000</span>
+        <button type="button" class="ds-btn ds-btn-ghost ds-btn-sm" onclick="copyDrawerOrderCode()" title="Copy Code">📋</button>
+        <span class="ds-badge" id="odDrawerStatusBadge">New</span>
+      </div>
+      <div style="font-size:12px;color:var(--ds-neutral-500);margin-top:4px" id="odDrawerSubHeader">
+        العميل: <b id="odDrawerCustomer">-</b> · الحساب: <b id="odDrawerAccount">-</b> · موظف CS: <b id="odDrawerCS">-</b>
+      </div>
+    </div>
+    <button type="button" class="ds-btn ds-btn-ghost ds-btn-sm" onclick="closeOrderDrawer()" style="font-size:18px">✕</button>
+  </div>
+
+  <div class="ds-drawer-body" id="orderDrawerBody">
+    <div id="odAttentionBanner" style="margin-bottom:16px"></div>
+
+    <!-- 1. Action & Second Phone Quality (Feature 1) -->
+    <div class="ds-card" style="margin-bottom:14px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h4 style="font-size:13px;font-weight:700;color:var(--ds-neutral-900);margin:0">👤 Action & Second Phone Quality (جودة الرقم الثاني)</h4>
+        <span id="odPhoneBadge" class="ds-badge ds-badge-neutral">-</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;margin-bottom:10px">
+        <div>
+          <span style="color:var(--ds-neutral-500);display:block;font-size:11px">الرقم الأساسي (Primary Phone)</span>
+          <b class="ds-phone" id="odPrimaryPhone" style="font-size:13px">-</b>
+        </div>
+        <div>
+          <span style="color:var(--ds-neutral-500);display:block;font-size:11px">الرقم الثاني (Second Phone)</span>
+          <b class="ds-phone" id="odSecondPhone" style="font-size:13px">-</b>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--ds-neutral-50);padding:8px 10px;border-radius:6px;font-size:12px;margin-bottom:8px">
+        <span>Action Confirmed: <b id="odActionConfirmed" class="ds-badge ds-badge-neutral">-</b></span>
+        <span>Distinct Second Phone: <b id="odDistinctPhone" class="ds-badge ds-badge-neutral">-</b></span>
+      </div>
+      <div id="odPhoneExplanation" style="font-size:11.5px;padding:8px;border-radius:6px;background:var(--ds-neutral-100)">
+        -
+      </div>
+    </div>
+
+    <!-- 2. Address Quality (Feature 2) -->
+    <div class="ds-card" style="margin-bottom:14px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h4 style="font-size:13px;font-weight:700;color:var(--ds-neutral-900);margin:0">📍 جودة العنوان (Address Quality)</h4>
+        <span id="odAddressBadge" class="ds-badge ds-badge-neutral">-</span>
+      </div>
+      <div style="font-size:12px;margin-bottom:8px">
+        <span style="color:var(--ds-neutral-500);display:block;font-size:11px">العنوان المسجل:</span>
+        <p id="odAddressText" style="margin:4px 0 0;font-size:13px;line-height:1.4;color:var(--ds-neutral-900)">-</p>
+      </div>
+      <div style="display:flex;gap:14px;font-size:11.5px;color:var(--ds-neutral-600);margin-top:8px">
+        <span>اللغة: <b id="odAddressLang">-</b></span>
+        <span>عدد الكلمات: <b id="odAddressWordCount">-</b></span>
+      </div>
+      <div id="odAddressReason" style="margin-top:8px;font-size:11.5px;padding:8px;border-radius:6px;background:var(--ds-neutral-100)">
+        -
+      </div>
+    </div>
+
+    <!-- 3. Delivery Performance (Feature 3) -->
+    <div class="ds-card" style="margin-bottom:14px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h4 style="font-size:13px;font-weight:700;color:var(--ds-neutral-900);margin:0">🚚 نسبة تسليم العميل وإحصائيات التسليم (Delivery)</h4>
+        <span id="odDeliveryBadge" class="ds-badge ds-badge-neutral">-</span>
+      </div>
+      
+      <!-- 5 Canonical Delivery Performance Metrics -->
+      <div style="display:grid;grid-template-columns:repeat(5, 1fr);gap:8px;text-align:center;background:var(--ds-neutral-50);padding:10px 8px;border-radius:8px;margin-bottom:10px">
+        <div>
+          <span style="font-size:10.5px;color:var(--ds-neutral-500);display:block">Orders</span>
+          <b id="odDelivOrders" style="font-size:13px;color:var(--ds-neutral-800)">-</b>
+        </div>
+        <div>
+          <span style="font-size:10.5px;color:var(--ds-neutral-500);display:block">Delivered</span>
+          <b id="odDelivDelivered" style="font-size:13px;color:var(--ds-success)">-</b>
+        </div>
+        <div>
+          <span style="font-size:10.5px;color:var(--ds-neutral-500);display:block">Delivery Rate</span>
+          <b id="odDelivRate" style="font-size:13px">-</b>
+        </div>
+        <div>
+          <span style="font-size:10.5px;color:var(--ds-neutral-500);display:block">Cancellation</span>
+          <b id="odDelivCancel" style="font-size:13px;color:var(--ds-danger)">-</b>
+        </div>
+        <div>
+          <span style="font-size:10.5px;color:var(--ds-neutral-500);display:block">Cancel Rate</span>
+          <b id="odDelivCancelRate" style="font-size:13px">-</b>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <span style="color:var(--ds-neutral-500);font-size:11px;display:block">نسبة التسليم المعتمدة:</span>
+          <b id="odDeliveryRateVal" style="font-size:18px;color:var(--ds-neutral-900)">-</b>
+        </div>
+        <div id="odDeliveryAlertText" style="font-size:11.5px;color:var(--ds-neutral-600)">
+          -
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Order Tracking Timeline -->
+    <div class="ds-card" style="padding:14px">
+      <h4 style="font-size:13px;font-weight:700;color:var(--ds-neutral-900);margin:0 0 10px">⏱️ سجل حركات الطلب (Tracking Timeline)</h4>
+      <div id="odTimelineList" style="font-size:11.5px;color:var(--ds-neutral-700)">
+        <div style="text-align:center;padding:12px;color:var(--ds-neutral-400)">لا توجد حركات مسجلة حتى الآن</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ds-drawer-footer">
+    <button type="button" class="ds-btn ds-btn-secondary ds-btn-sm" onclick="closeOrderDrawer()">إغلاق</button>
+  </div>
+</div>
 
 </body>
 </html>

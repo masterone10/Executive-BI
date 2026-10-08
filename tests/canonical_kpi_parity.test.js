@@ -29,8 +29,12 @@ import { computePerformanceFromRecords, savePerformanceSnapshotToDB } from '../s
 import { classifyVendoorAction, extractCanonicalStatus } from '../services/vendoor/actions.js';
 import { STATUS_RE, ALT_RE, ADDED_RE, isCsEmployee } from '../services/parser.js';
 import { getTrackingOverview } from '../services/tracking.js';
+import { loadOrSyncHistoricalDate } from '../services/historical_dates.js';
 
 console.log('--- STARTING CANONICAL KPI PARITY REGRESSION TEST SUITE ---');
+
+// Ensure 2026-10-01 test fixture is loaded
+await loadOrSyncHistoricalDate('2026-10-01', { forceSync: true, forceMode: 'mock' });
 
 // -------------------------------------------------------------
 // TEST 1: Action Classification & Non-Status Event Protection

@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { describe, it } from 'node:test';
+import { describe, it, before } from 'node:test';
 import { db } from '../db/index.js';
 import {
   getHistoricalOrdersForDate,
@@ -12,6 +12,17 @@ import { computePerformanceFromRecords } from '../services/performance.js';
 import { getCairoBusinessDate } from '../services/time_utils.js';
 
 describe('Historical Pending Date Scope Verification Suite', () => {
+
+  before(async () => {
+    const today = getCairoBusinessDate();
+    db.prepare(`
+      INSERT OR IGNORE INTO current_work_orders (work_date, order_code, status, account)
+      VALUES (?, 'TEST_LIVE_PENDING_SCOPE_001', 'Pending', 'TEST_ACC')
+    `).run(today);
+
+    await loadOrSyncHistoricalDate('2026-10-01', { forceMode: 'mock' });
+    await loadOrSyncHistoricalDate('2026-09-27', { forceMode: 'mock' });
+  });
 
   it('1. Historical Pending Orders must be strictly date-scoped to selected date D', () => {
     const p1001 = getHistoricalPendingOrders('2026-10-01');

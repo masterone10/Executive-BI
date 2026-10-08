@@ -242,19 +242,244 @@ export class MockVendoorDataSource extends VendoorDataSource {
 
     let curr = new Date(sDate.getTime());
     let counter = 100;
+
     while (curr <= eDate) {
       const dStr = curr.toISOString().slice(0, 10);
-      for (let j = 0; j < 6; j++) {
-        counter++;
-        const emp = employees[j % employees.length];
-        const act = actions[j % actions.length];
-        mockLogs.push({
-          employee_name: emp,
-          order_code: `VD-${counter}`,
-          action: act,
-          date: dStr,
-          timestamp: `${dStr}T09:${String(10 + (j * 8)).padStart(2, '0')}:00.000Z`
+
+      if (dStr === '2026-10-01') {
+        // Deterministic canonical benchmark dataset for 2026-10-01
+        let orderId = 1000;
+        let minOffset = 0;
+        const agentSpecs = [
+          { name: 'BASMA CS', printed: 29, pending: 38, cancelled: 23, processing: 2, alt: 25, newOrders: 60 },
+          { name: 'EMAN CS', printed: 49, pending: 5, cancelled: 12, processing: 2, alt: 18, newOrders: 50 },
+          { name: 'MENNA ATEF CS', printed: 35, pending: 18, cancelled: 29, processing: 1, alt: 15, newOrders: 40 },
+          { name: 'AHD CS', printed: 22, pending: 5, cancelled: 3, processing: 13, alt: 12, newOrders: 35 },
+          { name: 'REEM ELSAEED CS', printed: 45, pending: 30, cancelled: 27, processing: 0, alt: 16, newOrders: 45 }
+        ];
+
+        let remPrinted = 811 - (29 + 49 + 35 + 22 + 45); // 631
+        let remPending = 422 - (38 + 5 + 18 + 5 + 30);  // 326
+        let remCancelled = 225 - (23 + 12 + 29 + 3 + 27); // 131
+        let remProcessing = 57 - (2 + 2 + 1 + 13 + 0); // 39
+        let remAlt = 242 - (25 + 18 + 15 + 12 + 16); // 156
+        let remNew = 1041 - (60 + 50 + 40 + 35 + 45); // 811
+
+        const otherCsAgents = [
+          'Sanaa CS', 'MOHAMED OSAMA CS', 'Ali CS', 'Salwa Cs',
+          'Alyaa CS', 'Sahar cs', 'Esraa Reda CS', 'Malak Abdelfattah CS', 'Menna Sherif cs',
+          'Rania ahmed CS', 'Mostafa Ehab CS', 'Nourhan CS', 'Hagar CS', 'Dina CS'
+        ];
+
+        const numAgents = otherCsAgents.length;
+        otherCsAgents.forEach((agentName, idx) => {
+          const isLast = (idx === numAgents - 1);
+          const p = isLast ? remPrinted : Math.floor(remPrinted / (numAgents - idx));
+          remPrinted -= p;
+          const pe = isLast ? remPending : Math.floor(remPending / (numAgents - idx));
+          remPending -= pe;
+          const c = isLast ? remCancelled : Math.floor(remCancelled / (numAgents - idx));
+          remCancelled -= c;
+          const pr = isLast ? remProcessing : Math.floor(remProcessing / (numAgents - idx));
+          remProcessing -= pr;
+          const a = isLast ? remAlt : Math.floor(remAlt / (numAgents - idx));
+          remAlt -= a;
+          const nw = isLast ? remNew : Math.floor(remNew / (numAgents - idx));
+          remNew -= nw;
+
+          agentSpecs.push({
+            name: agentName,
+            printed: p,
+            pending: pe,
+            cancelled: c,
+            processing: pr,
+            alt: a,
+            newOrders: nw
+          });
         });
+
+        const day1001Logs = [];
+        const pendingOrderCodes = [];
+        const printedOrderCodes = [];
+
+        for (const spec of agentSpecs) {
+          const actions = [];
+          for (let i = 0; i < spec.printed; i++) actions.push({ type: 'Printed', status: 'Printed', act: `عدل ${spec.name} حالة الطلب إلى 'Printed'` });
+          for (let i = 0; i < spec.pending; i++) actions.push({ type: 'Pending', status: 'Pending', act: `عدل ${spec.name} حالة الطلب إلى 'Pending'` });
+          for (let i = 0; i < spec.cancelled; i++) actions.push({ type: 'Cancelled', status: 'Cancelled', act: `عدل ${spec.name} حالة الطلب إلى 'Cancelled'` });
+          for (let i = 0; i < spec.processing; i++) actions.push({ type: 'Processing', status: 'Processing', act: `عدل ${spec.name} حالة الطلب إلى 'Processing'` });
+
+          for (const item of actions) {
+            orderId++;
+            let code = 'ORD-' + orderId;
+
+            // Re-use order codes to establish multi-event order histories:
+            // 144 Pending orders progress to Printed (latest = Printed) -> currentPendingBacklog = 422 - 144 = 278
+            if (item.type === 'Pending' && pendingOrderCodes.length < 144) {
+              pendingOrderCodes.push(code);
+            } else if (item.type === 'Printed' && printedOrderCodes.length < 144 && pendingOrderCodes.length > printedOrderCodes.length) {
+              code = pendingOrderCodes[printedOrderCodes.length];
+              printedOrderCodes.push(code);
+            }
+
+            minOffset += 3;
+            const h = String(9 + (Math.floor(minOffset / 3600) % 12)).padStart(2, '0');
+            const m = String(Math.floor((minOffset % 3600) / 60)).padStart(2, '0');
+            const s = String(minOffset % 60).padStart(2, '0');
+            const baseTime = dStr + ' ' + h + ':' + m + ':' + s;
+
+            day1001Logs.push({
+              employee_name: spec.name,
+              order_code: code,
+              action: item.act,
+              status: item.status,
+              event_datetime: baseTime,
+              timestamp: dStr + 'T' + h + ':' + m + ':' + s + '.000Z',
+              date: dStr,
+              is_cs: 1
+            });
+          }
+
+          for (let i = 0; i < spec.alt; i++) {
+            orderId++;
+            const code = 'ORD-' + orderId;
+            minOffset += 3;
+            const h = String(9 + (Math.floor(minOffset / 3600) % 12)).padStart(2, '0');
+            const m = String(Math.floor((minOffset % 3600) / 60)).padStart(2, '0');
+            const s = String(minOffset % 60).padStart(2, '0');
+            day1001Logs.push({
+              employee_name: spec.name,
+              order_code: code,
+              action: 'اضافة رقم هاتف بديل: 01012345678',
+              status: null,
+              event_datetime: dStr + ' ' + h + ':' + m + ':' + s,
+              timestamp: dStr + 'T' + h + ':' + m + ':' + s + '.000Z',
+              date: dStr,
+              is_cs: 1
+            });
+          }
+
+          for (let i = 0; i < spec.newOrders; i++) {
+            orderId++;
+            const code = 'ORD-' + orderId;
+            minOffset += 3;
+            const h = String(9 + (Math.floor(minOffset / 3600) % 12)).padStart(2, '0');
+            const m = String(Math.floor((minOffset % 3600) / 60)).padStart(2, '0');
+            const s = String(minOffset % 60).padStart(2, '0');
+            day1001Logs.push({
+              employee_name: spec.name,
+              order_code: code,
+              action: 'أضاف اوردر جديد',
+              status: null,
+              event_datetime: dStr + ' ' + h + ':' + m + ':' + s,
+              timestamp: dStr + 'T' + h + ':' + m + ':' + s + '.000Z',
+              date: dStr,
+              is_cs: 1
+            });
+          }
+        }
+
+        // Add 10 non-CS printed events so uniquePrintedOrders (821) differs from printedActions (811)
+        for (let i = 0; i < 10; i++) {
+          minOffset += 2;
+          const h = String(10 + (Math.floor(minOffset / 3600) % 10)).padStart(2, '0');
+          const m = String(Math.floor((minOffset % 3600) / 60)).padStart(2, '0');
+          const s = String(minOffset % 60).padStart(2, '0');
+          day1001Logs.push({
+            employee_name: 'Warehouse Printer',
+            order_code: `ORD-WH-${i + 1}`,
+            action: `طبع البوليصة في المخزن`,
+            status: 'Printed',
+            event_datetime: `${dStr} ${h}:${m}:${s}`,
+            timestamp: `${dStr}T${h}:${m}:${s}.000Z`,
+            date: dStr,
+            is_cs: 0 // Non-CS so CS printedActions stays 811
+          });
+        }
+
+        // To reach uniqueCancelledOrders = 256 (31 orders reached Cancelled after another status)
+        // Add 31 non-CS cancellation transition events for 31 existing distinct order codes
+        for (let i = 0; i < 31; i++) {
+          minOffset += 2;
+          const h = String(10 + (Math.floor(minOffset / 3600) % 10)).padStart(2, '0');
+          const m = String(Math.floor((minOffset % 3600) / 60)).padStart(2, '0');
+          const s = String(minOffset % 60).padStart(2, '0');
+          day1001Logs.push({
+            employee_name: 'System AutoCancel',
+            order_code: `ORD-${1001 + i}`,
+            action: `عدل النظام حالة الطلب إلى 'Cancelled'`,
+            status: 'Cancelled',
+            event_datetime: `${dStr} ${h}:${m}:${s}`,
+            timestamp: `${dStr}T${h}:${m}:${s}.000Z`,
+            date: dStr,
+            is_cs: 0 // Non-CS actor so CS cancelled actions remains 225
+          });
+        }
+
+        // Duplicate inflation: Add exactly 3003 duplicate rows to reach 4518 raw status count
+        const statusLogs = day1001Logs.filter(l => l.status && l.is_cs === 1);
+        for (let i = 0; i < 3003; i++) {
+          const parent = statusLogs[i % statusLogs.length];
+          // Ensure every duplicate timestamp is unique within the 120s dedup window
+          const cycle = Math.floor(i / statusLogs.length); // 0 or 1
+          const dupSec = 10 + (cycle * 25) + ((i * 3) % 15);
+          // Parse base time and add dupSec seconds
+          const [hStr, mStr, sStr] = parent.event_datetime.split(' ')[1].split(':');
+          let sVal = parseInt(sStr, 10) + dupSec;
+          let mVal = parseInt(mStr, 10);
+          if (sVal >= 60) {
+            sVal -= 60;
+            mVal += 1;
+          }
+          const dupTime = `${dStr} ${hStr}:${String(mVal).padStart(2, '0')}:${String(sVal).padStart(2, '0')}`;
+          day1001Logs.push({
+            employee_name: parent.employee_name,
+            order_code: parent.order_code,
+            action: parent.action,
+            status: parent.status,
+            event_datetime: dupTime,
+            timestamp: `${dStr}T${hStr}:${String(mVal).padStart(2, '0')}:${String(sVal).padStart(2, '0')}.000Z`,
+            date: dStr,
+            is_cs: 1
+          });
+        }
+
+        // Add non-CS audit logs (Shipping, Warehouse, System, Merchant) to reach > 19,000 total records
+        const nonCsActors = ['Bosta integration', 'ARC SHOES Shipping', 'Warehouse Admin', 'Merchant Portal', 'Qpxpress'];
+        for (let i = 0; i < 15000; i++) {
+          const actor = nonCsActors[i % nonCsActors.length];
+          const h = String(8 + Math.floor(i / 1500) % 14).padStart(2, '0');
+          const m = String(Math.floor((i % 60))).padStart(2, '0');
+          const s = String(Math.floor((i * 7) % 60)).padStart(2, '0');
+          day1001Logs.push({
+            employee_name: actor,
+            order_code: `ORD-EXT-${20000 + i}`,
+            action: `تحديث حالة الشحن بواسطة ${actor}`,
+            status: null,
+            event_datetime: `${dStr} ${h}:${m}:${s}`,
+            timestamp: `${dStr}T${h}:${m}:${s}.000Z`,
+            date: dStr,
+            is_cs: 0
+          });
+        }
+
+        mockLogs.push(...day1001Logs);
+      } else {
+        // Standard per-day mock logs for other dates
+        const dateHash = dStr.split('-').reduce((acc, part) => acc + parseInt(part, 10), 0);
+        const dayActionsCount = 40 + (dateHash % 30);
+        for (let j = 0; j < dayActionsCount; j++) {
+          counter++;
+          const emp = employees[j % employees.length];
+          const act = actions[j % actions.length];
+          mockLogs.push({
+            employee_name: emp,
+            order_code: `VD-${dStr.replace(/-/g, '')}-${counter}`,
+            action: act,
+            date: dStr,
+            timestamp: `${dStr}T09:${String(10 + (j % 50)).padStart(2, '0')}:00.000Z`
+          });
+        }
       }
       curr.setUTCDate(curr.getUTCDate() + 1);
     }
@@ -298,17 +523,22 @@ export class MockVendoorDataSource extends VendoorDataSource {
  */
 export function getVendoorDataSource(forceMode = null) {
   const cfg = getVendoorConfig();
-  const mode = forceMode || (cfg.mockMode ? 'mock' : 'live');
-
   const isTestEnv = process.env.NODE_ENV === 'test' || 
     process.env.npm_lifecycle_event?.includes('test') || 
     process.argv.some(arg => typeof arg === 'string' && (arg.includes('test') || arg.includes('spec')));
 
-  if (mode === 'mock' && !isTestEnv && forceMode !== 'mock') {
-    throw new Error('MOCK_ADAPTER_DISALLOWED: Mock data source is strictly forbidden in production / non-test environments.');
+  let mode = (cfg.mockMode && isTestEnv) ? 'mock' : 'live';
+  if (forceMode) {
+    if (forceMode === 'mock' && !isTestEnv && process.env.NODE_ENV === 'production') {
+      throw new Error('MOCK_ADAPTER_DISALLOWED: Mock data source cannot be forced in production.');
+    }
+    mode = forceMode;
   }
 
   if (mode === 'mock') {
+    if (!isTestEnv && process.env.NODE_ENV === 'production') {
+      throw new Error('MOCK_ADAPTER_DISALLOWED: Mock data source is strictly forbidden in production.');
+    }
     return new MockVendoorDataSource();
   }
   return new LiveVendoorDataSource();

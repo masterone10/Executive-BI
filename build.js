@@ -49,17 +49,7 @@ html = html.replace(
   ''
 );
 
-// Enhance buttons for Excel & PDF in top bar
-html = html.replace(
-  '<a class="btn" href="Executive_Report_v3.xlsx" download>⭳ Excel</a>',
-  '<button class="btn" id="exportExcelBtn" onclick="exportCurrentExcel()">⭳ Excel</button>'
-);
-html = html.replace(
-  '<a class="btn primary" href="Executive_Report_v3.pdf" download>⭳ PDF</a>',
-  '<button class="btn primary" id="exportPdfBtn" onclick="window.print()">⭳ PDF / Print</button>'
-);
-
-// Add print stylesheet
+// Print stylesheet injection
 const printStyles = `
 <style media="print">
   @page { size: landscape; margin: 12mm; }
@@ -72,105 +62,6 @@ const printStyles = `
 </style>
 `;
 html = html.replace('</head>', `${printStyles}\n</head>`);
-
-// Add exportCurrentExcel function with lazy script loader
-const exportScript = `
-<script>
-window.ensureXlsxLoaded = function(cb) {
-  if (typeof XLSX !== 'undefined') return cb();
-  var script = document.createElement('script');
-  script.src = '/xlsx.full.min.js';
-  script.onload = function() { cb(); };
-  script.onerror = function() {
-    window.location.href = '/Executive_Report_v3.xlsx';
-  };
-  document.head.appendChild(script);
-};
-
-window.exportCurrentExcel = function() {
-  window.ensureXlsxLoaded(function() {
-    try {
-      var wb = XLSX.utils.book_new();
-    var tot = D.log_totals, hs = D.hr || {}, ded = D.dedup || {}, emp = D.employees || [];
-    
-    // Executive Summary
-    var sRows = [
-      ['CUSTOMER SERVICE — EXECUTIVE REPORT (DEDUPLICATED)'],
-      ['Each status change counted once per order+employee+status. Removed ' + (ded.removed||0).toLocaleString() + ' duplicate rows (' + (ded.removed_pct||0) + '% of raw).'],
-      [],
-      ['KEY PERFORMANCE INDICATORS', 'VALUE'],
-      ['Total Real Actions', (tot.actions||0).toLocaleString()],
-      ['Raw Rows (before dedup)', (ded.raw_cs_status||0).toLocaleString()],
-      ['New Orders', (hs.tot_new||0).toLocaleString()],
-      ['Printed', (tot.printed||0).toLocaleString()],
-      ['Team Print Rate', (tot.actions ? (tot.printed/tot.actions*100).toFixed(1) : 0) + '%'],
-      ['Pending', (tot.pending||0).toLocaleString()],
-      ['Team Pending Rate', (D.team_pending_rate||0) + '%'],
-      ['Cancelled', (tot.cancelled||0).toLocaleString()],
-      ['Team Cancel Rate', (D.team_cancel_rate||0) + '%'],
-      ['Alt Phones Added', (tot.alt||0).toLocaleString()],
-      ['Top Performer', emp[0] ? emp[0].name : '-'],
-      [],
-      ['EXECUTIVE INSIGHTS']
-    ];
-    if (D.insights) {
-      D.insights.forEach(function(ins) { sRows.push(['• ' + ins]); });
-    }
-    var wsS = XLSX.utils.aoa_to_sheet(sRows);
-    wsS['!cols'] = [{ wch: 45 }, { wch: 25 }];
-    XLSX.utils.book_append_sheet(wb, wsS, 'Executive Summary');
-
-    // Daily Trend
-    var dRows = [['Date', 'Day', 'New Orders', 'Printed', 'Printed %', 'Cancelled', 'Cancel %']];
-    (D.daily || []).forEach(function(d) {
-      dRows.push([d.day, d.dow, d.new, d.printed, d.printed_pct + '%', d.cancel, d.cancel_pct + '%']);
-    });
-    var wsD = XLSX.utils.aoa_to_sheet(dRows);
-    wsD['!cols'] = [{ wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, wsD, 'Daily Trend');
-
-    // Scorecard
-    var scRows = [['Rank', 'Employee', 'Total Actions', 'Printed', 'Print %', 'Pending', 'Pend %', 'Processing', 'Cancelled', 'Cancel %', 'Alt Phone', 'Alt %', 'Added Orders', 'Contribution %', 'Grade', 'Segment', 'Cancel Risk']];
-    emp.forEach(function(e) {
-      scRows.push([e.rank, e.name, e.actions, e.printed, e.own_printed_rate + '%', e.pending, e.own_pending_rate + '%', e.processing, e.cancelled, e.own_cancel_rate + '%', e.alt, e.own_alt_rate + '%', e.added, e.contribution_pct + '%', e.grade, e.segment, e.cancel_risk]);
-    });
-    var wsSc = XLSX.utils.aoa_to_sheet(scRows);
-    wsSc['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 18 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, wsSc, 'Agent Scorecard');
-
-    // Cancellation
-    var cRows = [['Rank', 'Employee', 'Total Actions', 'Cancelled', 'Own Cancel Rate %', '% of Team Cancels', 'Risk']];
-    var cdf = emp.slice().filter(function(e) { return e.cancelled > 0; }).sort(function(a, b) { return b.own_cancel_rate - a.own_cancel_rate; });
-    cdf.forEach(function(e, idx) {
-      cRows.push([idx + 1, e.name, e.actions, e.cancelled, e.own_cancel_rate + '%', e.canc_share_pct + '%', e.cancel_risk]);
-    });
-    var wsC = XLSX.utils.aoa_to_sheet(cRows);
-    wsC['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, wsC, 'Cancellation Analysis');
-
-    // Status Distribution
-    var st = D.status_totals || {};
-    var distRows = [
-      ['Status', 'Count', 'Share %'],
-      ['Printed', st.Printed || 0, (tot.actions ? ((st.Printed || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
-      ['Pending', st.Pending || 0, (tot.actions ? ((st.Pending || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
-      ['Processing', st.Processing || 0, (tot.actions ? ((st.Processing || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
-      ['Cancelled', st.Cancelled || 0, (tot.actions ? ((st.Cancelled || 0) / tot.actions * 100).toFixed(1) : 0) + '%'],
-    ];
-    var wsDist = XLSX.utils.aoa_to_sheet(distRows);
-    wsDist['!cols'] = [{ wch: 16 }, { wch: 12 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, wsDist, 'Status Distribution');
-
-    XLSX.writeFile(wb, 'Executive_Report.xlsx');
-  } catch(err) {
-    console.error('Export failed, falling back to static download:', err);
-    window.location.href = '/Executive_Report_v3.xlsx';
-  }
-  });
-};
-</script>
-`;
-html = html.replace('</body>', `${exportScript}\n</body>`);
 
 // Replace __DATA_PLACEHOLDER__ with clean dynamic default state
 const defaultInitialData = {

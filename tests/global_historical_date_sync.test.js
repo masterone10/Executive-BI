@@ -23,6 +23,9 @@ import { getCairoBusinessDate } from '../services/time_utils.js';
 
 console.log('--- STARTING GLOBAL HISTORICAL DATE NAVIGATION & SYNC TEST SUITE ---');
 
+// Ensure 2026-10-01 mock date is loaded for test
+await loadOrSyncHistoricalDate('2026-10-01', { forceMode: 'mock' });
+
 // -------------------------------------------------------------
 // TEST 1: Historical Date Registry & Schema Initialization
 // -------------------------------------------------------------
