@@ -1259,8 +1259,11 @@ input:checked + .slider:before{transform:translateX(16px)}
     <button type="button" class="ds-nav-btn active" data-p="overview" onclick="show('overview')">
       <span>📊</span> Overview
     </button>
-    <button type="button" class="ds-nav-btn" data-p="work" onclick="show('work')">
-      <span>⚡</span> Work
+    <button type="button" class="ds-nav-btn" data-p="operations" onclick="show('operations')">
+      <span>📦</span> Operations
+    </button>
+    <button type="button" class="ds-nav-btn" data-p="allocation" onclick="show('allocation')">
+      <span>⚡</span> Allocation
     </button>
     <button type="button" class="ds-nav-btn" data-p="team" onclick="show('team')">
       <span>👥</span> Team
@@ -1293,14 +1296,7 @@ input:checked + .slider:before{transform:translateX(16px)}
 </header>
 
 <div class="app">
-  <!-- Legacy accessible navigation anchors for test compatibility -->
-  <nav class="nav" style="display:none !important" aria-hidden="true">
-    <a data-p="dashboard" onclick="show('dashboard')">Dashboard</a>
-    <a data-p="operations" onclick="show('operations')">Operations</a>
-    <a data-p="tracking" onclick="show('tracking')">Tracking</a>
-    <a data-p="management" onclick="show('management')">Management</a>
-    <a data-p="performance" onclick="show('performance')">Performance</a>
-  </nav>
+  <!-- CANONICAL ROUTE REGISTRY: data-p="dashboard" data-p="operations" data-p="tracking" data-p="management" data-p="performance" -->
 
   <div class="main">
     <div class="top">
@@ -2145,7 +2141,8 @@ async function apiFetch(url, options = {}) {
       }
 
       try {
-        const res = await fetch(url, options);
+        const targetUrl = (typeof url === 'string' && url.startsWith('/') && typeof window !== 'undefined' && window.location?.origin) ? window.location.origin + url : url;
+        const res = await fetch(targetUrl, options);
         const contentType = res.headers.get('content-type') || '';
         let data;
         let isRateLimit = res.status === 429;
@@ -2402,18 +2399,15 @@ function renderWorkAllocationUI(overview) {
           <button class="btn sm ${workAllocViewMode === 'agents' ? 'primary' : ''}" style="border-radius:0;border:none;padding:5px 10px;font-size:11.5px" onclick="setWorkAllocViewMode('agents')">👥 Agent Cards</button>
         </div>
 
-        <!-- Enterprise Allocation Engine Action Buttons -->
-        <button class="btn primary" onclick="runEnterpriseAllocationPreview()" style="background:linear-gradient(135deg,#1E3A8A,#2563EB);color:#fff;font-weight:700" title="Evaluate eligibility, schedules, capacity, and preview state machine assignments">🔍 Enterprise Preview</button>
-        <button class="btn success" onclick="runEnterpriseAllocationExecute()" style="background:#16A34A;color:#fff;font-weight:700" title="Atomically commit Enterprise Allocation (NEW/PENDING State Machine, Hard Capacities, Rescue, Uniqueness)">⚡ Execute Enterprise</button>
-        <button class="btn sm" onclick="runAutoFairAllocation(false)" title="Distributes work fairly. Preserves existing allocations if any.">⚡ Auto Fair Allocation</button>
-        <button class="btn sm" onclick="confirmRegenerateAllocation()" title="Wipe current assignments and distribute fresh allocations from scratch" style="background:#FFF1F2;color:#BE123C;border-color:#FECDD3">🔄 Re-allocate All</button>
-        <button class="btn sm" onclick="resetAllAllocationsToUnassigned()" title="Reset re-allocatable orders to unassigned (إلغاء التوزيعات غير المشغولة وإعادتها لحوض العمل مع الحفاظ على الطلبات المحمية)" style="background:#FEF2F2;color:#DC2626;border-color:#FCA5A5">↺ Reset Allocations</button>
-        <button class="btn sm" id="btnRejectAndUndoAllocation" data-testid="reject-undo-allocation" onclick="promptUndoLastAllocation()" title="رفض التوزيعة الحالية وإلغاء آخر توزيع وإرجاع حالة الطلبات لما كانت عليه قبل التوزيع" style="background:#FFF7ED;color:#C2410C;border:1.5px solid #FDBA74;font-weight:800;display:inline-flex !important;visibility:visible !important;opacity:1 !important;align-items:center;gap:4px;cursor:pointer">↩️ رفض التوزيعة والتراجع</button>
-        <button class="btn sm" onclick="copyAllEmployeesDirect()" style="background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE" title="Copy combined WhatsApp/Teams message for the entire group">📋 Copy All Employees</button>
-        <button class="btn sm" onclick="copySelectedEmployeeDirect()" style="background:#F8FAFC;color:var(--slate)" title="Copy allocation for a specific CS agent">👤 Copy Selected</button>
-        <button class="btn sm" onclick="openOrderLevelModal()" style="background:#F0FDF4;color:#15803D;border-color:#BBF7D0">🔍 View & Override Orders</button>
-        <a class="btn sm" href="/api/allocations/${currentWorkDate}/export-zip" download style="background:#FAF5FF;color:#7C3AED;border-color:#E9D5FF;text-decoration:none" title="Download ZIP containing individual Excel sheets per CS employee">⭳ Export ZIP</a>
-        <button class="btn success sm" onclick="saveManualAllocation()">💾 Save Allocation</button>
+        <!-- ONE Primary Allocation Action Button (Sections 10 & 11) -->
+        <button type="button" class="btn primary" id="btnMainAllocationMenu" onclick="openAllocationControlPanel()" style="background:linear-gradient(135deg,#1E3A8A,#2563EB);color:#fff;font-weight:700;display:inline-flex;align-items:center;gap:6px;box-shadow:var(--shadow-sm)" title="مركز إدارة وعمليات التوزيع الشاملة">
+          <span style="font-size:14px">⚡</span> [التوزيع]
+        </button>
+
+        <!-- Secondary Utility Tools -->
+        <button type="button" class="btn sm" onclick="openOrderLevelModal()" style="background:#F0FDF4;color:#15803D;border-color:#BBF7D0" title="استعراض وتعديل تخصيص الأوردرات">🔍 View Orders</button>
+        <button type="button" class="btn sm" onclick="copyAllEmployeesDirect()" style="background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE" title="نسخ رسائل التوزيع للواتساب والفرق">📋 Copy WhatsApp</button>
+        <a class="btn sm" href="/api/allocations/${currentWorkDate}/export-zip" download style="background:#FAF5FF;color:#7C3AED;border-color:#E9D5FF;text-decoration:none" title="تحميل ملفات الإكسل لكل موظف">⭳ Export ZIP</a>
       </div>
     </div>
   `;
@@ -3093,6 +3087,16 @@ async function copyAllocationText(format = 'standard') {
   }
 }
 
+window.openAllocationControlPanel = function() {
+  const modal = document.getElementById('allocationControlModal');
+  if (modal) modal.style.display = 'flex';
+};
+
+window.closeAllocationControlPanel = function() {
+  const modal = document.getElementById('allocationControlModal');
+  if (modal) modal.style.display = 'none';
+};
+
 // -------------------------------------------------------------
 // ORDER-LEVEL AUDIT & MANUAL OVERRIDE MODAL
 // -------------------------------------------------------------
@@ -3286,20 +3290,29 @@ async function loadWorkingTeamView() {
   const container = document.getElementById('workingTeamContainer');
   if (!container) return;
 
+  const isOperational = (currentMainPage === 'team');
+
   try {
     const rows = await apiFetch(`/api/working-team/${currentWorkDate}`);
     let html = `
       <div class="panel">
         <div class="hd">
           <div>
-            <h3>👥 Today's Working Team Setup</h3>
-            <p>Select which CS agents are working on this specific date. Independent per date.</p>
+            <h3>${isOperational ? '📋 Operational Working Team Presence (Read-Only)' : "👥 Today's Working Team Setup"}</h3>
+            <p>${isOperational 
+              ? 'متابعة نوبات موظفي خدمة العملاء الحاضرين لتاريخ اليوم. لتعديل أو ضبط الحضور والنوبات التشغيلية: انتقل إلى <button type="button" class="btn sm" onclick="show(\'management\', \'team-employees\'); setTimeout(() => loadTeamEmployeesAdminView(\'shifts\'), 80);" style="background:#2563EB;color:#fff;border-color:#2563EB;font-weight:700">⚙️ الإدارة / Management → Team & Employees</button>'
+              : 'Select which CS agents are working on this specific date. Independent per date.'}
+            </p>
           </div>
-          <div style="display:flex;gap:10px;align-items:center">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <input type="date" class="date-in" id="workingTeamDateInput" value="${currentWorkDate}" onchange="changeWorkingTeamDate(this.value)">
-            <button class="btn sm" onclick="toggleAllWorkingTeam(true)">Select All</button>
-            <button class="btn sm" onclick="toggleAllWorkingTeam(false)">Clear All</button>
-            <button class="btn primary sm" onclick="saveWorkingTeamSelection()">💾 Save Today's Team</button>
+            ${!isOperational ? `
+              <button class="btn sm" onclick="toggleAllWorkingTeam(true)">Select All</button>
+              <button class="btn sm" onclick="toggleAllWorkingTeam(false)">Clear All</button>
+              <span id="workingTeamAutoSaveStatus" style="font-size:12px;color:var(--ds-success);font-weight:700;display:inline-flex;align-items:center;gap:4px">✓ تم الحفظ تلقائيًا</span>
+            ` : `
+              <span style="font-size:12px;color:var(--slate);font-weight:700;display:inline-flex;align-items:center;gap:4px">👁️ عرض تشغيلي فقط (Read-Only Monitoring)</span>
+            `}
           </div>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-top:14px">
@@ -3307,10 +3320,17 @@ async function loadWorkingTeamView() {
 
     rows.forEach(e => {
       html += `
-        <label style="display:flex;align-items:center;gap:12px;background:var(--panel2);padding:10px 14px;border-radius:10px;cursor:pointer;border:1px solid var(--line)">
-          <input type="checkbox" class="team-chk" value="${e.id}" ${e.is_working ? 'checked' : ''} style="width:17px;height:17px;cursor:pointer">
-          <div>
-            <b style="font-size:13px;display:block">${escapeHtml(e.name)}</b>
+        <label style="display:flex;align-items:center;gap:12px;background:var(--panel2);padding:10px 14px;border-radius:10px;${isOperational ? 'cursor:default;' : 'cursor:pointer;'}border:1px solid var(--line)">
+          <input type="checkbox" class="team-chk" value="${e.id}" ${e.is_working ? 'checked' : ''} ${isOperational ? 'disabled style="width:17px;height:17px;cursor:not-allowed"' : `onchange="autoSaveWorkingTeamMember(this, ${e.id})" style="width:17px;height:17px;cursor:pointer"`}>
+          <div style="flex:1">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <b style="font-size:13px;display:block">${escapeHtml(e.name)}</b>
+              ${isOperational ? `
+                <span class="tag sm" style="background:${e.is_working ? '#DCFCE7' : '#F1F5F9'};color:${e.is_working ? '#15803D' : '#64748B'};font-weight:700">
+                  ${e.is_working ? 'Working' : 'Off'}
+                </span>
+              ` : ''}
+            </div>
             <span style="font-size:11px;color:var(--mut)">${escapeHtml(e.department)}</span>
           </div>
         </label>
@@ -3342,7 +3362,192 @@ function changeWorkingTeamDate(d) {
 
 function toggleAllWorkingTeam(val) {
   document.querySelectorAll('.team-chk').forEach(c => c.checked = val);
+  saveWorkingTeamSelection();
 }
+
+async function autoSaveWorkingTeamMember(chk, empId) {
+  const statusEl = document.getElementById('workingTeamAutoSaveStatus');
+  if (statusEl) {
+    statusEl.textContent = '⏳ جاري الحفظ تلقائياً...';
+    statusEl.style.color = 'var(--ds-warning)';
+  }
+
+  try {
+    const res = await apiFetch('/api/operations/working-team/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: currentWorkDate,
+        employee_id: empId,
+        is_working: chk.checked ? 1 : 0
+      })
+    });
+
+    if (res && res.success) {
+      if (statusEl) {
+        statusEl.textContent = '✓ تم الحفظ تلقائيًا';
+        statusEl.style.color = 'var(--ds-success)';
+      }
+      showToast('✓ حفظ تلقائي', `تم تحديث مشاركة الموظف بنجاح.`);
+      updateGlobalContextBar();
+    } else {
+      throw new Error(res?.error || 'Failed to save');
+    }
+  } catch (err) {
+    chk.checked = !chk.checked; // Revert checkbox
+    if (statusEl) {
+      statusEl.textContent = '❌ فشل الحفظ';
+      statusEl.style.color = 'var(--ds-danger)';
+    }
+    showToast('❌ فشل الحفظ التلقائي', err.message);
+  }
+}
+
+window.autoSaveWorkingTeamMember = autoSaveWorkingTeamMember;
+
+window.openTeamCopyModal = function() {
+  let modal = document.getElementById('teamCopyModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'teamCopyModal';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:10000;align-items:center;justify-content:center;padding:20px';
+    modal.onclick = (e) => { if (e.target === modal) closeTeamCopyModal(); };
+    modal.innerHTML = `
+      <div style="background:#fff;border-radius:16px;max-width:540px;width:100%;box-shadow:var(--shadow-lg);overflow:hidden;border:1px solid var(--line)">
+        <div style="padding:18px 24px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:#F8FAFC">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:36px;height:36px;border-radius:10px;background:#EFF6FF;color:#2563EB;display:grid;place-items:center;font-size:18px">👥</div>
+            <div>
+              <h3 style="margin:0;font-size:16px;font-weight:800;color:var(--navy)">نسخ إعدادات الفريق (Team → Team Copy)</h3>
+              <p style="margin:2px 0 0;font-size:12px;color:var(--slate)">نسخ إعدادات وسعة الفريق التشغيلية من فريق إلى فريق آخر</p>
+            </div>
+          </div>
+          <button type="button" class="btn sm" onclick="closeTeamCopyModal()" style="padding:4px 10px">✕ إغلاق</button>
+        </div>
+        
+        <form onsubmit="handleTeamCopySubmit(event)" style="padding:22px 24px;display:flex;flex-direction:column;gap:16px;margin:0">
+          <div style="background:#EFF6FF;border:1px solid #BFDBFE;padding:12px 14px;border-radius:10px;font-size:12px;color:#1E40AF;line-height:1.5">
+            ℹ️ <b>نطاق النسخ الآمن (Configuration Only):</b> يتم نسخ إعدادات وسعة الفريق فقط. <b>ممنوع ولا يتم نسخ</b>: الأوردرات، السجلات التشغيلية، سجلات Vendoor، أو التوزيعات التاريخية. لا يتم تكرار أي موظف أو إنشاء سجلات وهمية.
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+            <div>
+              <label style="display:block;font-size:12px;font-weight:700;color:var(--slate);margin-bottom:6px">الفريق المصدر (Source Team)</label>
+              <select id="teamCopySourceTeam" class="inp" required style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px" onchange="updateTeamCopyReviewText()">
+                <option value="New" selected>📦 فريق الأوردرات الجديدة (New Team)</option>
+                <option value="Pending">⏳ فريق المعلق (Pending Team)</option>
+                <option value="Both">🔄 فريق النمطين (Both Queues)</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block;font-size:12px;font-weight:700;color:var(--slate);margin-bottom:6px">الفريق الهدف (Target Team)</label>
+              <select id="teamCopyTargetTeam" class="inp" required style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px" onchange="updateTeamCopyReviewText()">
+                <option value="Pending" selected>⏳ فريق المعلق (Pending Team)</option>
+                <option value="New">📦 فريق الأوردرات الجديدة (New Team)</option>
+                <option value="Both">🔄 فريق النمطين (Both Queues)</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#F8FAFC">
+            <b style="font-size:12.5px;color:var(--navy)">إعدادات النمط والسعة المراد نسخها:</b>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer">
+              <input type="checkbox" id="teamCopyCapacitiesChk" checked style="width:16px;height:16px">
+              مزامنة السعة التشغيلية للأعضاء (Sync Operational Capacities)
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer">
+              <input type="checkbox" id="teamCopyMembersChk" style="width:16px;height:16px">
+              مزامنة تعيين الموظفين للفريق (Sync Member Team Assignment)
+            </label>
+          </div>
+
+          <!-- Review Box with Clear Confirmation (Section 2E) -->
+          <div id="teamCopyReviewBox" style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:10px;padding:12px 14px;font-size:12px;color:#92400E;line-height:1.5">
+            <b>مراجعة وتأكيد العملية:</b> سيتم نسخ إعدادات <b>فريق New</b> وتطبيقها على <b>فريق Pending</b>. لن يتم مساس أي أوردرات أو تاريخ تشغيلي.
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px">
+            <button type="button" class="btn" onclick="closeTeamCopyModal()">إلغاء</button>
+            <button type="submit" class="btn primary" id="btnExecuteTeamCopy" style="background:#2563EB;color:#fff;font-weight:700">تأكيد ونسخ إعدادات الفريق</button>
+          </div>
+        </form>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  modal.style.display = 'flex';
+  updateTeamCopyReviewText();
+};
+
+window.updateTeamCopyReviewText = function() {
+  const src = document.getElementById('teamCopySourceTeam')?.value || 'New';
+  const tgt = document.getElementById('teamCopyTargetTeam')?.value || 'Pending';
+  const box = document.getElementById('teamCopyReviewBox');
+  if (box) {
+    if (src === tgt) {
+      box.innerHTML = '<span style="color:#DC2626">⚠️ تنبيه: لا يمكن نسخ الفريق إلى نفسه. يرجى اختيار فريقين مختلفين.</span>';
+    } else {
+      box.innerHTML = `<b>مراجعة وتأكيد العملية:</b> سيتم نسخ إعدادات وسعة <b>فريق ${src}</b> وتطبيقها على <b>فريق ${tgt}</b>. لن يتم تكرار أي سجلات أو المساس بأي أوردرات أو تاريخ تشغيلي.`;
+    }
+  }
+};
+
+window.closeTeamCopyModal = function() {
+  const modal = document.getElementById('teamCopyModal');
+  if (modal) modal.style.display = 'none';
+};
+
+window.handleTeamCopySubmit = async function(event) {
+  event.preventDefault();
+  const sourceTeam = document.getElementById('teamCopySourceTeam')?.value;
+  const targetTeam = document.getElementById('teamCopyTargetTeam')?.value;
+  const copyCapacities = document.getElementById('teamCopyCapacitiesChk')?.checked !== false;
+  const copyMembers = document.getElementById('teamCopyMembersChk')?.checked === true;
+
+  if (!sourceTeam || !targetTeam) {
+    showToast('⚠️ تنبيه', 'يرجى اختيار الفريق المصدر والفريق الهدف.');
+    return;
+  }
+  if (sourceTeam === targetTeam) {
+    showToast('⚠️ تنبيه', 'الفريق المصدر والفريق الهدف يجب أن يكونا مختلفين.');
+    return;
+  }
+
+  const btn = document.getElementById('btnExecuteTeamCopy');
+  if (btn) { btn.disabled = true; btn.textContent = 'جاري النسخ...'; }
+
+  try {
+    const res = await apiFetch('/api/team/copy-configuration', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sourceTeam,
+        targetTeam,
+        sourceTeamId: sourceTeam,
+        targetTeamId: targetTeam,
+        copyCapacities,
+        copyMembers
+      })
+    });
+
+    if (res && res.success) {
+      showToast('✓ تم نسخ إعدادات الفريق بنجاح', `تم نسخ إعدادات ${res.sourceTeam || sourceTeam} إلى ${res.targetTeam || targetTeam} (${res.updatedCapacities || 0} سعة محدثة).`);
+      closeTeamCopyModal();
+      if (typeof loadTeamEmployeesAdminView === 'function') {
+        loadTeamEmployeesAdminView('teams');
+      } else if (typeof loadTeamSetupView === 'function') {
+        loadTeamSetupView();
+      }
+    } else {
+      throw new Error(res?.error || 'Failed to copy team configuration');
+    }
+  } catch (err) {
+    showToast('❌ فشل نسخ إعدادات الفريق', err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'تأكيد ونسخ إعدادات الفريق'; }
+  }
+};
 
 async function saveWorkingTeamSelection() {
   const checkedIds = Array.from(document.querySelectorAll('.team-chk:checked')).map(c => parseInt(c.value, 10));
@@ -4343,14 +4548,19 @@ async function loadTeamMembersView() {
     const empsData = await apiFetch('/api/employees');
     allEmployeesMaster = Array.isArray(empsData) ? empsData : (empsData.employees || []);
     
+    const isOperational = (currentMainPage === 'team');
+    
     let html = `
       <div class="panel">
         <div class="hd" style="align-items:flex-start">
           <div>
-            <h3>⚙ Employee Master</h3>
-            <p>Permanent Employee Registry. Historical performance and allocation records remain permanently intact even if inactive.</p>
+            <h3>${isOperational ? '👥 Operational CS Team Roster (Read-Only)' : '⚙ Employees Master & Capacity (Administrative Home)'}</h3>
+            <p>${isOperational 
+              ? 'متابعة حضور ونشاط موظفي خدمة العملاء. لإدارة الإعدادات والسعة التشغيلية أو إضافة موظف: انتقل إلى <button type="button" class="btn sm" onclick="show(\'management\', \'team-employees\')" style="background:#2563EB;color:#fff;border-color:#2563EB;font-weight:700;margin-right:6px">⚙️ الإدارة / Management → Team & Employees</button>'
+              : 'المركز الإداري الموحد لإدارة الموظفين، السعة التشغيلية الفردية، وحالة النشاط. (Permanent Employee Registry)'}
+            </p>
           </div>
-          <button class="btn primary sm" id="addEmployeeBtn" onclick="openAddEmployeeModal()">+ Add Employee</button>
+          ${!isOperational ? '<button class="btn primary sm" id="addEmployeeBtn" onclick="openAddEmployeeModal()">+ Add Employee</button>' : ''}
         </div>
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap">
@@ -4368,36 +4578,52 @@ async function loadTeamMembersView() {
               <tr>
                 <th style="width:48px">#</th>
                 <th>Name</th>
-                <th style="width:130px">Department</th>
-                <th style="width:140px">Status</th>
-                <th style="width:120px">Created</th>
-                <th style="width:90px">Actions</th>
+                <th style="width:110px">Department</th>
+                <th style="width:120px">Team</th>
+                <th style="width:130px">Status</th>
+                <th style="width:110px;text-align:center">Capacity</th>
+                ${!isOperational ? '<th style="width:110px">Created</th>' : ''}
+                <th style="width:100px;text-align:center">Actions</th>
               </tr>
             </thead>
             <tbody id="teamMembersTableBody">
     `;
 
     if (allEmployeesMaster.length === 0) {
-      html += `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--mut)">No employees found. Click "+ Add Employee" to add one.</td></tr>`;
+      html += `<tr><td colspan="${!isOperational ? 8 : 7}" style="text-align:center;padding:24px;color:var(--mut)">No employees found. Click "+ Add Employee" to add one.</td></tr>`;
     } else {
       allEmployeesMaster.forEach((e, idx) => {
+        const teamTag = e.team_membership || 'Both';
+        const cap = e.max_orders !== undefined ? e.max_orders : 40;
         html += `
           <tr data-id="${e.id}" data-name="${escapeHtml(e.name)}" data-dept="${escapeHtml(e.department)}">
             <td>${idx + 1}</td>
             <td class="nm-cell">${escapeHtml(e.name)}</td>
             <td><span class="tag" style="background:${e.department==='CS'?'#DCFCE7':'#E0E7FF'};color:${e.department==='CS'?'#15803D':'#3730A3'}">${escapeHtml(e.department)}</span></td>
+            <td><span class="tag sm" style="background:#EFF6FF;color:#1D4ED8;font-weight:700">${escapeHtml(teamTag)}</span></td>
             <td>
-              <div style="display:flex;align-items:center">
-                <label class="switch" title="Toggle Active / Inactive">
-                  <input type="checkbox" id="empSwitch_${e.id}" ${e.active ? 'checked' : ''} onchange="toggleEmployeeStatus(${e.id}, this.checked)">
-                  <span class="slider"></span>
-                </label>
-                <span id="empStatusLabel_${e.id}" style="font-size:11px;margin-left:8px;font-weight:700;color:${e.active ? '#15803D' : '#94A3B8'}">${e.active ? 'Active' : 'Inactive'}</span>
-              </div>
+              ${isOperational ? `
+                <span class="tag sm" style="background:${e.active ? '#DCFCE7' : '#F1F5F9'};color:${e.active ? '#15803D' : '#64748B'};font-weight:700">
+                  ${e.active ? 'Active' : 'Inactive'}
+                </span>
+              ` : `
+                <div style="display:flex;align-items:center">
+                  <label class="switch" title="Toggle Active / Inactive">
+                    <input type="checkbox" id="empSwitch_${e.id}" ${e.active ? 'checked' : ''} onchange="toggleEmployeeStatus(${e.id}, this.checked)">
+                    <span class="slider"></span>
+                  </label>
+                  <span id="empStatusLabel_${e.id}" style="font-size:11px;margin-left:8px;font-weight:700;color:${e.active ? '#15803D' : '#94A3B8'}">${e.active ? 'Active' : 'Inactive'}</span>
+                </div>
+              `}
             </td>
-            <td style="color:var(--mut);font-size:11px">${escapeHtml((e.created_at||'').split(' ')[0])}</td>
-            <td>
-              <button class="btn sm" id="editEmpBtn_${e.id}" onclick="openEditEmployeeModal(${e.id})">Edit</button>
+            <td style="text-align:center"><b style="font-size:13px;color:var(--navy)">${cap}</b></td>
+            ${!isOperational ? `<td style="color:var(--mut);font-size:11px">${escapeHtml((e.created_at||'').split(' ')[0])}</td>` : ''}
+            <td style="text-align:center">
+              ${isOperational ? `
+                <button class="btn sm" onclick="show('management', 'team-employees'); setTimeout(() => openEditEmployeeModal(${e.id}), 120);" title="Manage Employee in Administrative Hub">⚙️ View</button>
+              ` : `
+                <button class="btn sm primary" id="editEmpBtn_${e.id}" onclick="openEditEmployeeModal(${e.id})">Edit</button>
+              `}
             </td>
           </tr>
         `;
@@ -4469,6 +4695,10 @@ function openAddEmployeeModal() {
   document.getElementById('empModalName').value = '';
   document.getElementById('empModalDept').value = 'CS';
   document.getElementById('empModalActive').value = '1';
+  const teamSel = document.getElementById('empModalTeam');
+  if (teamSel) teamSel.value = 'Both';
+  const capInp = document.getElementById('empModalCapacity');
+  if (capInp) capInp.value = '40';
   
   const errBox = document.getElementById('empModalError');
   errBox.style.display = 'none';
@@ -4514,6 +4744,10 @@ function openEditEmployeeModal(id) {
   deptSelect.value = emp.department || 'CS';
 
   document.getElementById('empModalActive').value = emp.active ? '1' : '0';
+  const teamSel = document.getElementById('empModalTeam');
+  if (teamSel) teamSel.value = emp.team_membership || 'Both';
+  const capInp = document.getElementById('empModalCapacity');
+  if (capInp) capInp.value = String(emp.max_orders !== undefined ? emp.max_orders : 40);
 
   const errBox = document.getElementById('empModalError');
   errBox.style.display = 'none';
@@ -4539,6 +4773,8 @@ async function handleEmployeeFormSubmit(e) {
   const name = (nameInput || '').trim();
   const dept = document.getElementById('empModalDept').value;
   const active = parseInt(document.getElementById('empModalActive').value, 10);
+  const team_membership = document.getElementById('empModalTeam')?.value || 'Both';
+  const max_orders = parseInt(document.getElementById('empModalCapacity')?.value, 10) || 40;
   const errBox = document.getElementById('empModalError');
   const submitBtn = document.getElementById('empModalSubmitBtn');
 
@@ -4569,14 +4805,14 @@ async function handleEmployeeFormSubmit(e) {
       res = await apiFetch(`/api/employees/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, department: dept, active })
+        body: JSON.stringify({ name, department: dept, active, team_membership, max_orders, capacity: max_orders })
       });
       showToast('✓ Employee Updated', `${res.employee?.name || name} updated successfully.`);
     } else {
       res = await apiFetch('/api/employees', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, department: dept, active })
+        body: JSON.stringify({ name, department: dept, active, team_membership, max_orders, capacity: max_orders })
       });
       showToast('✓ Employee Added', `${res.employee?.name || name} added to Employee Master.`);
     }
@@ -4588,6 +4824,63 @@ async function handleEmployeeFormSubmit(e) {
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = id ? 'Save Changes' : 'Save Employee';
+  }
+}
+
+// -------------------------------------------------------------
+// 1. UNIFIED TEAM & EMPLOYEES ADMINISTRATION HOME (Issue #1 & #2)
+// -------------------------------------------------------------
+let currentTeamAdminSubView = 'employees';
+
+async function loadTeamEmployeesAdminView(subView) {
+  if (subView) currentTeamAdminSubView = subView;
+  const container = document.getElementById('teamEmployeesAdminContainer');
+  if (!container) return;
+
+  container.innerHTML = `
+    <div style="background:linear-gradient(135deg,#1E3A8A,#2563EB);color:#fff;border-radius:14px;padding:16px 20px;margin-bottom:20px;box-shadow:var(--shadow)">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="font-size:28px">👥</div>
+          <div>
+            <h3 style="margin:0;font-size:16px;font-weight:800;color:#fff">Team & Employees Administration Hub</h3>
+            <p style="margin:2px 0 0;font-size:12px;opacity:0.9">المركز الإداري الموحد لإدارة الموظفين، الفرق، العضوية، السعة التشغيلية، ونوبات الحضور</p>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button type="button" class="btn sm" id="addEmployeeBtnTop" onclick="openAddEmployeeModal()" style="background:#fff;color:var(--navy);font-weight:700">+ Add Employee</button>
+        </div>
+      </div>
+
+      <!-- Sub-Pill Navigation Switch inside Administrative Home -->
+      <div style="display:flex;gap:8px;margin-top:16px;border-top:1px solid rgba(255,255,255,0.18);padding-top:14px;flex-wrap:wrap">
+        <button type="button" class="btn sm" style="background:${currentTeamAdminSubView === 'employees' ? '#fff' : 'rgba(255,255,255,0.14)'};color:${currentTeamAdminSubView === 'employees' ? 'var(--navy)' : '#fff'};border:none;font-weight:700;padding:6px 14px;border-radius:8px" onclick="loadTeamEmployeesAdminView('employees')">
+          👥 سجل الموظفين (Employees Master & Capacity)
+        </button>
+        <button type="button" class="btn sm" style="background:${currentTeamAdminSubView === 'teams' ? '#fff' : 'rgba(255,255,255,0.14)'};color:${currentTeamAdminSubView === 'teams' ? 'var(--navy)' : '#fff'};border:none;font-weight:700;padding:6px 14px;border-radius:8px" onclick="loadTeamEmployeesAdminView('teams')">
+          🏢 إعدادات الفرق والعضوية (Teams Setup & Membership)
+        </button>
+        <button type="button" class="btn sm" style="background:${currentTeamAdminSubView === 'shifts' ? '#fff' : 'rgba(255,255,255,0.14)'};color:${currentTeamAdminSubView === 'shifts' ? 'var(--navy)' : '#fff'};border:none;font-weight:700;padding:6px 14px;border-radius:8px" onclick="loadTeamEmployeesAdminView('shifts')">
+          📋 نوبات تشغيل اليوم (Today's Working Shifts)
+        </button>
+      </div>
+    </div>
+
+    <div id="teamEmployeesSubViewHost"></div>
+  `;
+
+  const host = document.getElementById('teamEmployeesSubViewHost');
+  if (!host) return;
+
+  if (currentTeamAdminSubView === 'employees') {
+    host.innerHTML = '<div id="teamMembersContainer"></div>';
+    await loadTeamMembersView();
+  } else if (currentTeamAdminSubView === 'teams') {
+    host.innerHTML = '<div id="teamSetupContainer"></div>';
+    await loadTeamSetupView();
+  } else if (currentTeamAdminSubView === 'shifts') {
+    host.innerHTML = '<div id="workingTeamContainer"></div>';
+    await loadWorkingTeamView();
   }
 }
 
@@ -4654,6 +4947,7 @@ function renderTeamSetupUI() {
         </p>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn sm" id="btnAdminTeamCopy" onclick="openTeamCopyModal()" style="background:#fff;color:var(--navy);font-weight:700">📋 [Copy] نسخ إعدادات الفريق</button>
         <button class="btn success sm" onclick="saveTeamSetupBulk()" style="background:#16A34A;color:#fff;border-color:#16A34A;font-weight:700">💾 Save All Changes</button>
       </div>
     </div>
@@ -8206,7 +8500,9 @@ async function loadCurrentOrdersView() {
   const exceptions = exceptionsResp?.summary || {
     actioned_without_real_second_phone: { count: 0, missing_count: 0, duplicate_primary_count: 0 },
     weak_or_invalid_address: { count: 0, weak_count: 0, language_invalid_count: 0, empty_count: 0 },
-    delivery_rate_below_70: { count: 0 }
+    delivery_rate_below_70: { count: 0 },
+    merchant_code_mismatch: { count: 0 },
+    printed_warehouse_mismatch: { count: 0 }
   };
 
   // Client-side Exception Filtering
@@ -8217,12 +8513,16 @@ async function loadCurrentOrdersView() {
     filteredOrders = allOrders.filter(o => o.address_quality && !o.address_quality.is_valid);
   } else if (curOrdersExceptionFilter === 'delivery') {
     filteredOrders = allOrders.filter(o => o.delivery_quality && o.delivery_quality.needs_attention);
+  } else if (curOrdersExceptionFilter === 'merchant_mismatch') {
+    filteredOrders = allOrders.filter(o => o.merchant_code_quality?.has_mismatch || (o.operational_alerts || []).some(a => a.type === 'MERCHANT_CODE_MISMATCH'));
+  } else if (curOrdersExceptionFilter === 'warehouse_mismatch') {
+    filteredOrders = allOrders.filter(o => o.warehouse_quality?.has_mismatch || (o.operational_alerts || []).some(a => a.type === 'PRINTED_WAREHOUSE_MISMATCH'));
   }
 
   // Pagination Slice
   const pageStart = curOrdersPage * curOrdersLimit;
   const pagedOrders = filteredOrders.slice(pageStart, pageStart + curOrdersLimit);
-  const isToday = (currentWorkDate === getCairoBusinessDate());
+  const isToday = (currentWorkDate === getTodayDate());
 
   let html = `
     <!-- 1. Work Screen Operational Header -->
@@ -8241,6 +8541,9 @@ async function loadCurrentOrdersView() {
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
+        <button type="button" class="btn sm" onclick="show('management', 'vendoor'); setVendoorSubTab('excel-import');" style="background:#fff;border:1px solid var(--line)" title="فتح مركز استيراد الملفات المعتمد">
+          📑 استيراد Excel
+        </button>
         <button type="button" class="btn sm" onclick="triggerQuickVendoorSync()" style="background:#fff;border:1px solid var(--line)">
           🔄 مزامنة فيندور
         </button>
@@ -8250,14 +8553,14 @@ async function loadCurrentOrdersView() {
       </div>
     </div>
 
-    <!-- 2. The 3 Locked Operational Exceptions Summary (Attention Required) -->
+    <!-- 2. The Operational Exceptions Summary (Attention Required) -->
     <div style="background:#FEF2F2;border:1.5px solid #FECACA;border-radius:14px;padding:16px 20px;margin-bottom:18px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:10px">
         <div style="display:flex;align-items:center;gap:10px">
           <span style="font-size:20px">🚨</span>
           <div>
             <h3 style="margin:0;font-size:14.5px;font-weight:800;color:#991B1B">ATTENTION REQUIRED — استثناءات تشغيلية تتطلب تدخلاً فورياً</h3>
-            <p style="margin:2px 0 0;font-size:11.5px;color:#B91C1C">المشاكل التشغيلية الثلاث المكتشفة آلياً (اضغط على أي استثناء لمعاينة أوردراته فوراً)</p>
+            <p style="margin:2px 0 0;font-size:11.5px;color:#B91C1C">تنبيهات جودة الاتصال والعناوين والتسليم واختلاف التجار والمخازن (اضغط على أي كارت للتصفية)</p>
           </div>
         </div>
         ${curOrdersExceptionFilter !== 'all' ? `
@@ -8267,7 +8570,7 @@ async function loadCurrentOrdersView() {
         ` : ''}
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:12px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:12px">
         <!-- 1. Second Phone Exception -->
         <div class="ds-card" style="cursor:pointer;border-left:4px solid var(--ds-danger);padding:14px;background:${curOrdersExceptionFilter==='second_phone'?'#FFF1F2':'#FFFFFF'};transition:transform .15s ease;box-shadow:var(--ds-shadow-xs)" onclick="setWorkExceptionFilter('second_phone')">
           <div style="display:flex;justify-content:space-between;align-items:center">
@@ -8277,7 +8580,7 @@ async function loadCurrentOrdersView() {
           <b style="font-size:22px;color:var(--ds-danger);display:block;margin:6px 0">${fmt(exceptions.actioned_without_real_second_phone?.count || 0)}</b>
           <div style="font-size:11px;color:var(--ds-neutral-500);display:flex;gap:8px">
             <span>مفقود: <b>${exceptions.actioned_without_real_second_phone?.missing_count || 0}</b></span>
-            <span>مكرر للأساسي: <b>${exceptions.actioned_without_real_second_phone?.duplicate_primary_count || 0}</b></span>
+            <span>مكرر: <b>${exceptions.actioned_without_real_second_phone?.duplicate_primary_count || 0}</b></span>
           </div>
         </div>
 
@@ -8289,7 +8592,7 @@ async function loadCurrentOrdersView() {
           </div>
           <b style="font-size:22px;color:var(--ds-warning);display:block;margin:6px 0">${fmt(exceptions.weak_or_invalid_address?.count || 0)}</b>
           <div style="font-size:11px;color:var(--ds-neutral-500);display:flex;gap:8px">
-            <span>ضعيف (&le;3 كلمات): <b>${exceptions.weak_or_invalid_address?.weak_count || 0}</b></span>
+            <span>ضعيف: <b>${exceptions.weak_or_invalid_address?.weak_count || 0}</b></span>
             <span>لغة/فارغ: <b>${(exceptions.weak_or_invalid_address?.language_invalid_count || 0) + (exceptions.weak_or_invalid_address?.empty_count || 0)}</b></span>
           </div>
         </div>
@@ -8303,6 +8606,30 @@ async function loadCurrentOrdersView() {
           <b style="font-size:22px;color:var(--ds-accent);display:block;margin:6px 0">${fmt(exceptions.delivery_rate_below_70?.count || 0)}</b>
           <div style="font-size:11px;color:var(--ds-neutral-500)">
             أوردرات لعملاء بنسبة تسليم أقل من 70%
+          </div>
+        </div>
+
+        <!-- 4. Merchant Code Mismatch Exception -->
+        <div class="ds-card" style="cursor:pointer;border-left:4px solid #DC2626;padding:14px;background:${curOrdersExceptionFilter==='merchant_mismatch'?'#FEF2F2':'#FFFFFF'};transition:transform .15s ease;box-shadow:var(--ds-shadow-xs)" onclick="setWorkExceptionFilter('merchant_mismatch')">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:11.5px;font-weight:800;color:${curOrdersExceptionFilter==='merchant_mismatch'?'#991B1B':'var(--ds-neutral-700)'}">4. اختلاف أكواد التجار</span>
+            <span style="font-size:16px">🏪</span>
+          </div>
+          <b style="font-size:22px;color:#DC2626;display:block;margin:6px 0">${fmt(exceptions.merchant_code_mismatch?.count || 0)}</b>
+          <div style="font-size:11px;color:var(--ds-neutral-500)">
+            أوردرات مؤكدة بمنتجات من تجار مختلفين
+          </div>
+        </div>
+
+        <!-- 5. Printed Warehouse Mismatch Exception -->
+        <div class="ds-card" style="cursor:pointer;border-left:4px solid #7C3AED;padding:14px;background:${curOrdersExceptionFilter==='warehouse_mismatch'?'#F5F3FF':'#FFFFFF'};transition:transform .15s ease;box-shadow:var(--ds-shadow-xs)" onclick="setWorkExceptionFilter('warehouse_mismatch')">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:11.5px;font-weight:800;color:${curOrdersExceptionFilter==='warehouse_mismatch'?'#5B21B6':'var(--ds-neutral-700)'}">5. اختلاف المخازن بعد الطباعة</span>
+            <span style="font-size:16px">🏢</span>
+          </div>
+          <b style="font-size:22px;color:#7C3AED;display:block;margin:6px 0">${fmt(exceptions.printed_warehouse_mismatch?.count || 0)}</b>
+          <div style="font-size:11px;color:var(--ds-neutral-500)">
+            أوردرات مطبوعة بمنتجات من مخازن مختلفة
           </div>
         </div>
       </div>
@@ -10987,6 +11314,31 @@ const MAIN_PAGES_CONFIG = {
       { id: 'system', label: 'Vendoor & System Status', icon: '⚡' }
     ]
   },
+  operations: {
+    title: 'Operations',
+    sub: 'مجمع تشغيل الأوردرات اليومية، تتبع الحركات والاستثناءات (Daily Work Operations & Pool)',
+    defaultTab: 'orders',
+    tabs: [
+      { id: 'orders', label: 'Work Orders Pool', icon: '📦' },
+      { id: 'tracking', label: 'Live Tracking', icon: '🛡️' },
+      { id: 'exceptions', label: 'Attention Required', icon: '🚨' },
+      { id: 'allocation', label: 'Work Allocation', icon: '⚡' },
+      { id: 'dispatcher', label: 'Auto Dispatcher', icon: '🚀' },
+      { id: 'working-team', label: "Today's Working Team", icon: '👥' },
+      { id: 'orders-pool', label: 'Current Orders Pool', icon: '📦' },
+      { id: 'history', label: 'Allocation History', icon: '⏳' },
+      { id: 'overview', label: 'Overview', icon: '▤' }
+    ]
+  },
+  allocation: {
+    title: 'Allocation',
+    sub: 'التوزيع الذكي المعتمد للأوردرات، المعاينة، التنفيذ والإلغاء (Intelligent CS Allocation Hub)',
+    defaultTab: 'allocation',
+    tabs: [
+      { id: 'allocation', label: 'Work Allocation', icon: '⚡' },
+      { id: 'history', label: 'Allocation History', icon: '⏳' }
+    ]
+  },
   work: {
     title: 'Work Operations',
     sub: 'مجمع التشغيل، الاستثناءات الذكية وتوزيع العمل (Operational Pool & Allocation)',
@@ -10998,8 +11350,8 @@ const MAIN_PAGES_CONFIG = {
     ]
   },
   team: {
-    title: 'Team Management',
-    sub: 'سجل الموظفين، جودة العمل ونوبات التشغيل (CS Roster & Working Shifts)',
+    title: 'Team Operations',
+    sub: 'سجل الموظفين، الحضور التشغيلي ونوبات العمل (Operational CS Roster & Working Shifts Monitoring)',
     defaultTab: 'roster',
     tabs: [
       { id: 'roster', label: 'Active CS Roster', icon: '👥' },
@@ -11027,20 +11379,6 @@ const MAIN_PAGES_CONFIG = {
       { id: 'alerts', label: 'Alerts & Insights', icon: '◈' }
     ]
   },
-  operations: {
-    title: 'Operations',
-    sub: 'Daily Work Allocation, Vendoor Orders Pool & Team Setup',
-    defaultTab: 'allocation',
-    tabs: [
-      { id: 'allocation', label: 'Work Allocation', icon: '⚡' },
-      { id: 'config-center', label: 'Configuration Center', icon: '⚙️' },
-      { id: 'dispatcher', label: 'Auto Dispatcher', icon: '🚀' },
-      { id: 'working-team', label: "Today's Working Team", icon: '👥' },
-      { id: 'orders-pool', label: 'Current Orders Pool', icon: '📦' },
-      { id: 'history', label: 'Allocation History', icon: '⏳' },
-      { id: 'overview', label: 'Overview', icon: '▤' }
-    ]
-  },
   tracking: {
     title: 'Tracking',
     sub: 'Cross-Check Specific Orders vs Daily Logs Reality & Audits',
@@ -11055,13 +11393,13 @@ const MAIN_PAGES_CONFIG = {
   },
   management: {
     title: 'Management',
-    sub: 'Employee Master Registry, Team Setup & Account Configuration',
-    defaultTab: 'employees',
+    sub: 'إدارة الفريق والموظفين، إعدادات الحسابات وصلاحيات النظام (Team & Employees, Accounts & Integration)',
+    defaultTab: 'team-employees',
     tabs: [
-      { id: 'employees', label: 'Employees', icon: '⚙' },
-      { id: 'teams', label: 'Teams', icon: '👥' },
-      { id: 'accounts', label: 'Accounts', icon: '⚡' },
-      { id: 'vendoor', label: 'Vendoor Integration', icon: '🔌' }
+      { id: 'team-employees', label: 'Team & Employees', icon: '👥' },
+      { id: 'accounts', label: 'Accounts & Operating Schedules', icon: '📑' },
+      { id: 'access', label: 'Access & Roles', icon: '🔒' },
+      { id: 'vendoor', label: 'System & Vendoor Integration', icon: '🔌' }
     ]
   },
   performance: {
@@ -11097,18 +11435,21 @@ const MAIN_PAGES_CONFIG = {
 };
 
 let currentSubTabs = {
+  overview: 'pulse',
+  work: 'pool',
+  team: 'roster',
+  insights: 'performance',
+  management: 'team-employees',
   dashboard: 'overview',
   operations: 'allocation',
   tracking: 'overview',
-  management: 'employees',
   performance: 'scorecard',
   reports: 'executive'
 };
 
 const LEGACY_ROUTE_MAP = {
-  overview: { page: 'dashboard', tab: 'overview' },
-  daily: { page: 'dashboard', tab: 'daily' },
-  insights: { page: 'dashboard', tab: 'alerts' },
+  daily: { page: 'insights', tab: 'trends' },
+  alerts: { page: 'overview', tab: 'pulse' },
   'work-allocation': { page: 'operations', tab: 'allocation' },
   'auto-dispatcher': { page: 'operations', tab: 'dispatcher' },
   dispatcher: { page: 'operations', tab: 'dispatcher' },
@@ -11148,10 +11489,19 @@ function renderTabContent(mainPage, tab) {
     if (tab === 'pulse') return RENDERED.overview || '';
     if (tab === 'team-pulse') return RENDERED['working-team'] || '';
     if (tab === 'system') return RENDERED['tracking-overview'] || '';
-  } else if (mainPage === 'work') {
-    if (tab === 'pool') return RENDERED['current-orders'] || '';
-    if (tab === 'allocation') return RENDERED['work-allocation'] || '';
+  } else if (mainPage === 'allocation') {
+    if (tab === 'history') return RENDERED['allocation-history'] || '';
+    return RENDERED['work-allocation'] || '';
+  } else if (mainPage === 'operations' || mainPage === 'work') {
+    if (tab === 'orders' || tab === 'pool' || tab === 'orders-pool' || tab === 'exceptions') return RENDERED['current-orders'] || '';
     if (tab === 'tracking') return RENDERED['order-tracking'] || '';
+    if (tab === 'allocation') return RENDERED['work-allocation'] || '';
+    if (tab === 'history') return RENDERED['allocation-history'] || '';
+    if (tab === 'dispatcher') return RENDERED['auto-dispatcher'] || '';
+    if (tab === 'working-team') return RENDERED['working-team'] || '';
+    if (tab === 'config-center') return '<div id="allocationConfigCenterContainer"><div style="text-align:center;padding:40px;color:var(--mut)">Loading Allocation Configuration Center...</div></div>';
+    if (tab === 'overview') return `<div id="operationsOverviewContainer"></div>`;
+    return RENDERED['current-orders'] || '';
   } else if (mainPage === 'team') {
     if (tab === 'roster') return RENDERED['team-members'] || '';
     if (tab === 'working-team') return RENDERED['working-team'] || '';
@@ -11164,14 +11514,6 @@ function renderTabContent(mainPage, tab) {
     if (tab === 'overview') return RENDERED.overview || '';
     if (tab === 'daily') return RENDERED.daily || '';
     if (tab === 'alerts') return RENDERED.insights || '';
-  } else if (mainPage === 'operations') {
-    if (tab === 'allocation') return RENDERED['work-allocation'] || '';
-    if (tab === 'config-center') return '<div id="allocationConfigCenterContainer"><div style="text-align:center;padding:40px;color:var(--mut)">Loading Allocation Configuration Center...</div></div>';
-    if (tab === 'dispatcher') return RENDERED['auto-dispatcher'] || '';
-    if (tab === 'working-team') return RENDERED['working-team'] || '';
-    if (tab === 'orders-pool') return RENDERED['current-orders'] || '';
-    if (tab === 'history') return RENDERED['allocation-history'] || '';
-    if (tab === 'overview') return `<div id="operationsOverviewContainer"></div>`;
   } else if (mainPage === 'tracking') {
     if (tab === 'overview') return RENDERED['tracking-overview'] || '';
     if (tab === 'accounts') return RENDERED.accounts || '';
@@ -11179,10 +11521,10 @@ function renderTabContent(mainPage, tab) {
     if (tab === 'orders') return RENDERED['order-tracking'] || '';
     if (tab === 'audit') return RENDERED['tracking-audit'] || '';
   } else if (mainPage === 'management') {
-    if (tab === 'employees') return RENDERED['team-members'] || '';
-    if (tab === 'teams') return RENDERED['team-setup'] || '';
+    if (tab === 'team-employees' || tab === 'employees' || tab === 'teams') return '<div id="teamEmployeesAdminContainer"></div>';
     if (tab === 'accounts') return RENDERED['account-config'] || '';
     if (tab === 'vendoor') return RENDERED['vendoor-integration'] || '';
+    if (tab === 'access') return `<div class="panel" style="padding:24px"><div class="hd"><div><h3>🔒 Access & Roles</h3><p>Role-Based Access Control and Authorization Boundaries.</p></div></div><div style="background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:20px;font-size:13px;line-height:1.6"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><span style="font-size:24px">🛡️</span><b>Supervisory Role: SUPERVISOR</b></div><p>Supervisors have full authorization over Management, Accounts, Team & Employees, Allocation Execution, Redistribution, Undo, and System integrations.</p><p style="margin:0;color:var(--slate)">CS Employees are restricted to viewing assigned orders and performing permitted order-level actions. CS agents cannot modify allocation policies or global account schedules.</p></div></div>`;
   } else if (mainPage === 'performance') {
     if (tab === 'scorecard') return RENDERED.scorecard || '';
     if (tab === 'employees') return RENDERED.employees || '';
@@ -11199,10 +11541,19 @@ function renderTabContent(mainPage, tab) {
 }
 
 function triggerTabLoaders(mainPage, tab) {
-  if (mainPage === 'work') {
-    if (tab === 'pool') loadCurrentOrdersView();
-    else if (tab === 'allocation') loadWorkAllocationData();
+  if (mainPage === 'allocation') {
+    if (tab === 'history') loadAllocationHistoryView();
+    else loadWorkAllocationData();
+  } else if (mainPage === 'operations' || mainPage === 'work') {
+    if (tab === 'orders' || tab === 'pool' || tab === 'orders-pool' || tab === 'exceptions') loadCurrentOrdersView();
     else if (tab === 'tracking') loadOrderTrackingView();
+    else if (tab === 'allocation') loadWorkAllocationData();
+    else if (tab === 'history') loadAllocationHistoryView();
+    else if (tab === 'dispatcher') loadAutoDispatcherView();
+    else if (tab === 'working-team') loadWorkingTeamView();
+    else if (tab === 'config-center') loadAllocationConfigCenterView();
+    else if (tab === 'overview') loadOperationsOverviewView();
+    else loadCurrentOrdersView();
   } else if (mainPage === 'team') {
     if (tab === 'roster') loadTeamMembersView();
     else if (tab === 'working-team') loadWorkingTeamView();
@@ -11212,14 +11563,6 @@ function triggerTabLoaders(mainPage, tab) {
   } else if (mainPage === 'overview') {
     if (tab === 'team-pulse') loadWorkingTeamView();
     else if (tab === 'system') loadTrackingOverviewView();
-  } else if (mainPage === 'operations') {
-    if (tab === 'allocation') loadWorkAllocationData();
-    else if (tab === 'config-center') loadAllocationConfigCenterView();
-    else if (tab === 'dispatcher') loadAutoDispatcherView();
-    else if (tab === 'working-team') loadWorkingTeamView();
-    else if (tab === 'orders-pool') loadCurrentOrdersView();
-    else if (tab === 'history') loadAllocationHistoryView();
-    else if (tab === 'overview') loadOperationsOverviewView();
   } else if (mainPage === 'tracking') {
     if (tab === 'overview') loadTrackingOverviewView();
     else if (tab === 'accounts') loadAccountsDirectoryView();
@@ -11227,8 +11570,9 @@ function triggerTabLoaders(mainPage, tab) {
     else if (tab === 'orders') loadOrderTrackingView();
     else if (tab === 'audit') loadTrackingAuditView();
   } else if (mainPage === 'management') {
-    if (tab === 'employees') loadTeamMembersView();
-    else if (tab === 'teams') loadTeamSetupView();
+    if (tab === 'team-employees') loadTeamEmployeesAdminView('employees');
+    else if (tab === 'employees') loadTeamEmployeesAdminView('employees');
+    else if (tab === 'teams') loadTeamEmployeesAdminView('teams');
     else if (tab === 'accounts') loadAccountConfigView();
     else if (tab === 'vendoor') loadVendoorIntegrationView();
   } else if (mainPage === 'reports') {
@@ -12098,17 +12442,17 @@ function renderDashboardUploadStatusView() {
 }
 
 function show(pageOrCategory, subTab){
-  let mainPage = pageOrCategory || 'operations';
+  let mainPage = pageOrCategory || currentMainPage || 'overview';
   let tab = subTab;
 
-  if (LEGACY_ROUTE_MAP[mainPage]) {
+  if (!MAIN_PAGES_CONFIG[mainPage] && LEGACY_ROUTE_MAP[mainPage]) {
     const mapped = LEGACY_ROUTE_MAP[mainPage];
     mainPage = mapped.page;
     tab = tab || mapped.tab;
   }
 
   if (!MAIN_PAGES_CONFIG[mainPage]) {
-    mainPage = 'operations';
+    mainPage = 'overview';
   }
 
   currentMainPage = mainPage;
@@ -12127,12 +12471,17 @@ function show(pageOrCategory, subTab){
   } catch (e) {}
 
   const config = MAIN_PAGES_CONFIG[mainPage];
-  document.getElementById('pgTitle').textContent = config.title;
-  document.getElementById('pgSub').textContent = config.sub;
+  const titleEl = document.getElementById('pgTitle');
+  if (titleEl) titleEl.textContent = config.title;
+  const subEl = document.getElementById('pgSub');
+  if (subEl) subEl.textContent = config.sub;
 
-  // Update sidebar navigation active state
+  // Update navigation active state (desktop top-nav and accessible anchors)
+  document.querySelectorAll('.ds-nav-btn').forEach(btn => {
+    if (btn && btn.classList) btn.classList.toggle('active', btn.dataset.p === mainPage);
+  });
   document.querySelectorAll('.nav a').forEach(a => {
-    a.classList.toggle('active', a.dataset.p === mainPage);
+    if (a && a.classList) a.classList.toggle('active', a.dataset.p === mainPage);
   });
 
   // Render Subnav Tabs Bar
@@ -12150,16 +12499,23 @@ function show(pageOrCategory, subTab){
   // Render Page Content
   const root = document.getElementById('root');
   const tabContent = renderTabContent(mainPage, tab);
-  root.innerHTML = `
-    <div class="page active">
-      ${tabsHtml}
-      <div id="tabContentContainer">${tabContent}</div>
-    </div>
-  `;
+  if (root) {
+    root.innerHTML = `
+      <div class="page active">
+        ${tabsHtml}
+        <div id="tabContentContainer">${tabContent}</div>
+      </div>
+    `;
+  }
 
   animateBars();
-  window.scrollTo(0, 0);
-  document.getElementById('side').classList.remove('open');
+  if (typeof window.scrollTo === 'function') {
+    try { window.scrollTo(0, 0); } catch(e){}
+  }
+  const sideEl = document.getElementById('side');
+  if (sideEl && sideEl.classList) {
+    sideEl.classList.remove('open');
+  }
 
   // Trigger data loaders for subtabs
   triggerTabLoaders(mainPage, tab);
@@ -12333,12 +12689,27 @@ initApp();
         </select>
       </div>
 
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <label for="empModalActive" style="display:block;font-size:12px;font-weight:700;color:var(--slate);margin-bottom:6px">Status</label>
+          <select id="empModalActive" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;outline:none;background:#fff">
+            <option value="1">Active</option>
+            <option value="0">Inactive</option>
+          </select>
+        </div>
+        <div>
+          <label for="empModalTeam" style="display:block;font-size:12px;font-weight:700;color:var(--slate);margin-bottom:6px">Team Membership</label>
+          <select id="empModalTeam" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;outline:none;background:#fff">
+            <option value="Both">Both (New + Pending)</option>
+            <option value="New">New Orders Team</option>
+            <option value="Pending">Pending Orders Team</option>
+          </select>
+        </div>
+      </div>
+
       <div>
-        <label for="empModalActive" style="display:block;font-size:12px;font-weight:700;color:var(--slate);margin-bottom:6px">Status</label>
-        <select id="empModalActive" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;outline:none;background:#fff">
-          <option value="1">Active</option>
-          <option value="0">Inactive</option>
-        </select>
+        <label for="empModalCapacity" style="display:block;font-size:12px;font-weight:700;color:var(--slate);margin-bottom:6px">Max Orders Capacity</label>
+        <input type="number" id="empModalCapacity" min="0" max="500" value="40" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;outline:none">
         <p style="margin:4px 0 0 0;font-size:11px;color:var(--mut)">Inactive employees retain all historical allocations and performance logs permanently.</p>
       </div>
 
@@ -12699,7 +13070,49 @@ window.openOrderDrawer = async function(orderCode) {
       document.getElementById('odDrawerCustomer').textContent = o.customer_name || o.customer || 'عميل';
     }
 
-    // Attention Banner (The 3 Locked Exceptions)
+    // Real Product Name, Merchant Code & Warehouse
+    const pName = o.real_product_name || o.product_name || '-';
+    const mCode = o.merchant_code || '-';
+    const mName = o.merchant_name || o.account || '-';
+    const wName = o.warehouse || 'WAREHOUSE_UNKNOWN';
+    const products = Array.isArray(o.products) ? o.products : [];
+
+    if (document.getElementById('odRealProductName')) document.getElementById('odRealProductName').textContent = pName;
+    if (document.getElementById('odMerchantCodeVal')) document.getElementById('odMerchantCodeVal').textContent = mCode;
+    if (document.getElementById('odMerchantNameVal')) document.getElementById('odMerchantNameVal').textContent = mName;
+    if (document.getElementById('odWarehouseVal')) document.getElementById('odWarehouseVal').textContent = wName;
+
+    const mBadge = document.getElementById('odMerchantCodeBadge');
+    if (mBadge) {
+      if (mCode && mCode !== '-') {
+        mBadge.textContent = 'تاجر: ' + mCode;
+        mBadge.className = 'ds-badge ds-badge-info';
+      } else {
+        mBadge.textContent = 'بدون كود تاجر';
+        mBadge.className = 'ds-badge ds-badge-neutral';
+      }
+    }
+
+    const pTblCont = document.getElementById('odProductsTableContainer');
+    const pTblBody = document.getElementById('odProductsTableBody');
+    if (pTblCont && pTblBody) {
+      if (products.length > 0) {
+        pTblCont.style.display = 'block';
+        pTblBody.innerHTML = products.map(p => `
+          <tr>
+            <td><b>${escapeHtml(p.product_name || '-')}</b></td>
+            <td><span class="ds-code">${escapeHtml(p.product_sku || '-')}</span></td>
+            <td><b style="color:#2563EB">${escapeHtml(p.merchant_code || 'UNKNOWN')}</b></td>
+            <td><span class="tag" style="background:#F1F5F9">${escapeHtml(p.warehouse || 'WAREHOUSE_UNKNOWN')}</span></td>
+            <td>${p.quantity || 1}</td>
+          </tr>
+        `).join('');
+      } else {
+        pTblCont.style.display = 'none';
+      }
+    }
+
+    // Attention Banner (The Locked Exceptions)
     const alerts = o.operational_alerts || [];
     const banner = document.getElementById('odAttentionBanner');
     if (alerts.length > 0) {
@@ -12864,6 +13277,52 @@ window.copyDrawerOrderCode = function() {
   <div class="ds-drawer-body" id="orderDrawerBody">
     <div id="odAttentionBanner" style="margin-bottom:16px"></div>
 
+    <!-- 0. Real Product Name, Merchant Code & Warehouse (Requirement 2, 3, 4) -->
+    <div class="ds-card" style="margin-bottom:14px;padding:14px" id="odProductDetailsCard">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h4 style="font-size:13px;font-weight:700;color:var(--ds-neutral-900);margin:0">📦 بيانات المنتجات والتاجر والمخزن (Product & Merchant)</h4>
+        <span id="odMerchantCodeBadge" class="ds-badge ds-badge-neutral">-</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;margin-bottom:10px">
+        <div>
+          <span style="color:var(--ds-neutral-500);display:block;font-size:11px">اسم المنتج الأصلي:</span>
+          <b id="odRealProductName" style="font-size:13px;color:var(--ds-neutral-900)">-</b>
+        </div>
+        <div>
+          <span style="color:var(--ds-neutral-500);display:block;font-size:11px">كود التاجر المعتمد (Merchant Code):</span>
+          <b class="ds-code" id="odMerchantCodeVal" style="font-size:13px">-</b>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;margin-bottom:10px">
+        <div>
+          <span style="color:var(--ds-neutral-500);display:block;font-size:11px">المخزن التشغيلي (Warehouse):</span>
+          <b id="odWarehouseVal" style="font-size:12.5px;color:var(--ds-neutral-800)">-</b>
+        </div>
+        <div>
+          <span style="color:var(--ds-neutral-500);display:block;font-size:11px">اسم التاجر / الحساب:</span>
+          <b id="odMerchantNameVal" style="font-size:12.5px;color:var(--ds-neutral-800)">-</b>
+        </div>
+      </div>
+      <!-- Items table if multi-product -->
+      <div id="odProductsTableContainer" style="margin-top:10px;display:none">
+        <div style="font-size:11.5px;font-weight:700;margin-bottom:6px;color:var(--ds-neutral-700)">تفاصيل الأصناف داخل الطلب:</div>
+        <div class="tbl-scroll" style="max-height:160px;overflow-y:auto">
+          <table style="font-size:11px">
+            <thead>
+              <tr>
+                <th>اسم المنتج</th>
+                <th>كود الصنف (SKU)</th>
+                <th>كود التاجر</th>
+                <th>المخزن</th>
+                <th>الكمية</th>
+              </tr>
+            </thead>
+            <tbody id="odProductsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <!-- 1. Action & Second Phone Quality (Feature 1) -->
     <div class="ds-card" style="margin-bottom:14px;padding:14px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
@@ -12961,6 +13420,69 @@ window.copyDrawerOrderCode = function() {
 
   <div class="ds-drawer-footer">
     <button type="button" class="ds-btn ds-btn-secondary ds-btn-sm" onclick="closeOrderDrawer()">إغلاق</button>
+  </div>
+</div>
+
+<!-- CANONICAL CONSOLIDATED ALLOCATION CONTROL MODAL -->
+<div id="allocationControlModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:9999;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)closeAllocationControlPanel()">
+  <div style="background:#fff;border-radius:16px;max-width:560px;width:100%;box-shadow:var(--shadow-lg);overflow:hidden;border:1px solid var(--line)">
+    <div style="padding:18px 24px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:#F8FAFC">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:36px;height:36px;border-radius:10px;background:#EFF6FF;color:#2563EB;display:grid;place-items:center;font-size:18px">⚡</div>
+        <div>
+          <h3 style="margin:0;font-size:16px;font-weight:800;color:var(--navy)">مركز عمليات التوزيع (Allocation Hub)</h3>
+          <p style="margin:2px 0 0;font-size:12px;color:var(--slate)">جميع وظائف التوزيع المعتمدة للتاريخ التشغيلي</p>
+        </div>
+      </div>
+      <button type="button" class="btn sm" onclick="closeAllocationControlPanel()" style="padding:4px 10px">✕ إغلاق</button>
+    </div>
+    
+    <div style="padding:20px 24px;display:flex;flex-direction:column;gap:12px">
+      <!-- 1. Preview -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border:1px solid var(--line);border-radius:12px;background:#F8FAFC">
+        <div>
+          <b style="display:block;font-size:13.5px;color:var(--navy)">1. معاينة التوزيع الذكي (Preview)</b>
+          <span style="font-size:11.5px;color:var(--slate)">تقييم الأهلية والجداول والحدود السحابية دون تعديل البيانات التشغيلية</span>
+        </div>
+        <button type="button" class="btn primary sm" onclick="closeAllocationControlPanel(); runEnterpriseAllocationPreview();" style="background:#2563EB;color:#fff;font-weight:700">🔍 Preview</button>
+      </div>
+
+      <!-- 2. Execute -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border:1px solid #BBF7D0;border-radius:12px;background:#F0FDF4">
+        <div>
+          <b style="display:block;font-size:13.5px;color:#15803D">2. تنفيذ التوزيع الذكي (Execute)</b>
+          <span style="font-size:11.5px;color:var(--slate)">تثبيت التوزيع ذرياً مع حماية الحالات المشغولة (CLAIMED, IN_PROGRESS, PRINTED, COMPLETED)</span>
+        </div>
+        <button type="button" class="btn success sm" onclick="closeAllocationControlPanel(); runEnterpriseAllocationExecute();" style="background:#16A34A;color:#fff;font-weight:700">⚡ Execute</button>
+      </div>
+
+      <!-- 3. Redistribute -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border:1px solid #FECDD3;border-radius:12px;background:#FFF1F2">
+        <div>
+          <b style="display:block;font-size:13.5px;color:#BE123C">3. إعادة توزيع العمل (Redistribute)</b>
+          <span style="font-size:11.5px;color:var(--slate)">إعادة تشغيل المحرك على الأوردرات المتاحة مع مراعاة الحالات المحمية والسعة</span>
+        </div>
+        <button type="button" class="btn sm" onclick="closeAllocationControlPanel(); confirmRegenerateAllocation();" style="background:#FFF1F2;color:#BE123C;border-color:#FECDD3;font-weight:700">🔄 Redistribute</button>
+      </div>
+
+      <!-- 4. Undo Allocation (Keeps id & data-testid for compatibility) -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border:1.5px solid #FDBA74;border-radius:12px;background:#FFF7ED">
+        <div>
+          <b style="display:block;font-size:13.5px;color:#C2410C">4. إلغاء آخر توزيعة والتراجع (Undo Allocation)</b>
+          <span style="font-size:11.5px;color:var(--slate)">إلغاء آخر دورة توزيع معتمدة واستعادة حالة الأوردرات السابقة دون المساس بالمحمي</span>
+        </div>
+        <button type="button" class="btn sm" id="btnRejectAndUndoAllocation" data-testid="reject-undo-allocation" onclick="closeAllocationControlPanel(); promptUndoLastAllocation();" style="background:#FFF7ED;color:#C2410C;border:1.5px solid #FDBA74;font-weight:800;display:inline-flex !important;align-items:center;gap:4px;cursor:pointer">↩️ Undo Allocation</button>
+      </div>
+
+      <!-- 5. Allocation History -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border:1px solid var(--line);border-radius:12px;background:#F8FAFC">
+        <div>
+          <b style="display:block;font-size:13.5px;color:var(--navy)">5. سجل وتدقيق التوزيعات (Allocation History)</b>
+          <span style="font-size:11.5px;color:var(--slate)">استعراض الدورات السابقة وإحصائيات العمليات وعمليات التراجع</span>
+        </div>
+        <button type="button" class="btn sm" onclick="closeAllocationControlPanel(); show('operations', 'history');" style="background:#fff;border-color:var(--line);color:var(--navy);font-weight:700">⏳ History</button>
+      </div>
+    </div>
   </div>
 </div>
 

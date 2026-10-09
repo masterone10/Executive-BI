@@ -317,6 +317,320 @@ export function isOrderActionedByCS(order) {
  * @param {Object} order Raw order object from database or Vendoor
  * @returns {Object} Order enriched with intelligence flags and attention details
  */
+/**
+ * FEATURE 4: Extracts warehouse from product name or row columns.
+ *
+ * @param {string} productName Name of product, e.g. "سليبر جلد كود DOL2 ( مخزن 77 )"
+ * @param {Object} row Raw row object from Excel
+ * @returns {string|null} Extracted warehouse string or null
+ */
+export function extractWarehouse(productName, row = {}) {
+  if (row && typeof row === 'object') {
+    const colVal = String(
+      row['المخزن'] || row['كود المخزن'] || row['اسم المخزن'] || 
+      row['Warehouse'] || row['Warehouse Code'] || row['warehouse'] || row['warehouse_code'] || ''
+    ).trim();
+    if (colVal && colVal !== '-' && colVal !== 'undefined') return colVal;
+  }
+  if (productName && typeof productName === 'string') {
+    const m = productName.match(/\(([^)]*مخزن[^)]*)\)/i);
+    if (m && m[1]) return m[1].trim();
+    const m2 = productName.match(/مخزن\s*[\w\d-]+/i);
+    if (m2 && m2[0]) return m2[0].trim();
+  }
+  return null;
+}
+
+/**
+ * Evaluates whether confirmed order contains multiple products with conflicting merchant codes.
+ *
+ * Rules:
+ * - Only evaluates if order is actually confirmed (isConfirmed === true).
+ * - Examines products inside the SAME Order ID only.
+ * - If merchant codes differ: triggers MERCHANT_CODE_MISMATCH.
+ * - If codes match: no alert.
+ * - If data is incomplete: returns status UNKNOWN (no false alarm).
+ *
+ * @param {Array} products Array of product items for this order
+ * @param {boolean} isConfirmed Whether order is confirmed
+ * @param {string} orderCode Order code
+ * @returns {Object} Evaluation result
+ */
+export function evaluateMerchantCodeConsistency(products = [], isConfirmed = false, orderCode = '') {
+  if (!isConfirmed) {
+    return {
+      has_mismatch: false,
+      status: 'NOT_EVALUATED_UNCONFIRMED',
+      alert: null
+    };
+  }
+
+  if (!products || products.length <= 1) {
+    return {
+      has_mismatch: false,
+      status: 'MATCH',
+      alert: null
+    };
+  }
+
+  const codes = [];
+  let hasIncomplete = false;
+
+  for (const p of products) {
+    const code = p.merchant_code !== null && p.merchant_code !== undefined ? String(p.merchant_code).trim() : '';
+    if (!code || code === '-' || code.toUpperCase() === 'UNKNOWN') {
+      hasIncomplete = true;
+    } else {
+      codes.push(code);
+    }
+  }
+
+  if (hasIncomplete || codes.length < products.length) {
+    return {
+      has_mismatch: false,
+      status: 'UNKNOWN',
+      alert: null,
+      reason: 'Incomplete merchant code data on some items'
+    };
+  }
+
+  const distinctCodes = Array.from(new Set(codes));
+  if (distinctCodes.length > 1) {
+    const productNames = products.map(p => p.product_name || 'Product');
+    return {
+      has_mismatch: true,
+      status: 'MERCHANT_CODE_MISMATCH',
+      order_code: orderCode,
+      product_names: productNames,
+      merchant_codes: distinctCodes,
+      alert: {
+        type: 'MERCHANT_CODE_MISMATCH',
+        severity: 'DANGER',
+        title: 'اختلاف أكواد التجار في نفس الطلب (MERCHANT_CODE_MISMATCH)',
+        reason: `الطلب مؤكد ويحتوي على منتجات بأكواد تجار مختلفة: ${distinctCodes.join(', ')}`,
+        order_code: orderCode,
+        product_names: productNames,
+        merchant_codes: distinctCodes
+      }
+    };
+  }
+
+  return {
+    has_mismatch: false,
+    status: 'MATCH',
+    alert: null
+  };
+}
+
+/**
+ * Evaluates whether PRINTED order has products assigned to different warehouses.
+ *
+ * Rules:
+ * - Only evaluates when order is in PRINTED state (isPrinted === true).
+ * - If products have different verified warehouses: triggers PRINTED_WAREHOUSE_MISMATCH.
+ * - If all products from same warehouse: no alert.
+ * - If warehouse missing or unverifiable: uses WAREHOUSE_UNKNOWN (no false alarm).
+ *
+ * @param {Array} products Array of product items for this order
+ * @param {boolean} isPrinted Whether order is in printed state
+ * @param {string} orderCode Order code
+ * @returns {Object} Evaluation result
+ */
+export function evaluatePrintedWarehouseConsistency(products = [], isPrinted = false, orderCode = '') {
+  if (!isPrinted) {
+    return {
+      has_mismatch: false,
+      status: 'NOT_EVALUATED_NOT_PRINTED',
+      alert: null
+    };
+  }
+
+  if (!products || products.length === 0) {
+    return {
+      has_mismatch: false,
+      status: 'WAREHOUSE_UNKNOWN',
+      alert: null
+    };
+  }
+
+  const warehouses = [];
+  let hasMissingWarehouse = false;
+
+  for (const p of products) {
+    const wh = p.warehouse !== null && p.warehouse !== undefined ? String(p.warehouse).trim() : '';
+    if (!wh || wh === '-' || wh.toUpperCase() === 'WAREHOUSE_UNKNOWN' || wh.toUpperCase() === 'UNKNOWN') {
+      hasMissingWarehouse = true;
+    } else {
+      warehouses.push(wh);
+    }
+  }
+
+  if (hasMissingWarehouse) {
+    return {
+      has_mismatch: false,
+      status: 'WAREHOUSE_UNKNOWN',
+      alert: null,
+      reason: 'Warehouse missing or unverifiable on one or more items'
+    };
+  }
+
+  const distinctWarehouses = Array.from(new Set(warehouses));
+  if (distinctWarehouses.length > 1) {
+    const productNames = products.map(p => p.product_name || 'Product');
+    const merchantCodes = Array.from(new Set(products.map(p => p.merchant_code).filter(Boolean)));
+    return {
+      has_mismatch: true,
+      status: 'PRINTED_WAREHOUSE_MISMATCH',
+      order_code: orderCode,
+      product_names: productNames,
+      merchant_codes: merchantCodes,
+      warehouses: distinctWarehouses,
+      alert: {
+        type: 'PRINTED_WAREHOUSE_MISMATCH',
+        severity: 'DANGER',
+        title: 'اختلاف المخازن بعد الطباعة (PRINTED_WAREHOUSE_MISMATCH)',
+        reason: `الطلب مطبوع لكن منتجاته مسجلة في مخازن مختلفة: ${distinctWarehouses.join(', ')}`,
+        order_code: orderCode,
+        product_names: productNames,
+        merchant_codes: merchantCodes,
+        warehouses: distinctWarehouses
+      }
+    };
+  }
+
+  return {
+    has_mismatch: false,
+    status: 'MATCH',
+    alert: null
+  };
+}
+
+/**
+ * Authoritative Customer Delivery Rate Engine
+ * Calculates customer delivery rate from historical orders or payload.
+ *
+ * Rules:
+ * - < 70% = DELIVERY_RATE_LOW
+ * - >= 70% = DELIVERY_RATE_OK
+ * - Missing/no historical data = DELIVERY_RATE_UNKNOWN (rate: null, UNKNOWN != 0)
+ *
+ * @param {Object} order Raw order object
+ * @returns {Object} Delivery rate metrics & evaluation
+ */
+export function computeCustomerDeliveryRate(order) {
+  if (!order) {
+    return {
+      status: 'DELIVERY_RATE_UNKNOWN',
+      rate: null,
+      alert: null,
+      needs_attention: false,
+      code: 'UNKNOWN',
+      total_orders: 0,
+      delivered_orders: 0,
+      cancelled_orders: 0
+    };
+  }
+
+  // 1. Direct explicit rate on order if provided
+  const directRate = order.delivery_rate !== undefined ? order.delivery_rate : (order.customer_delivery_rate ?? null);
+  if (directRate !== null && directRate !== undefined && directRate !== '') {
+    const cleanNum = Number(String(directRate).replace('%', '').trim());
+    if (!isNaN(cleanNum)) {
+      const evalRes = evaluateDeliveryRate(cleanNum);
+      return {
+        ...evalRes,
+        total_orders: order.customer_total_orders || order.total_orders || 1,
+        delivered_orders: order.customer_delivered_orders || (cleanNum >= 70 ? 1 : 0),
+        cancelled_orders: order.customer_cancelled_orders || (cleanNum < 70 ? 1 : 0)
+      };
+    }
+  }
+
+  // 2. Resolve customer by normalized primary phone
+  const rawPhone = order.phone || order.phone_a || order.primary_phone || '';
+  const normPhone = normalizePhoneNumber(rawPhone);
+  if (!normPhone || normPhone.length < 9) {
+    return {
+      status: 'DELIVERY_RATE_UNKNOWN',
+      rate: null,
+      alert: null,
+      needs_attention: false,
+      code: 'UNKNOWN',
+      total_orders: 0,
+      delivered_orders: 0,
+      cancelled_orders: 0
+    };
+  }
+
+  // 3. Query historical records for this customer
+  try {
+    let totalCount = 0;
+    let deliveredCount = 0;
+    let cancelledCount = 0;
+
+    const matchingOrders = db.prepare(`
+      SELECT status, raw_payload_json FROM vendoor_orders 
+      WHERE raw_payload_json LIKE ?
+    `).all(`%${normPhone}%`);
+
+    for (const vo of matchingOrders) {
+      let payload = {};
+      try { payload = JSON.parse(vo.raw_payload_json); } catch (_) {}
+      const p1 = normalizePhoneNumber(payload.phone || payload['موبايل(1)'] || '');
+      const p2 = normalizePhoneNumber(payload.phone2 || payload['موبايل(2)'] || '');
+      if (p1 === normPhone || p2 === normPhone) {
+        totalCount++;
+        const st = String(vo.status || payload.status || '').toLowerCase();
+        if (st.includes('deliver') || st.includes('استلام') || st.includes('completed') || st.includes('مكتمل') || st.includes('تحصيل')) {
+          deliveredCount++;
+        } else if (st.includes('cancel') || st.includes('ملغي')) {
+          cancelledCount++;
+        }
+      }
+    }
+
+    const finished = deliveredCount + cancelledCount;
+    if (finished > 0) {
+      const rate = +((deliveredCount / finished) * 100).toFixed(1);
+      const evalRes = evaluateDeliveryRate(rate);
+      return {
+        ...evalRes,
+        total_orders: totalCount,
+        delivered_orders: deliveredCount,
+        cancelled_orders: cancelledCount
+      };
+    } else if (totalCount > 0 && deliveredCount > 0) {
+      const rate = +((deliveredCount / totalCount) * 100).toFixed(1);
+      const evalRes = evaluateDeliveryRate(rate);
+      return {
+        ...evalRes,
+        total_orders: totalCount,
+        delivered_orders: deliveredCount,
+        cancelled_orders: cancelledCount
+      };
+    }
+  } catch (err) {
+    console.warn('Error querying customer delivery history:', err.message);
+  }
+
+  return {
+    status: 'DELIVERY_RATE_UNKNOWN',
+    rate: null,
+    alert: null,
+    needs_attention: false,
+    code: 'UNKNOWN',
+    total_orders: 0,
+    delivered_orders: 0,
+    cancelled_orders: 0
+  };
+}
+
+/**
+ * Enriches a single order with all Operational Intelligence evaluations.
+ *
+ * @param {Object} order Raw order object from database or Vendoor
+ * @returns {Object} Order enriched with intelligence flags and attention details
+ */
 export function enrichOrderOperationalIntelligence(order) {
   if (!order) return null;
 
@@ -335,7 +649,11 @@ export function enrichOrderOperationalIntelligence(order) {
   }
 
   const isActioned = isOrderActionedByCS(merged);
-  
+  const stUpper = String(merged.status || '').toUpperCase();
+  const wsUpper = String(merged.work_state || '').toUpperCase();
+  const isPrinted = stUpper.includes('PRINT') || wsUpper === 'PRINTED';
+  const isConfirmed = isActioned || stUpper.includes('CONFIRM') || stUpper.includes('PRINT') || merged.is_confirmed === true;
+
   // Secondary phone
   const primaryPhone = merged.phone || merged.phone_a || merged.primary_phone || '';
   const secondPhone = merged.phone2 || merged.alt_phone || merged.phone_b || merged.additional_phone || '';
@@ -345,9 +663,43 @@ export function enrichOrderOperationalIntelligence(order) {
   const rawAddress = merged.address || merged.customer_address || merged.shipping_address || '';
   const addressEval = evaluateAddressQuality(rawAddress);
 
-  // Delivery rate
-  const rawDeliveryRate = merged.delivery_rate !== undefined ? merged.delivery_rate : (merged.customer_delivery_rate ?? merged.merchant_delivery_rate ?? null);
-  const deliveryEval = evaluateDeliveryRate(rawDeliveryRate);
+  // Delivery rate (authoritative calculation)
+  const deliveryEval = computeCustomerDeliveryRate(merged);
+
+  // Load products for this order if available
+  let products = [];
+  try {
+    products = db.prepare(`
+      SELECT * FROM order_products 
+      WHERE order_code = ? OR (order_id IS NOT NULL AND order_id = ?)
+    `).all(merged.order_code, merged.order_id || merged.order_code);
+  } catch (_) {}
+
+  // If order itself has product_name or merchant_code, ensure product fallback
+  if (products.length === 0 && (merged.product_name || merged.merchant_code)) {
+    products = [{
+      product_name: merged.product_name || 'Product',
+      product_sku: merged.product_sku || null,
+      merchant_code: merged.merchant_code || null,
+      merchant_name: merged.merchant_name || merged.account || null,
+      warehouse: merged.warehouse || null,
+      quantity: 1,
+      unit_price: merged.total_price || 0
+    }];
+  }
+
+  // Populate primary product and merchant code
+  const primaryProduct = products[0] || {};
+  const realProductName = primaryProduct.product_name || merged.product_name || '';
+  const merchantCode = primaryProduct.merchant_code || merged.merchant_code || null;
+  const merchantName = primaryProduct.merchant_name || merged.merchant_name || merged.account || '';
+  const warehouse = primaryProduct.warehouse || merged.warehouse || null;
+
+  // Evaluate Merchant Code Mismatch
+  const merchantCodeEval = evaluateMerchantCodeConsistency(products, isConfirmed, merged.order_code);
+
+  // Evaluate Printed Warehouse Mismatch
+  const warehouseEval = evaluatePrintedWarehouseConsistency(products, isPrinted, merged.order_code);
 
   // Consolidate Alerts
   const alerts = [];
@@ -378,14 +730,33 @@ export function enrichOrderOperationalIntelligence(order) {
     });
   }
 
+  if (merchantCodeEval.has_mismatch && merchantCodeEval.alert) {
+    alerts.push(merchantCodeEval.alert);
+  }
+
+  if (warehouseEval.has_mismatch && warehouseEval.alert) {
+    alerts.push(warehouseEval.alert);
+  }
+
   const needsAttention = alerts.length > 0;
 
   return {
     ...merged,
     is_actioned: isActioned,
+    is_confirmed: isConfirmed,
+    is_printed: isPrinted,
+    real_product_name: realProductName,
+    product_name: realProductName,
+    merchant_code: merchantCode,
+    merchant_name: merchantName,
+    warehouse: warehouse,
+    products: products,
+    products_count: products.length,
     phone_quality: phoneEval,
     address_quality: addressEval,
     delivery_quality: deliveryEval,
+    merchant_code_quality: merchantCodeEval,
+    warehouse_quality: warehouseEval,
     operational_alerts: alerts,
     needs_attention: needsAttention
   };
@@ -397,6 +768,8 @@ export function enrichOrderOperationalIntelligence(order) {
  * 1. Actioned without real second phone
  * 2. Weak / invalid address
  * 3. Delivery rate < 70%
+ * 4. Merchant code mismatch
+ * 5. Printed warehouse mismatch
  *
  * @param {string} workDate Business date (YYYY-MM-DD)
  * @param {Object} options Filter options (role, employee_name, account, etc.)
@@ -408,7 +781,6 @@ export function getOperationalExceptions(workDate = getCairoBusinessDate(), opti
   let rawOrders = [];
   try {
     if (isToday) {
-      // Query current live operational pool
       let sql = 'SELECT * FROM current_work_orders WHERE work_date = ?';
       const params = [workDate];
 
@@ -422,7 +794,6 @@ export function getOperationalExceptions(workDate = getCairoBusinessDate(), opti
       }
       rawOrders = db.prepare(sql).all(...params);
     } else {
-      // Query historical raw logs
       let sql = 'SELECT * FROM raw_log_records WHERE work_date = ?';
       const params = [workDate];
       if (options.employee_name) {
@@ -443,6 +814,8 @@ export function getOperationalExceptions(workDate = getCairoBusinessDate(), opti
   const missingSecondPhoneOrders = enriched.filter(o => o.phone_quality.needs_attention);
   const invalidAddressOrders = enriched.filter(o => o.is_actioned && !o.address_quality.is_valid);
   const lowDeliveryRateOrders = enriched.filter(o => o.delivery_quality.needs_attention);
+  const merchantMismatchOrders = enriched.filter(o => o.merchant_code_quality?.has_mismatch);
+  const warehouseMismatchOrders = enriched.filter(o => o.warehouse_quality?.has_mismatch);
 
   // Distinct attention orders
   const attentionOrders = enriched.filter(o => o.needs_attention);
@@ -472,6 +845,16 @@ export function getOperationalExceptions(workDate = getCairoBusinessDate(), opti
         count: lowDeliveryRateOrders.length,
         title: 'نسبة تسليم منخفضة (< 70%)',
         orders_preview: lowDeliveryRateOrders.slice(0, 50)
+      },
+      merchant_code_mismatch: {
+        count: merchantMismatchOrders.length,
+        title: 'اختلاف أكواد التجار في نفس الطلب (MERCHANT_CODE_MISMATCH)',
+        orders_preview: merchantMismatchOrders.slice(0, 50)
+      },
+      printed_warehouse_mismatch: {
+        count: warehouseMismatchOrders.length,
+        title: 'اختلاف المخازن بعد الطباعة (PRINTED_WAREHOUSE_MISMATCH)',
+        orders_preview: warehouseMismatchOrders.slice(0, 50)
       }
     }
   };

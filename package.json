@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.js",
-    "dev": "node server.js",
+    "dev": "node build.js && node server.js",
     "lint": "node -c server.js analyze.js build.js export_excel.js services/*.js services/vendoor/*.js db/index.js tests/*.js",
     "start": "node server.js",
     "import:historical": "node scripts/import_historical_logs.js",

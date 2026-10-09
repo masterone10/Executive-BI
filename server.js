@@ -206,6 +206,11 @@ import {
   getEmployeeOperationalMetrics,
   enrichOrderOperationalIntelligence
 } from './services/operational_intelligence.js';
+import {
+  importProductsFromExcel,
+  importHistoricalLogsFromExcel,
+  autoScanAndSeedAvailableExcelFiles
+} from './services/excel_importer.js';
 
 const requireSupervisor = requireRole([USER_ROLES.SUPERVISOR, USER_ROLES.MANAGER, USER_ROLES.ADMIN]);
 
@@ -343,21 +348,28 @@ function normalizeEmpName(name) {
 app.get('/api/employees', (req, res) => {
   try {
     const { department, active, status } = req.query;
-    let sql = 'SELECT id, name, department, active, status, team_membership, notes, departure_date, departure_reason, created_at, updated_at FROM employees WHERE 1=1';
+    let sql = `
+      SELECT e.id, e.name, e.department, e.active, e.status, e.team_membership, e.notes, 
+             e.departure_date, e.departure_reason, e.created_at, e.updated_at,
+             COALESCE(c.max_orders, 40) AS max_orders
+      FROM employees e
+      LEFT JOIN employee_capacities c ON e.id = c.employee_id
+      WHERE 1=1
+    `;
     const params = [];
     if (department) {
-      sql += ' AND department = ?';
+      sql += ' AND e.department = ?';
       params.push(department);
     }
     if (status) {
-      sql += ' AND UPPER(status) = ?';
+      sql += ' AND UPPER(e.status) = ?';
       params.push(String(status).trim().toUpperCase());
     }
     if (active !== undefined) {
-      sql += ' AND active = ?';
+      sql += ' AND e.active = ?';
       params.push(active === 'true' || active === '1' ? 1 : 0);
     }
-    sql += ' ORDER BY department ASC, name COLLATE NOCASE ASC';
+    sql += ' ORDER BY e.department ASC, e.name COLLATE NOCASE ASC';
     let rows = db.prepare(sql).all(...params);
     if (department && department.toUpperCase() === 'CS') {
       rows = rows.filter(r => isCsEmployee(r));
@@ -457,7 +469,7 @@ app.put('/api/employees/:id', requireSupervisor, (req, res) => {
       return res.status(404).json({ success: false, error: 'Employee not found' });
     }
 
-    const { name, department, active, status, team_membership, notes } = req.body || {};
+    const { name, department, active, status, team_membership, notes, max_orders, capacity } = req.body || {};
     let updatedName = existing.name;
     if (name !== undefined) {
       if (typeof name !== 'string' || !name.trim()) {
@@ -507,6 +519,19 @@ app.put('/api/employees/:id', requireSupervisor, (req, res) => {
       "UPDATE employees SET name = ?, department = ?, active = ?, status = ?, team_membership = ?, notes = ?, updated_at = datetime('now') WHERE id = ?"
     ).run(updatedName, updatedDept, updatedActive, updatedStatus, updatedTeamMem, updatedNotes, id);
 
+    let updatedCap = undefined;
+    if (max_orders !== undefined || capacity !== undefined) {
+      updatedCap = Math.max(0, parseInt(max_orders !== undefined ? max_orders : capacity, 10) || 0);
+      db.prepare(`
+        INSERT INTO employee_capacities (employee_id, max_orders, updated_at, updated_by)
+        VALUES (?, ?, datetime('now'), 'ADMIN')
+        ON CONFLICT(employee_id) DO UPDATE SET max_orders = excluded.max_orders, updated_at = excluded.updated_at, updated_by = excluded.updated_by
+      `).run(id, updatedCap);
+    } else {
+      const existingCap = db.prepare('SELECT max_orders FROM employee_capacities WHERE employee_id = ?').get(id);
+      updatedCap = existingCap ? existingCap.max_orders : 40;
+    }
+
     const employee = getEmployeeLifecycleProfile(id);
     return res.json({
       success: true,
@@ -517,6 +542,7 @@ app.put('/api/employees/:id', requireSupervisor, (req, res) => {
       active: employee.active,
       status: employee.status,
       team_membership: employee.team_membership,
+      max_orders: updatedCap,
       notes: employee.notes
     });
   } catch (err) {
@@ -826,6 +852,194 @@ const handleSaveWorkingTeam = (req, res) => {
 
 app.post('/api/working-team/:date', requireSupervisor, handleSaveWorkingTeam);
 app.put('/api/working-team/:date', requireSupervisor, handleSaveWorkingTeam);
+
+// Production Team-Level Configuration Copy (Team -> Team & Date -> Date fallback)
+app.post('/api/team/copy-configuration', requireSupervisor, (req, res) => {
+  try {
+    const {
+      sourceTeam,
+      targetTeam,
+      sourceTeamId,
+      targetTeamId,
+      copyCapacities,
+      copyMembers,
+      sourceDate,
+      targetDate,
+      copyRoster,
+      copySchedules
+    } = req.body || {};
+
+    const normalizeTeamId = (t) => {
+      if (!t) return null;
+      const s = String(t).trim();
+      if (s === '1') return 'New';
+      if (s === '2') return 'Pending';
+      if (s === '3') return 'Both';
+      const capitalized = s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+      if (['New', 'Pending', 'Both'].includes(capitalized)) return capitalized;
+      return s;
+    };
+    const srcTeam = normalizeTeamId(sourceTeam || sourceTeamId);
+    const tgtTeam = normalizeTeamId(targetTeam || targetTeamId);
+
+    // 1. PRIMARY CONCEPT: TEAM -> TEAM CONFIGURATION COPY
+    if (srcTeam && tgtTeam) {
+      if (srcTeam === tgtTeam) {
+        return res.status(400).json({ success: false, error: 'Source Team and Target Team must be different' });
+      }
+      const validTeams = ['New', 'Pending', 'Both'];
+      if (!validTeams.includes(srcTeam) || !validTeams.includes(tgtTeam)) {
+        return res.status(400).json({ success: false, error: 'Invalid team identifier. Must be New, Pending, or Both' });
+      }
+
+      const tx = db.transaction(() => {
+        const sourceMembers = db.prepare(`
+          SELECT id, name, department, active, team_membership
+          FROM employees
+          WHERE team_membership = ? AND active = 1
+        `).all(srcTeam);
+
+        const targetMembers = db.prepare(`
+          SELECT id, name, department, active, team_membership
+          FROM employees
+          WHERE team_membership = ? AND active = 1
+        `).all(tgtTeam);
+
+        let updatedCapacities = 0;
+        let updatedMemberships = 0;
+
+        // A. If copyMembers is explicitly requested: sync members to target team using existing IDs (NO DUPLICATES)
+        if (copyMembers === true && sourceMembers.length > 0) {
+          const updateMemberStmt = db.prepare("UPDATE employees SET team_membership = ?, updated_at = datetime('now') WHERE id = ?");
+          for (const sm of sourceMembers) {
+            updateMemberStmt.run(tgtTeam, sm.id);
+            updatedMemberships++;
+          }
+          // Refresh target members after reassignment
+          targetMembers = db.prepare(`
+            SELECT id, name, department, active, team_membership
+            FROM employees
+            WHERE team_membership = ? AND active = 1
+          `).all(tgtTeam);
+        }
+
+        // B. Copy Capacity configuration from source team members (average / baseline max_orders)
+        if (copyCapacities !== false && sourceMembers.length > 0 && targetMembers.length > 0) {
+          const srcIds = sourceMembers.map(m => m.id);
+          const placeholders = srcIds.map(() => '?').join(',');
+          const capRows = db.prepare(`SELECT max_orders FROM employee_capacities WHERE employee_id IN (${placeholders})`).all(...srcIds);
+          const avgCap = capRows.length > 0
+            ? Math.round(capRows.reduce((sum, r) => sum + (r.max_orders || 40), 0) / capRows.length)
+            : 40;
+
+          const delCap = db.prepare("DELETE FROM employee_capacities WHERE employee_id = ?");
+          const insCap = db.prepare("INSERT INTO employee_capacities (employee_id, max_orders, updated_at, updated_by) VALUES (?, ?, datetime('now'), 'TEAM_COPY')");
+          for (const tm of targetMembers) {
+            delCap.run(tm.id);
+            insCap.run(tm.id, avgCap);
+            updatedCapacities++;
+          }
+        }
+
+        // Audit log
+        try {
+          db.prepare(`
+            INSERT INTO employee_activity_log (actor, action, details, created_at)
+            VALUES ('SUPERVISOR', 'TEAM_COPY', ?, datetime('now'))
+          `).run(JSON.stringify({ sourceTeam: srcTeam, targetTeam: tgtTeam, updatedCapacities, updatedMemberships }));
+        } catch (_) {}
+
+        return {
+          sourceTeam: srcTeam,
+          targetTeam: tgtTeam,
+          sourceMembersCount: sourceMembers.length,
+          targetMembersCount: targetMembers.length,
+          updatedCapacities,
+          updatedMemberships
+        };
+      });
+
+      const result = tx();
+      return res.json({
+        success: true,
+        message: `Team configuration copied successfully from ${srcTeam} Team to ${tgtTeam} Team.`,
+        sourceTeam: srcTeam,
+        targetTeam: tgtTeam,
+        sourceTeamId: srcTeam,
+        targetTeamId: tgtTeam,
+        ...result
+      });
+    }
+
+    // 2. FALLBACK CONCEPT: DATE -> DATE SCHEDULE/ROSTER COPY
+    if (!sourceDate || !targetDate) {
+      return res.status(400).json({ success: false, error: 'sourceTeam and targetTeam (or sourceDate and targetDate) are required' });
+    }
+    if (sourceDate === targetDate) {
+      return res.status(400).json({ success: false, error: 'Source and Target dates must be different' });
+    }
+
+    const tx = db.transaction(() => {
+      let copiedMembersCount = 0;
+      let copiedSchedulesCount = 0;
+
+      // 1. Copy working team attendance roster (configuration only)
+      if (copyRoster !== false) {
+        const sourceMembers = db.prepare(`
+          SELECT employee_id, is_working
+          FROM daily_working_team
+          WHERE work_date = ? AND is_working = 1
+        `).all(sourceDate);
+
+        if (sourceMembers.length > 0) {
+          db.prepare('DELETE FROM daily_working_team WHERE work_date = ?').run(targetDate);
+          const insertStmt = db.prepare(`
+            INSERT INTO daily_working_team (work_date, employee_id, is_working, source, updated_at)
+            VALUES (?, ?, ?, 'MANUAL_COPY', datetime('now'))
+          `);
+          for (const m of sourceMembers) {
+            insertStmt.run(targetDate, m.employee_id, m.is_working);
+          }
+          copiedMembersCount = sourceMembers.length;
+        }
+      }
+
+      // 2. Copy account day schedules if table exists
+      if (copySchedules !== false) {
+        try {
+          const sourceSchedules = db.prepare(`
+            SELECT account, day_of_week, time_window_start, time_window_end, is_active, notes
+            FROM account_day_schedules
+            WHERE work_date = ?
+          `).all(sourceDate);
+
+          if (sourceSchedules.length > 0) {
+            db.prepare('DELETE FROM account_day_schedules WHERE work_date = ?').run(targetDate);
+            const insertSched = db.prepare(`
+              INSERT INTO account_day_schedules (account, day_of_week, work_date, time_window_start, time_window_end, is_active, notes)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `);
+            for (const s of sourceSchedules) {
+              insertSched.run(s.account, s.day_of_week, targetDate, s.time_window_start, s.time_window_end, s.is_active, s.notes);
+            }
+            copiedSchedulesCount = sourceSchedules.length;
+          }
+        } catch (_) {}
+      }
+
+      return { copiedMembersCount, copiedSchedulesCount };
+    });
+
+    const result = tx();
+    res.json({
+      success: true,
+      message: `Configuration copied successfully from ${sourceDate} to ${targetDate}`,
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // -------------------------------------------------------------
 // 3B. ACCOUNT RULES & ACCOUNT EXCEPTIONS
@@ -2041,6 +2255,15 @@ app.post('/api/uploads/specific-orders', upload.single('file'), (req, res) => {
       req.file.size
     );
 
+    // Also extract products, merchant codes and warehouses into order_products
+    try {
+      if (req.file.buffer && req.file.buffer.length > 0) {
+        importProductsFromExcel(req.file.buffer, req.file.originalname);
+      }
+    } catch (prodErr) {
+      console.warn('Auto-import products note:', prodErr.message);
+    }
+
     // Auto-merge staged files into Current Orders Pool
     let mergeSummary = null;
     try {
@@ -2103,6 +2326,38 @@ app.post('/api/uploads/specific-orders/remove', (req, res) => {
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * EXCEL INTEGRATION & IMPORT ENDPOINTS (Management -> System & Integration)
+ */
+app.post('/api/integrations/excel/import-products', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ success: false, error: 'No Excel file provided' });
+  try {
+    const summary = importProductsFromExcel(req.file.buffer, req.file.originalname);
+    res.json({ success: true, summary });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/integrations/excel/import-logs', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ success: false, error: 'No Excel file provided' });
+  try {
+    const summary = importHistoricalLogsFromExcel(req.file.buffer, req.file.originalname);
+    res.json({ success: true, summary });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/integrations/excel/auto-seed', (req, res) => {
+  try {
+    const results = autoScanAndSeedAvailableExcelFiles();
+    res.json({ success: true, results });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -4235,8 +4490,10 @@ if (!isTestExecution) {
       } else {
         console.log('[AUTONOMOUS] Background Vendoor poller idle (no active credentials configured).');
       }
-    } catch (pollerErr) {
-      console.log('[AUTONOMOUS] Poller init notice:', pollerErr.message);
+    try {
+      autoScanAndSeedAvailableExcelFiles();
+    } catch (seedErr) {
+      console.warn('Excel autoScan notice:', seedErr.message);
     }
   });
 

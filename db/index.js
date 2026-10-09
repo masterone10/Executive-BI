@@ -468,6 +468,12 @@ export function runMigrations(database = db) {
       if (!cols.some(c => c.name === 'completed_at')) {
         database.exec("ALTER TABLE current_work_orders ADD COLUMN completed_at TEXT");
       }
+      if (!cols.some(c => c.name === 'product_name')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN product_name TEXT");
+      }
+      if (!cols.some(c => c.name === 'warehouse')) {
+        database.exec("ALTER TABLE current_work_orders ADD COLUMN warehouse TEXT");
+      }
     }
   } catch (e) {
     // Ignored if table not created yet or column exists
@@ -859,6 +865,12 @@ export function runMigrations(database = db) {
       }
       if (!vCols.some(c => c.name === 'created_at_original')) {
         database.exec("ALTER TABLE vendoor_orders ADD COLUMN created_at_original TEXT");
+      }
+      if (!vCols.some(c => c.name === 'product_name')) {
+        database.exec("ALTER TABLE vendoor_orders ADD COLUMN product_name TEXT");
+      }
+      if (!vCols.some(c => c.name === 'warehouse')) {
+        database.exec("ALTER TABLE vendoor_orders ADD COLUMN warehouse TEXT");
       }
       database.exec(`
         CREATE INDEX IF NOT EXISTS idx_vendoor_orders_bdate ON vendoor_orders(business_date);
@@ -1253,6 +1265,8 @@ export function runMigrations(database = db) {
         updated_by TEXT DEFAULT 'Supervisor'
       );
       CREATE INDEX IF NOT EXISTS idx_acc_sched_acc ON account_schedules(account);
+      INSERT OR IGNORE INTO account_schedules (account, new_start_time, new_end_time, pending_start_time, pending_end_time, config_version, updated_by)
+      VALUES ('ARC', '18:00', '23:00', '', '', 1, 'System');
 
       CREATE TABLE IF NOT EXISTS employee_capacities (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1384,6 +1398,23 @@ export function runMigrations(database = db) {
         UNIQUE(work_date, alert_type, entity_id)
       );
       CREATE INDEX IF NOT EXISTS idx_alloc_alerts_date ON allocation_operational_alerts(work_date);
+
+      CREATE TABLE IF NOT EXISTS order_products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_code TEXT NOT NULL,
+        order_id TEXT,
+        product_name TEXT NOT NULL,
+        product_sku TEXT,
+        merchant_code TEXT,
+        merchant_name TEXT,
+        warehouse TEXT,
+        quantity INTEGER DEFAULT 1,
+        unit_price REAL,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(order_code, product_name, product_sku, merchant_code, warehouse)
+      );
+      CREATE INDEX IF NOT EXISTS idx_order_products_code ON order_products(order_code);
+      CREATE INDEX IF NOT EXISTS idx_order_products_order_id ON order_products(order_id);
     `);
 
     // Ensure allocation_snapshots has allocation_version column for older schemas
