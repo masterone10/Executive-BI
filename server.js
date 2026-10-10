@@ -2354,7 +2354,8 @@ app.post('/api/integrations/excel/import-logs', upload.single('file'), (req, res
 
 app.post('/api/integrations/excel/auto-seed', (req, res) => {
   try {
-    const results = autoScanAndSeedAvailableExcelFiles();
+    const force = req.body?.force !== false;
+    const results = autoScanAndSeedAvailableExcelFiles({ force });
     res.json({ success: true, results });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -4490,11 +4491,16 @@ if (!isTestExecution) {
       } else {
         console.log('[AUTONOMOUS] Background Vendoor poller idle (no active credentials configured).');
       }
-    try {
-      autoScanAndSeedAvailableExcelFiles();
-    } catch (seedErr) {
-      console.warn('Excel autoScan notice:', seedErr.message);
+    } catch (pollerErr) {
+      console.warn('Poller startup notice:', pollerErr.message);
     }
+    setTimeout(() => {
+      try {
+        autoScanAndSeedAvailableExcelFiles({ force: false });
+      } catch (seedErr) {
+        console.warn('Excel autoScan notice:', seedErr.message);
+      }
+    }, 1500).unref();
   });
 
   server.on('error', (err) => {

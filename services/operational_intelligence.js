@@ -206,6 +206,8 @@ export function evaluateAddressQuality(rawAddress) {
   if (wordCount <= 3) {
     return {
       status: 'INVALID',
+      result: 'ADDRESS_WEAK',
+      address_status: 'ADDRESS_WEAK',
       is_valid: false,
       word_count: wordCount,
       language: 'ARABIC',
@@ -216,6 +218,8 @@ export function evaluateAddressQuality(rawAddress) {
 
   return {
     status: 'VALID',
+    result: 'ADDRESS_VALID',
+    address_status: 'ADDRESS_VALID',
     is_valid: true,
     word_count: wordCount,
     language: 'ARABIC',
@@ -626,6 +630,162 @@ export function computeCustomerDeliveryRate(order) {
 }
 
 /**
+ * Derives the unified Operational Quality Summary according to locked business rules:
+ *
+ * Statuses:
+ * - QUALITY_ISSUES_FOUND: 1 or more confirmed quality issues.
+ * - QUALITY_PENDING: Unsettled / unconfirmed checks, insufficient to declare CLEAR.
+ * - QUALITY_CLEAR: All required checks completed and fully valid.
+ * - QUALITY_UNKNOWN: Data insufficient to judge.
+ *
+ * Rules:
+ * - Never auto-transition UNKNOWN to CLEAR.
+ * - A confirmed issue cannot be erased by pending/unknown checks.
+ * - Decouples data quality issues from completed-action exceptions and pending actions.
+ *
+ * @param {Object} params Check evaluations
+ * @returns {Object} Unified quality summary
+ */
+export function deriveOperationalQualitySummary({
+  address_quality,
+  phone_quality,
+  delivery_quality,
+  merchant_code_quality,
+  warehouse_quality,
+  is_actioned = false,
+  has_data = true
+}) {
+  const issues = [];
+
+  // 1. Address quality checks (Data Quality issue)
+  if (address_quality) {
+    if (!address_quality.is_valid) {
+      const isWeak = address_quality.result === 'ADDRESS_WEAK' || address_quality.code === 'WEAK_WORD_COUNT';
+      issues.push({
+        type: isWeak ? 'ADDRESS_WEAK' : 'ADDRESS_ISSUE',
+        category: 'DATA_QUALITY',
+        severity: isWeak ? 'WARNING' : 'DANGER',
+        title: isWeak ? 'العنوان ضعيف' : 'العنوان غير صالح',
+        reason: address_quality.reason || 'العنوان غير مستوفٍ للشروط'
+      });
+    }
+  }
+
+  // 2. Phone quality checks
+  if (phone_quality) {
+    if (phone_quality.status === 'ALT_PHONE_DUPLICATE_PRIMARY') {
+      issues.push({
+        type: 'ALT_PHONE_DUPLICATE_PRIMARY',
+        category: 'DATA_QUALITY',
+        severity: 'WARNING',
+        title: 'الرقم الثاني مكرر للأساسي',
+        reason: phone_quality.reason || 'الرقم الثاني مكرر لنفس الرقم الأساسي'
+      });
+    } else if (is_actioned && phone_quality.status === 'ALT_PHONE_MISSING') {
+      issues.push({
+        type: 'ALT_PHONE_MISSING',
+        category: 'COMPLETED_ACTION_EXCEPTION',
+        severity: 'WARNING',
+        title: 'تم تأكيد الإجراء بدون رقم ثانٍ',
+        reason: phone_quality.reason || 'تم تأكيد الإجراء بدون إضافة رقم هاتف ثانٍ'
+      });
+    }
+  }
+
+  // 3. Delivery rate checks (Data Quality issue)
+  if (delivery_quality && delivery_quality.status === 'DELIVERY_RATE_LOW') {
+    issues.push({
+      type: 'DELIVERY_RATE_LOW',
+      category: 'DATA_QUALITY',
+      severity: 'WARNING',
+      title: 'نسبة التسليم منخفضة',
+      reason: delivery_quality.alert || `نسبة التسليم منخفضة (${delivery_quality.rate}%)`
+    });
+  }
+
+  // 4. Merchant code checks (Data Quality issue)
+  if (merchant_code_quality && merchant_code_quality.has_mismatch && merchant_code_quality.alert) {
+    issues.push({
+      type: 'MERCHANT_CODE_MISMATCH',
+      category: 'DATA_QUALITY',
+      severity: 'DANGER',
+      title: 'اختلاف أكواد التجار',
+      reason: merchant_code_quality.alert.reason || 'الطلب يحتوي على منتجات بأكواد تجار مختلفة'
+    });
+  }
+
+  // 5. Warehouse checks (Data Quality issue)
+  if (warehouse_quality && warehouse_quality.has_mismatch && warehouse_quality.alert) {
+    issues.push({
+      type: 'PRINTED_WAREHOUSE_MISMATCH',
+      category: 'DATA_QUALITY',
+      severity: 'DANGER',
+      title: 'اختلاف المخازن بعد الطباعة',
+      reason: warehouse_quality.alert.reason || 'الطلب مطبوع لكن منتجاته مسجلة في مخازن مختلفة'
+    });
+  }
+
+  // Final Status Derivation according to locked business rules
+  let status;
+  let badge_label;
+  let title;
+  let description;
+
+  if (issues.length > 0) {
+    // 1. Confirmed issues found — never erased by pending/unknown checks
+    status = 'QUALITY_ISSUES_FOUND';
+    badge_label = `مشاكل جودة (${issues.length}) ⚠`;
+    title = 'تم اكتشاف مشاكل جودة';
+    if (!is_actioned) {
+      description = `الطلب يحتوي على ملاحظات جودة (${issues.map(i => i.title).join('، ')})، والإجراء لم يتأكد بعد (Action Confirmed = No).`;
+    } else {
+      description = `الطلب يحتوي على مشاكل جودة مؤكدة (${issues.map(i => i.title).join('، ')}) بعد تأكيد الإجراء.`;
+    }
+  } else if (!has_data || (!address_quality?.language && !phone_quality?.primary_normalized)) {
+    // 2. Unknown / Insufficient data (Never auto-transition to CLEAR)
+    status = 'QUALITY_UNKNOWN';
+    badge_label = 'غير محدد ❓';
+    title = 'بيانات غير كافية للحكم';
+    description = 'البيانات المسجلة غير كافية لاعتماد استيفاء الطلب لمعايير الجودة.';
+  } else if (!is_actioned && phone_quality?.status === 'ALT_PHONE_MISSING') {
+    // 3. Pending checks (Action not yet confirmed and second phone awaiting addition)
+    status = 'QUALITY_PENDING';
+    badge_label = 'في الانتظار ⏳';
+    title = 'في انتظار حسم الإجراء';
+    description = 'الطلب في انتظار استكمال الإجراء وإضافة الرقم الثاني، ولا يمكن اعتماد سلامته قبل الحسم.';
+  } else if (
+    address_quality?.is_valid &&
+    phone_quality?.status === 'ALT_PHONE_ADDED' &&
+    (!delivery_quality || delivery_quality.status !== 'DELIVERY_RATE_LOW') &&
+    (!merchant_code_quality || !merchant_code_quality.has_mismatch) &&
+    (!warehouse_quality || !warehouse_quality.has_mismatch)
+  ) {
+    // 4. All required checks completed and fully valid
+    status = 'QUALITY_CLEAR';
+    badge_label = 'مستوفي المعايير ✓';
+    title = 'الطلب مستوفي معايير الجودة';
+    description = 'الطلب مستوفي معايير الجودة بالكامل ولا توجد استثناءات معلقة.';
+  } else {
+    // Fallback if any check is unsettled
+    status = !is_actioned ? 'QUALITY_PENDING' : 'QUALITY_UNKNOWN';
+    badge_label = status === 'QUALITY_PENDING' ? 'في الانتظار ⏳' : 'غير محدد ❓';
+    title = status === 'QUALITY_PENDING' ? 'فحوص غير مكتملة' : 'بيانات غير مكتملة';
+    description = 'توجد فحوص لم تُحسم بعد، ولا توجد نتيجة كافية لاعتماد سلامة الطلب.';
+  }
+
+  return {
+    status,
+    badge_label,
+    title,
+    description,
+    issues,
+    issues_count: issues.length,
+    action_confirmed: Boolean(is_actioned),
+    action_status: is_actioned ? 'CONFIRMED' : 'PENDING'
+  };
+}
+
+/**
  * Enriches a single order with all Operational Intelligence evaluations.
  *
  * @param {Object} order Raw order object from database or Vendoor
@@ -635,7 +795,7 @@ export function enrichOrderOperationalIntelligence(order) {
   if (!order) return null;
 
   let merged = { ...order };
-  if ((!order.phone && !order.customer_name) && order.order_code) {
+  if (order.order_code) {
     try {
       const vo = db.prepare('SELECT * FROM vendoor_orders WHERE order_code = ?').get(order.order_code);
       if (vo) {
@@ -643,7 +803,20 @@ export function enrichOrderOperationalIntelligence(order) {
         if (vo.raw_payload_json) {
           try { payload = JSON.parse(vo.raw_payload_json); } catch (_) {}
         }
-        merged = { ...payload, ...vo, ...order };
+        // Base is payload
+        merged = { ...payload };
+        // Overlay non-empty properties from vo
+        for (const [k, v] of Object.entries(vo)) {
+          if (v !== null && v !== undefined && v !== '') {
+            merged[k] = v;
+          }
+        }
+        // Overlay non-empty properties from order
+        for (const [k, v] of Object.entries(order)) {
+          if (v !== null && v !== undefined && v !== '') {
+            merged[k] = v;
+          }
+        }
       }
     } catch (_) {}
   }
@@ -675,25 +848,34 @@ export function enrichOrderOperationalIntelligence(order) {
     `).all(merged.order_code, merged.order_id || merged.order_code);
   } catch (_) {}
 
-  // If order itself has product_name or merchant_code, ensure product fallback
-  if (products.length === 0 && (merged.product_name || merged.merchant_code)) {
+  // Determine real product details without generic placeholder 'Product'
+  const rawProd = merged.product_name !== null && merged.product_name !== undefined ? String(merged.product_name).trim() : '';
+  const realProductName = (rawProd && rawProd !== 'Product') ? rawProd : (merged.raw_product_name || (rawProd === 'Product' ? 'Product' : ''));
+  const productSku = merged.product_sku || merged.sku || null;
+  const merchantCode = merged.merchant_code || null;
+  const merchantName = merged.merchant_name || merged.account || null;
+  const warehouse = merged.warehouse || extractWarehouse(realProductName, merged) || null;
+
+  if (products.length === 0 && (realProductName || productSku || merchantCode)) {
     products = [{
-      product_name: merged.product_name || 'Product',
-      product_sku: merged.product_sku || null,
-      merchant_code: merged.merchant_code || null,
-      merchant_name: merged.merchant_name || merged.account || null,
-      warehouse: merged.warehouse || null,
-      quantity: 1,
-      unit_price: merged.total_price || 0
+      product_name: realProductName || '',
+      product_sku: productSku,
+      merchant_code: merchantCode,
+      merchant_name: merchantName,
+      warehouse: warehouse,
+      quantity: Number(merged.quantity || merged.qty || 1) || 1,
+      unit_price: Number(merged.total_price || merged.price || 0) || 0,
+      source: realProductName === 'Product' ? 'EXPLICIT_SOURCE_LITERAL' : (realProductName ? 'SOURCE_PAYLOAD' : 'EMPTY')
     }];
   }
 
   // Populate primary product and merchant code
   const primaryProduct = products[0] || {};
-  const realProductName = primaryProduct.product_name || merged.product_name || '';
-  const merchantCode = primaryProduct.merchant_code || merged.merchant_code || null;
-  const merchantName = primaryProduct.merchant_name || merged.merchant_name || merged.account || '';
-  const warehouse = primaryProduct.warehouse || merged.warehouse || null;
+  const finalRealProductName = primaryProduct.product_name || realProductName;
+  const finalSku = primaryProduct.product_sku || productSku;
+  const finalMerchantCode = primaryProduct.merchant_code || merchantCode;
+  const finalMerchantName = primaryProduct.merchant_name || merchantName;
+  const finalWarehouse = primaryProduct.warehouse || warehouse;
 
   // Evaluate Merchant Code Mismatch
   const merchantCodeEval = evaluateMerchantCodeConsistency(products, isConfirmed, merged.order_code);
@@ -701,55 +883,31 @@ export function enrichOrderOperationalIntelligence(order) {
   // Evaluate Printed Warehouse Mismatch
   const warehouseEval = evaluatePrintedWarehouseConsistency(products, isPrinted, merged.order_code);
 
-  // Consolidate Alerts
-  const alerts = [];
-  if (phoneEval.needs_attention) {
-    alerts.push({
-      type: 'SECOND_PHONE_ISSUE',
-      severity: 'WARNING',
-      title: phoneEval.status === 'ALT_PHONE_MISSING' ? 'لم يتم إضافة رقم ثانٍ' : 'الرقم الثاني مكرر للأساسي',
-      reason: phoneEval.reason
-    });
-  }
+  // Unified Quality Summary
+  const overallQuality = deriveOperationalQualitySummary({
+    address_quality: addressEval,
+    phone_quality: phoneEval,
+    delivery_quality: deliveryEval,
+    merchant_code_quality: merchantCodeEval,
+    warehouse_quality: warehouseEval,
+    is_actioned: isActioned,
+    has_data: Boolean(rawAddress || primaryPhone || merged.customer_name)
+  });
 
-  if (isActioned && !addressEval.is_valid) {
-    alerts.push({
-      type: 'ADDRESS_ISSUE',
-      severity: addressEval.code === 'WEAK_WORD_COUNT' ? 'WARNING' : 'DANGER',
-      title: addressEval.code === 'WEAK_WORD_COUNT' ? 'العنوان ضعيف' : 'العنوان غير صالح',
-      reason: addressEval.reason
-    });
-  }
-
-  if (deliveryEval.needs_attention) {
-    alerts.push({
-      type: 'DELIVERY_RATE_LOW',
-      severity: 'WARNING',
-      title: 'نسبة التسليم منخفضة',
-      reason: deliveryEval.alert
-    });
-  }
-
-  if (merchantCodeEval.has_mismatch && merchantCodeEval.alert) {
-    alerts.push(merchantCodeEval.alert);
-  }
-
-  if (warehouseEval.has_mismatch && warehouseEval.alert) {
-    alerts.push(warehouseEval.alert);
-  }
-
-  const needsAttention = alerts.length > 0;
+  const alerts = overallQuality.issues;
+  const needsAttention = (overallQuality.status === 'QUALITY_ISSUES_FOUND');
 
   return {
     ...merged,
     is_actioned: isActioned,
     is_confirmed: isConfirmed,
     is_printed: isPrinted,
-    real_product_name: realProductName,
-    product_name: realProductName,
-    merchant_code: merchantCode,
-    merchant_name: merchantName,
-    warehouse: warehouse,
+    real_product_name: finalRealProductName,
+    product_name: finalRealProductName,
+    product_sku: finalSku,
+    merchant_code: finalMerchantCode,
+    merchant_name: finalMerchantName,
+    warehouse: finalWarehouse,
     products: products,
     products_count: products.length,
     phone_quality: phoneEval,
@@ -758,6 +916,7 @@ export function enrichOrderOperationalIntelligence(order) {
     merchant_code_quality: merchantCodeEval,
     warehouse_quality: warehouseEval,
     operational_alerts: alerts,
+    overall_quality: overallQuality,
     needs_attention: needsAttention
   };
 }
@@ -811,13 +970,22 @@ export function getOperationalExceptions(workDate = getCairoBusinessDate(), opti
   const enriched = rawOrders.map(enrichOrderOperationalIntelligence);
 
   // Group by exception category
+  // 1. Completed action exception: Actioned order without real second phone (requires is_actioned)
   const missingSecondPhoneOrders = enriched.filter(o => o.phone_quality.needs_attention);
-  const invalidAddressOrders = enriched.filter(o => o.is_actioned && !o.address_quality.is_valid);
+  
+  // 2. Data quality: weak or invalid address (tracks all invalid addresses)
+  const invalidAddressOrders = enriched.filter(o => !o.address_quality.is_valid);
+  
+  // 3. Data quality: low delivery rate
   const lowDeliveryRateOrders = enriched.filter(o => o.delivery_quality.needs_attention);
+  
+  // 4. Data quality: merchant mismatch
   const merchantMismatchOrders = enriched.filter(o => o.merchant_code_quality?.has_mismatch);
+  
+  // 5. Data quality: printed warehouse mismatch
   const warehouseMismatchOrders = enriched.filter(o => o.warehouse_quality?.has_mismatch);
 
-  // Distinct attention orders
+  // Distinct attention orders (orders with confirmed quality issues)
   const attentionOrders = enriched.filter(o => o.needs_attention);
 
   return {
@@ -835,7 +1003,7 @@ export function getOperationalExceptions(workDate = getCairoBusinessDate(), opti
       },
       weak_or_invalid_address: {
         count: invalidAddressOrders.length,
-        weak_count: invalidAddressOrders.filter(o => o.address_quality.code === 'WEAK_WORD_COUNT').length,
+        weak_count: invalidAddressOrders.filter(o => o.address_quality.code === 'WEAK_WORD_COUNT' || o.address_quality.result === 'ADDRESS_WEAK').length,
         language_invalid_count: invalidAddressOrders.filter(o => o.address_quality.code === 'ENGLISH_ONLY' || o.address_quality.code === 'MIXED_LANGUAGE').length,
         empty_count: invalidAddressOrders.filter(o => o.address_quality.code === 'EMPTY').length,
         title: 'عناوين ضعيفة أو غير صالحة',

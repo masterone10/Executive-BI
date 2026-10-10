@@ -23,6 +23,7 @@ import { getCairoBusinessDate } from '../time_utils.js';
 import { canonicalWorkDate } from './logs.js';
 import { syncAndRestoreObservedTeam } from '../working_team_ops.js';
 import { evaluateAndRecordOrderPhoneDuplicate, isQualifyingPhoneMutationAction } from '../employee_evaluation.js';
+import { extractWarehouse } from '../operational_intelligence.js';
 
 /**
  * Generate a unique run ID for the sync batch
@@ -274,8 +275,9 @@ export async function syncVendoorOrders(options = {}) {
         order_code, status, active_status, account, merchant_code, merchant_name,
         affiliate_code, affiliate_name, marketer_name, source_date,
         created_at_original, business_date, is_active, last_synced_at, city,
-        total_price, raw_payload_json, sync_run_id, imported_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, datetime('now'))
+        total_price, raw_payload_json, sync_run_id, imported_at,
+        product_name, warehouse
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, datetime('now'), ?, ?)
       ON CONFLICT(order_code) DO UPDATE SET
         status = excluded.status,
         active_status = excluded.active_status,
@@ -294,14 +296,17 @@ export async function syncVendoorOrders(options = {}) {
         total_price = excluded.total_price,
         raw_payload_json = excluded.raw_payload_json,
         sync_run_id = excluded.sync_run_id,
-        imported_at = datetime('now')
+        imported_at = datetime('now'),
+        product_name = COALESCE(excluded.product_name, vendoor_orders.product_name),
+        warehouse = COALESCE(excluded.warehouse, vendoor_orders.warehouse)
     `);
 
     const insertCwoStmt = db.prepare(`
       INSERT INTO current_work_orders (
         work_date, order_code, account, status, order_date, source_file_slot, source_type,
-        merchant_code, merchant_name, affiliate_code, marketer_name
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        merchant_code, merchant_name, affiliate_code, marketer_name,
+        product_name, warehouse
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(work_date, order_code) DO UPDATE SET
         account = excluded.account,
         status = excluded.status,
@@ -312,7 +317,15 @@ export async function syncVendoorOrders(options = {}) {
         merchant_name = COALESCE(excluded.merchant_name, current_work_orders.merchant_name),
         affiliate_code = COALESCE(excluded.affiliate_code, current_work_orders.affiliate_code),
         marketer_name = COALESCE(excluded.marketer_name, current_work_orders.marketer_name),
+        product_name = COALESCE(excluded.product_name, current_work_orders.product_name),
+        warehouse = COALESCE(excluded.warehouse, current_work_orders.warehouse),
         updated_at = datetime('now')
+    `);
+
+    const insertOrderProductStmt = db.prepare(`
+      INSERT OR IGNORE INTO order_products (
+        order_code, order_id, product_name, product_sku, merchant_code, merchant_name, warehouse, quantity, unit_price
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const upsertMerchantStmt = db.prepare(`
@@ -416,6 +429,9 @@ export async function syncVendoorOrders(options = {}) {
             const mName = ord.merchant_name || ord.account || 'Unassigned';
             const affCode = ord.affiliate_code || null;
             const mktName = ord.marketer_name || ord.affiliate_name || null;
+            const prodName = ord.product_name || null;
+            const prodSku = ord.product_sku || ord.sku || null;
+            const whName = ord.warehouse || extractWarehouse(prodName, ord) || null;
 
             insertOrderStmt.run(
               ord.order_code,
@@ -434,8 +450,27 @@ export async function syncVendoorOrders(options = {}) {
               ord.city || null,
               ord.total_price || 0,
               JSON.stringify(ord),
-              syncRunId
+              syncRunId,
+              prodName,
+              whName
             );
+
+            // Populate order_products table
+            if (prodName || prodSku) {
+              try {
+                insertOrderProductStmt.run(
+                  ord.order_code,
+                  ord.order_id || ord.order_code,
+                  prodName || '',
+                  prodSku,
+                  mCode,
+                  mName,
+                  whName,
+                  Number(ord.quantity || 1) || 1,
+                  Number(ord.total_price || 0) || 0
+                );
+              } catch (_) {}
+            }
 
             // Operational Review: Evaluate exact phone vs phone2 duplicate state
             try {
@@ -472,7 +507,9 @@ export async function syncVendoorOrders(options = {}) {
                   mCode,
                   mName,
                   affCode,
-                  mktName
+                  mktName,
+                  prodName,
+                  whName
                 );
               } catch (_) {}
             } else if (!isHistoricalSync) {

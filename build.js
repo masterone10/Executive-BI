@@ -34,10 +34,14 @@ if (fs.existsSync(dataJsonPath)) {
   throw new Error('Neither sample_log.xlsx nor data.json found');
 }
 
-// 3. Generate Executive_Report_v3.xlsx in public
+// 3. Generate Executive_Report_v3.xlsx in public if not already created
 const excelReportPath = path.join(PUBLIC_DIR, 'Executive_Report_v3.xlsx');
-saveExcelFile(payload, excelReportPath);
-console.log('Generated public/Executive_Report_v3.xlsx');
+if (!fs.existsSync(excelReportPath)) {
+  saveExcelFile(payload, excelReportPath);
+  console.log('Generated public/Executive_Report_v3.xlsx');
+} else {
+  console.log('Using existing public/Executive_Report_v3.xlsx');
+}
 
 // 4. Read template.html and inject payload & SheetJS
 const templatePath = path.join(ROOT_DIR, 'template.html');

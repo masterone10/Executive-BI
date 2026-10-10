@@ -1277,7 +1277,8 @@ input:checked + .slider:before{transform:translateX(16px)}
   </nav>
 
   <div class="ds-global-context">
-    <div class="ds-context-pill" onclick="const p = document.getElementById('globalCalendarPicker'); if (p) { p.showPicker ? p.showPicker() : p.click(); }">
+    <div class="ds-context-pill" style="position:relative;cursor:pointer" onclick="openGlobalDatePicker()" title="Select operational date">
+      <input type="date" id="topNavDatePicker" class="gds-date-input" style="position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:2" onchange="onGlobalDatePicked(this.value)" title="Choose date">
       <span class="pill-label">BUSINESS DATE</span>
       <span class="pill-val" id="topNavDateText">08 Oct 2026</span>
       <span class="ds-badge ds-badge-live" id="topNavLiveBadge">LIVE</span>
@@ -1653,6 +1654,23 @@ function updateGlobalDateUI() {
   const cal = document.getElementById('globalCalendarPicker');
   if (cal) cal.value = currentWorkDate;
 
+  const topNavCal = document.getElementById('topNavDatePicker');
+  if (topNavCal) topNavCal.value = currentWorkDate;
+
+  const topDate = document.getElementById('topNavDateText');
+  if (topDate) topDate.textContent = formatDisplayDate(currentWorkDate);
+
+  const topBadge = document.getElementById('topNavLiveBadge');
+  if (topBadge) {
+    if (currentWorkDate === getTodayDate()) {
+      topBadge.textContent = 'LIVE';
+      topBadge.className = 'ds-badge ds-badge-live';
+    } else {
+      topBadge.textContent = 'HISTORICAL';
+      topBadge.className = 'ds-badge ds-badge-neutral';
+    }
+  }
+
   const sel = document.getElementById('globalAvailableDatesSelect');
   if (sel) {
     sel.value = currentWorkDate;
@@ -1841,6 +1859,24 @@ function onGlobalDatePicked(val) {
     setGlobalSelectedDate(val);
   }
 }
+
+function openGlobalDatePicker() {
+  const p = document.getElementById('topNavDatePicker') || document.getElementById('globalCalendarPicker');
+  if (!p) return;
+  try {
+    if (typeof p.showPicker === 'function') {
+      p.showPicker();
+      return;
+    }
+  } catch (_) {
+    // Suppress cross-origin iframe SecurityError
+  }
+  try {
+    p.focus({ preventScroll: true });
+    p.click();
+  } catch (_) {}
+}
+window.openGlobalDatePicker = openGlobalDatePicker;
 
 let globalDateRequestId = 0;
 let isHistoricalMode = false;
@@ -5138,22 +5174,27 @@ let allAccountExceptions = [];
 let allKnownAccounts = [];
 let currentAccountConfigFilter = '';
 
+let allAccountSchedulesList = [];
+let accountConfigSelectedDay = 'all';
+
 async function loadAccountConfigView() {
   const container = document.getElementById('accountConfigContainer');
   if (!container) return;
 
   try {
-    const [rules, exceptions, employees, knownAccounts] = await Promise.all([
+    const [rules, exceptions, employees, knownAccounts, allocConfig] = await Promise.all([
       apiFetch('/api/account-rules').catch(() => []),
       apiFetch('/api/account-exceptions').catch(() => []),
       apiFetch('/api/employees').catch(() => []),
-      apiFetch('/api/accounts/all').catch(() => [])
+      apiFetch('/api/accounts/all').catch(() => []),
+      apiFetch('/api/allocation/configuration').catch(() => null)
     ]);
 
     allAccountRules = Array.isArray(rules) ? rules : [];
     allAccountExceptions = Array.isArray(exceptions) ? exceptions : [];
     allEmployeesMaster = Array.isArray(employees) ? employees : [];
     allKnownAccounts = Array.isArray(knownAccounts) ? knownAccounts : [];
+    allAccountSchedulesList = Array.isArray(allocConfig?.accounts) ? allocConfig.accounts : [];
 
     renderAccountConfigUI();
   } catch (err) {
@@ -5169,22 +5210,105 @@ async function loadAccountConfigView() {
   }
 }
 
+function changeAccountScheduleDayView(day) {
+  accountConfigSelectedDay = day || 'all';
+  renderAccountConfigUI();
+}
+
+window.autoSaveAccountScheduleField = async function(accountName, field, val, day, rowId) {
+  const cleanVal = (val || '').trim();
+  if (cleanVal && !/^([01]\d|2[0-3]):[0-5]\d$/.test(cleanVal)) {
+    showToast('⚠️ تنسيق خاطئ', 'الوقت يجب أن يكون بصيغة HH:MM (مثال 18:00) أو اتركه فارغاً للعمل طوال اليوم');
+    return;
+  }
+
+  const indicator = document.getElementById(`${rowId}_saveStatus`);
+  if (indicator) {
+    indicator.innerHTML = '<span style="font-size:11px;color:#2563EB;font-weight:700">⏳ جاري الحفظ...</span>';
+  }
+
+  try {
+    const payload = {
+      account: accountName,
+      day: day || 'all',
+      [field]: cleanVal
+    };
+    const res = await apiFetch('/api/allocation/schedule/day-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (res && res.success) {
+      if (indicator) {
+        indicator.innerHTML = '<span style="font-size:11px;color:#16A34A;font-weight:700">✓ تم الحفظ</span>';
+        setTimeout(() => { if (indicator) indicator.innerHTML = ''; }, 3000);
+      }
+      let acc = allAccountSchedulesList.find(a => a.account.toLowerCase() === accountName.toLowerCase());
+      if (acc) {
+        if (!acc.day_schedules) acc.day_schedules = {};
+        if (!day || day === 'all') {
+          acc[field] = cleanVal;
+        } else {
+          if (!acc.day_schedules[day]) acc.day_schedules[day] = {};
+          acc.day_schedules[day][field] = cleanVal;
+        }
+        updateAccountScheduleRowLive(acc, day, rowId);
+      }
+    } else {
+      throw new Error(res?.error || 'Failed to save');
+    }
+  } catch (err) {
+    if (indicator) {
+      indicator.innerHTML = `<span style="font-size:11px;color:#DC2626;font-weight:700">✕ خطأ</span>`;
+    }
+    showToast('✕ خطأ في الحفظ', err.message);
+  }
+};
+
+window.resetAccountDayScheduleAction = async function(accountName, day) {
+  try {
+    const res = await apiFetch('/api/allocation/schedule/day-reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account: accountName, day })
+    });
+    if (res && res.success) {
+      showToast('✓ تمت استعادة الوضع الافتراضي', `تمت استعادة الجدول الافتراضي لحساب ${accountName} في يوم ${getArabicDayName(day)}`);
+      await loadAccountConfigView();
+    }
+  } catch (err) {
+    showToast('✕ خطأ', err.message);
+  }
+};
+
+function filterAccountSchedulesTable(query) {
+  const q = String(query || '').trim().toLowerCase();
+  const rows = document.querySelectorAll('#accountSchedulesTable tbody tr[data-acc]');
+  rows.forEach(r => {
+    const acc = r.getAttribute('data-acc') || '';
+    r.style.display = acc.includes(q) ? '' : 'none';
+  });
+}
+
 function renderAccountConfigUI() {
   const container = document.getElementById('accountConfigContainer');
   if (!container) return;
 
   const empMap = new Map(allEmployeesMaster.map(e => [e.id, e.name]));
   const activeRulesCount = allAccountRules.filter(r => r.active).length;
+  const isDaySpecific = accountConfigSelectedDay !== 'all';
+  const cairoTodayDay = getClientCairoDayOfWeek();
 
   let html = `
     <!-- Top Explanatory Banner -->
     <div style="background:linear-gradient(135deg, #1E3A8A, #1D4ED8);color:#fff;border-radius:14px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:16px;box-shadow:var(--shadow)">
-      <div style="font-size:32px">⚡</div>
+      <div style="font-size:32px">📑</div>
       <div style="flex:1">
-        <b style="font-size:15px;display:block;margin-bottom:3px">Account-Specific Eligibility Rules & Date Exceptions</b>
+        <b style="font-size:15px;display:block;margin-bottom:3px">Management: Account Settings & Operating Rules</b>
         <p style="font-size:12px;opacity:0.9;margin:0;line-height:1.5">
-          Configure which agents are permitted or blocked for each specific account. 
-          <b>Deterministic Rule Hierarchy:</b> Active Master &rarr; Daily Working Team &rarr; Team Membership (New/Pending) &rarr; Date Exceptions &rarr; Account Config &rarr; <b>Blocked Always Wins</b>.
+          المركز الإداري الشامل لإعدادات الحسابات: جداول مواعيد التوزيع الأسبوعية لكل حالة (NEW / PENDING)، قواعد الوكلاء المسموحين والمحظورين، والاستثناءات المؤرخة.
+          الحفظ تلقائي لحظياً في قاعدة البيانات.
         </p>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -5195,10 +5319,159 @@ function renderAccountConfigUI() {
 
     <!-- KPI Summary Cards -->
     <div class="kpis" style="margin-bottom:20px">
-      ${kpiCard('⚡', allAccountRules.length, 'Account Rules', `${activeRulesCount} active rules configured`, NAVY)}
+      ${kpiCard('⏰', allAccountSchedulesList.length, 'Configured Accounts', `Operating schedules monitored`, NAVY)}
+      ${kpiCard('⚡', allAccountRules.length, 'Account Rules', `${activeRulesCount} active rules configured`, BLUE)}
       ${kpiCard('🚫', allAccountRules.reduce((s, r) => s + (r.blocked || []).length, 0), 'Blocked Restrictions', 'Explicit agent blocks enforced', RED)}
       ${kpiCard('📅', allAccountExceptions.length, 'Date Exceptions', 'Temporary overrides active', AMBER)}
-      ${kpiCard('👥', allEmployeesMaster.filter(e => e.active).length, 'Master Employees', 'Active agents in system', GREEN)}
+    </div>
+
+    <!-- SECTION 0: WEEKLY ALLOCATION SCHEDULE (LOCKED REQUIREMENT) -->
+    <div class="panel" style="margin-bottom:24px;border-top:3px solid #2563EB">
+      <div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <div>
+          <h3 style="color:#1E3A8A">⏰ Weekly Allocation Schedule — جداول السماح بالتوزيع الأسبوعية</h3>
+          <p>تحكم مستقل لكل حساب وحالة (NEW / PENDING) ويوم في الأسبوع. الخانات الفارغة = ALL_DAY (طوال اليوم). الحفظ تلقائي لحظياً.</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:6px">
+            <label style="font-size:12.5px;font-weight:700;color:var(--navy)">📅 اليوم المختص:</label>
+            <select id="accSchedDaySelect" class="filter" style="padding:6px 12px;border-radius:8px;border:1.5px solid #2563EB;font-weight:700;color:var(--navy);background:#F8FAFC" onchange="changeAccountScheduleDayView(this.value)">
+              <option value="all" ${accountConfigSelectedDay === 'all' ? 'selected' : ''}>🌐 All Days (Default) / جميع الأيام (الافتراضي العام)</option>
+              <option value="sunday" ${accountConfigSelectedDay === 'sunday' ? 'selected' : ''}>الأحد / Sunday ${cairoTodayDay === 'sunday' ? '🌟 (TODAY)' : ''}</option>
+              <option value="monday" ${accountConfigSelectedDay === 'monday' ? 'selected' : ''}>الإثنين / Monday ${cairoTodayDay === 'monday' ? '🌟 (TODAY)' : ''}</option>
+              <option value="tuesday" ${accountConfigSelectedDay === 'tuesday' ? 'selected' : ''}>الثلاثاء / Tuesday ${cairoTodayDay === 'tuesday' ? '🌟 (TODAY)' : ''}</option>
+              <option value="wednesday" ${accountConfigSelectedDay === 'wednesday' ? 'selected' : ''}>الأربعاء / Wednesday ${cairoTodayDay === 'wednesday' ? '🌟 (TODAY)' : ''}</option>
+              <option value="thursday" ${accountConfigSelectedDay === 'thursday' ? 'selected' : ''}>الخميس / Thursday ${cairoTodayDay === 'thursday' ? '🌟 (TODAY)' : ''}</option>
+              <option value="friday" ${accountConfigSelectedDay === 'friday' ? 'selected' : ''}>🕌 الجمعة / Friday ${cairoTodayDay === 'friday' ? '🌟 (TODAY)' : ''}</option>
+              <option value="saturday" ${accountConfigSelectedDay === 'saturday' ? 'selected' : ''}>السبت / Saturday ${cairoTodayDay === 'saturday' ? '🌟 (TODAY)' : ''}</option>
+            </select>
+          </div>
+          <button class="btn sm" onclick="changeAccountScheduleDayView('${cairoTodayDay}')" style="background:${accountConfigSelectedDay === cairoTodayDay ? '#DCFCE7' : '#EFF6FF'};color:${accountConfigSelectedDay === cairoTodayDay ? '#15803D' : '#1D4ED8'};border:1.5px solid ${accountConfigSelectedDay === cairoTodayDay ? '#86EFAC' : '#BFDBFE'};font-weight:700" title="الانتقال لليوم الحالي">
+            ⚡ اليوم الحالي: ${getArabicDayName(cairoTodayDay)} ${accountConfigSelectedDay === cairoTodayDay ? '✓' : ''}
+          </button>
+          <div class="search" style="max-width:220px">
+            <span class="si">🔍</span>
+            <input type="text" placeholder="بحث بالحساب..." oninput="filterAccountSchedulesTable(this.value)">
+          </div>
+        </div>
+      </div>
+
+      <div style="background:${accountConfigSelectedDay === cairoTodayDay ? '#F0FDF4' : '#EFF6FF'};border:1.5px solid ${accountConfigSelectedDay === cairoTodayDay ? '#86EFAC' : '#BFDBFE'};border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:${accountConfigSelectedDay === cairoTodayDay ? '#166534' : '#1E40AF'}">
+        <span>📅 <b>النظام يطبق التوقيت الرسمي Africa/Cairo:</b> ${accountConfigSelectedDay === 'all' ? 'يتم تطبيق هذا الجدول كافتراضي لجميع الأيام ما لم يتم تخصيص يوم محدد.' : `يتم تخصيص مواعيد يوم ${getArabicDayName(accountConfigSelectedDay)} (${accountConfigSelectedDay.toUpperCase()}) حصرياً. التعديل يحفظ تلقائياً.`}</span>
+      </div>
+
+      <div class="tbl-scroll" style="max-height:420px;overflow-y:auto">
+        <table id="accountSchedulesTable">
+          <thead>
+            <tr>
+              <th style="width:40px">#</th>
+              <th>Account</th>
+              <th>NEW Start</th>
+              <th>NEW End</th>
+              <th>NEW Status</th>
+              <th>PENDING Start</th>
+              <th>PENDING End</th>
+              <th>PENDING Status</th>
+              ${isDaySpecific ? '<th style="text-align:center">Day Action</th>' : ''}
+              <th style="text-align:center;width:90px">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${allAccountSchedulesList.length === 0 ? `
+              <tr><td colspan="${isDaySpecific ? 10 : 9}" style="text-align:center;padding:32px;color:var(--mut)">لا توجد حسابات مسجلة في قاعدة البيانات.</td></tr>
+            ` : allAccountSchedulesList.map((acc, idx) => {
+              const dayOverrides = (acc.day_schedules && acc.day_schedules[accountConfigSelectedDay]) || null;
+              const hasDayOverride = !!dayOverrides;
+
+              let ns = '';
+              let ne = '';
+              let ps = '';
+              let pe = '';
+
+              if (!isDaySpecific) {
+                ns = acc.new_start_time || '';
+                ne = acc.new_end_time || '';
+                ps = acc.pending_start_time || '';
+                pe = acc.pending_end_time || '';
+              } else {
+                if (hasDayOverride) {
+                  ns = dayOverrides.new_start_time !== undefined && dayOverrides.new_start_time !== null ? dayOverrides.new_start_time : '';
+                  ne = dayOverrides.new_end_time !== undefined && dayOverrides.new_end_time !== null ? dayOverrides.new_end_time : '';
+                  ps = dayOverrides.pending_start_time !== undefined && dayOverrides.pending_start_time !== null ? dayOverrides.pending_start_time : '';
+                  pe = dayOverrides.pending_end_time !== undefined && dayOverrides.pending_end_time !== null ? dayOverrides.pending_end_time : '';
+                }
+              }
+
+              const effNs = hasDayOverride ? ns : (acc.new_start_time || '');
+              const effNe = hasDayOverride ? ne : (acc.new_end_time || '');
+              const effPs = hasDayOverride ? ps : (acc.pending_start_time || '');
+              const effPe = hasDayOverride ? pe : (acc.pending_end_time || '');
+
+              const newStatus = (!effNs && !effNe) ? 'ALL_DAY' : (isTimeWindowOpen(effNs, effNe) ? 'OPEN' : 'CLOSED');
+              const pendStatus = (!effPs && !effPe) ? 'ALL_DAY' : (isTimeWindowOpen(effPs, effPe) ? 'OPEN' : 'CLOSED');
+
+              const newBadgeBg = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
+              const newBadgeCol = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
+              const pendBadgeBg = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
+              const pendBadgeCol = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
+
+              const safeAccId = 'mgmtAccRow_' + idx;
+              const inputBg = hasDayOverride ? '#F0F9FF' : '#fff';
+              const inputBorder = hasDayOverride ? '1.5px solid #2563EB' : '1px solid var(--line)';
+
+              return `
+                <tr id="${safeAccId}" data-acc="${escapeHtml(acc.account.toLowerCase())}">
+                  <td><span class="rk">${idx + 1}</span></td>
+                  <td>
+                    <b style="font-size:13px;color:var(--navy)">${escapeHtml(acc.account)}</b>
+                    <span id="${safeAccId}_dayTag" style="display:${isDaySpecific ? 'inline' : 'none'}">
+                      <span class="tag sm" style="font-size:10px;margin-left:4px;background:${hasDayOverride ? '#DBEAFE' : '#F1F5F9'};color:${hasDayOverride ? '#1D4ED8' : '#64748B'}">
+                        ${hasDayOverride ? `✓ ${accountConfigSelectedDay}` : 'Default'}
+                      </span>
+                    </span>
+                  </td>
+                  <td>
+                    <input type="text" id="${safeAccId}_ns" placeholder="${acc.new_start_time ? `Def: ${acc.new_start_time}` : 'HH:MM'}" value="${escapeHtml(ns)}" 
+                           style="width:75px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
+                           onchange="autoSaveAccountScheduleField('${escapeHtml(acc.account)}', 'new_start_time', this.value, '${accountConfigSelectedDay}', '${safeAccId}')">
+                  </td>
+                  <td>
+                    <input type="text" id="${safeAccId}_ne" placeholder="${acc.new_end_time ? `Def: ${acc.new_end_time}` : 'HH:MM'}" value="${escapeHtml(ne)}" 
+                           style="width:75px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
+                           onchange="autoSaveAccountScheduleField('${escapeHtml(acc.account)}', 'new_end_time', this.value, '${accountConfigSelectedDay}', '${safeAccId}')">
+                  </td>
+                  <td>
+                    <span id="${safeAccId}_newBadge" class="tag sm" style="background:${newBadgeBg};color:${newBadgeCol};font-weight:700">${newStatus}</span>
+                  </td>
+                  <td>
+                    <input type="text" id="${safeAccId}_ps" placeholder="${acc.pending_start_time ? `Def: ${acc.pending_start_time}` : 'HH:MM'}" value="${escapeHtml(ps)}" 
+                           style="width:75px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
+                           onchange="autoSaveAccountScheduleField('${escapeHtml(acc.account)}', 'pending_start_time', this.value, '${accountConfigSelectedDay}', '${safeAccId}')">
+                  </td>
+                  <td>
+                    <input type="text" id="${safeAccId}_pe" placeholder="${acc.pending_end_time ? `Def: ${acc.pending_end_time}` : 'HH:MM'}" value="${escapeHtml(pe)}" 
+                           style="width:75px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
+                           onchange="autoSaveAccountScheduleField('${escapeHtml(acc.account)}', 'pending_end_time', this.value, '${accountConfigSelectedDay}', '${safeAccId}')">
+                  </td>
+                  <td>
+                    <span id="${safeAccId}_pendBadge" class="tag sm" style="background:${pendBadgeBg};color:${pendBadgeCol};font-weight:700">${pendStatus}</span>
+                  </td>
+                  ${isDaySpecific ? `
+                    <td id="${safeAccId}_actionCell" style="text-align:center">
+                      ${hasDayOverride ? `
+                        <button class="btn sm" onclick="resetAccountDayScheduleAction('${escapeHtml(acc.account)}', '${accountConfigSelectedDay}')" title="Reset this account on ${accountConfigSelectedDay} to default" style="background:#FEF2F2;color:#991B1B;border-color:#FECACA;font-size:11px;padding:2px 6px">↺ Reset</button>
+                      ` : `
+                        <span style="font-size:11px;color:var(--mut)">—</span>
+                      `}
+                    </td>
+                  ` : ''}
+                  <td id="${safeAccId}_saveStatus" style="text-align:center;font-size:11px"></td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Section 1: Permanent Account Rules -->
@@ -5784,6 +6057,9 @@ function renderVendoorIntegrationUI() {
       <button class="subnav-tab ${currentVendoorSubTab === 'sync' ? 'active' : ''}" onclick="setVendoorSubTab('sync')">
         <span>⚡</span> Data Sync & Ingestion
       </button>
+      <button class="subnav-tab ${currentVendoorSubTab === 'excel-import' ? 'active' : ''}" onclick="setVendoorSubTab('excel-import')">
+        <span>📑</span> Excel Import & Seeding
+      </button>
       <button class="subnav-tab ${currentVendoorSubTab === 'dispatcher' ? 'active' : ''}" onclick="setVendoorSubTab('dispatcher')">
         <span>🚀</span> Auto Dispatcher & Smart Refill
       </button>
@@ -5809,6 +6085,8 @@ function renderVendoorIntegrationUI() {
     html += renderVendoorConnectionTab(st);
   } else if (currentVendoorSubTab === 'sync') {
     html += renderVendoorSyncTab();
+  } else if (currentVendoorSubTab === 'excel-import') {
+    html += renderExcelImportTab();
   } else if (currentVendoorSubTab === 'dispatcher') {
     html += '<div id="vendoorDispatcherSubtabContainer"><div style="text-align:center;padding:40px;color:var(--mut)">Loading Auto Dispatcher...</div></div>';
   } else if (currentVendoorSubTab === 'identity') {
@@ -6308,9 +6586,205 @@ function renderVendoorSyncTab() {
   `;
 }
 
-function renderVendoorIdentityTab(queueItems) {
-  const unmatched = queueItems.filter(q => q.status === 'UNMATCHED' || q.status === 'NEEDS_REVIEW');
-  const mapped = queueItems.filter(q => q.status === 'EXPLICIT_MAPPING' || q.status === 'EXACT_MATCH' || q.status === 'NORMALIZED');
+function renderExcelImportTab() {
+  return `
+    <div class="grid g2" style="margin-bottom:20px">
+      <!-- 1. Specific Orders Import Box -->
+      <div class="panel" style="border-top:3px solid var(--blue)">
+        <div class="hd">
+          <div>
+            <h3>📦 استيراد وتحديث الأوردرات والمنتجات (Specific Orders & Products)</h3>
+            <p>استيراد ملفات <code>SpcificOrders*.xlsx</code> لاستخراج أسماء المنتجات الحقيقية، أكواد التجار، والمخازن</p>
+          </div>
+          <span class="tag" style="background:#EFF6FF;color:var(--blue);font-weight:700">Orders & Products</span>
+        </div>
+        <div style="margin-bottom:14px">
+          <label style="display:block;font-size:12px;font-weight:700;color:var(--slate);margin-bottom:6px">اختر ملف الأوردرات (Excel .xlsx)</label>
+          <input type="file" id="excelSpecificOrdersFileInput" accept=".xlsx,.xls" class="inp" style="width:100%;box-sizing:border-box;padding:8px">
+        </div>
+        <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
+          يتم استيراد المنتجات وأكواد التجار والمخازن وربطها بالأوردرات الموجودة دون التأثير على التوزيع أو موظفي CS.
+        </p>
+        <div style="display:flex;justify-content:flex-end">
+          <button type="button" class="btn primary sm" id="btnUploadSpecificOrders" onclick="submitExcelProductsImport()">
+            ⚡ رفع واستيراد الأوردرات
+          </button>
+        </div>
+        <div id="excelProductsImportResult" style="margin-top:12px;display:none"></div>
+      </div>
+
+      <!-- 2. Historical Logs Import Box -->
+      <div class="panel" style="border-top:3px solid var(--green)">
+        <div class="hd">
+          <div>
+            <h3>📋 استيراد سجلات النشاط التاريخية (Historical Activity Logs)</h3>
+            <p>استيراد ملفات <code>HISTORICAL_LOGS*.xlsx</code> لحفظ حركات التعديل والطباعة والإلغاء في <code>raw_log_records</code></p>
+          </div>
+          <span class="tag" style="background:#DCFCE7;color:var(--green);font-weight:700">Audit Logs</span>
+        </div>
+        <div style="margin-bottom:14px">
+          <label style="display:block;font-size:12px;font-weight:700;color:var(--slate);margin-bottom:6px">اختر ملف اللوجز (Excel .xlsx)</label>
+          <input type="file" id="excelHistoricalLogsFileInput" accept=".xlsx,.xls" class="inp" style="width:100%;box-sizing:border-box;padding:8px">
+        </div>
+        <p style="font-size:12px;color:var(--slate);margin-bottom:14px;line-height:1.5">
+          يتم استيراد سجلات الأحداث وتصنيف الحركات وحساب مؤشرات أداء الموظفين دون تكرار (Idempotent).
+        </p>
+        <div style="display:flex;justify-content:flex-end">
+          <button type="button" class="btn success sm" id="btnUploadHistoricalLogs" onclick="submitExcelLogsImport()">
+            ✓ رفع واستيراد سجلات اللوج
+          </button>
+        </div>
+        <div id="excelLogsImportResult" style="margin-top:12px;display:none"></div>
+      </div>
+    </div>
+
+    <!-- 3. Auto-Scan Local Files Panel -->
+    <div class="panel" style="margin-bottom:20px;border-top:3px solid #7C3AED;background:#FAF5FF">
+      <div class="hd">
+        <div>
+          <h3 style="color:#5B21B6">⚡ المسح والاستيراد التلقائي للملفات المتاحة في المشروع (Auto-Scan Local Files)</h3>
+          <p style="color:#6D28D9">فحص ملفات <code>SpcificOrders (1) (2).xlsx</code> و <code>HISTORICAL_LOGS_1.xlsx</code> المتوفرة واستيرادها بأمان</p>
+        </div>
+        <button type="button" class="btn sm" id="btnRunExcelAutoScan" onclick="runExcelAutoScanAction()" style="background:#7C3AED;color:#fff;font-weight:700;padding:6px 14px">
+          🚀 تشغيل Auto-Scan الآن
+        </button>
+      </div>
+      <div id="excelAutoScanResultContainer" style="margin-top:12px"></div>
+    </div>
+  `;
+}
+
+window.submitExcelProductsImport = async function() {
+  const fileInput = document.getElementById('excelSpecificOrdersFileInput');
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    showToast('⚠️ تنبيه', 'يرجى اختيار ملف Excel أولاً');
+    return;
+  }
+  const file = fileInput.files[0];
+  const btn = document.getElementById('btnUploadSpecificOrders');
+  const resDiv = document.getElementById('excelProductsImportResult');
+  if (btn) { btn.disabled = true; btn.textContent = 'جاري الرفع...'; }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await fetch('/api/integrations/excel/import-products', {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+    if (data && data.success) {
+      const s = data.summary;
+      showToast('✓ نجاح الاستيراد', `تم استيراد ${s.products_inserted} منتج لـ ${s.unique_orders} أوردر بنجاح.`);
+      if (resDiv) {
+        resDiv.style.display = 'block';
+        resDiv.innerHTML = `
+          <div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:12px;font-size:12px;color:#15803D">
+            <b>✓ اكتمل استيراد ملف: ${escapeHtml(s.filename)}</b>
+            <div style="margin-top:4px">إجمالي الصفوف: <b>${s.total_rows}</b> | أوردرات فريدة: <b>${s.unique_orders}</b> | منتجات أضيفت: <b>${s.products_inserted}</b></div>
+            <div style="margin-top:2px">أكواد تجار: <b>${s.merchant_codes_count}</b> (${escapeHtml((s.merchant_codes||[]).join(', '))})</div>
+            <div style="margin-top:2px">مخازن مكتشفة: <b>${s.warehouses_count}</b> (${escapeHtml((s.warehouses||[]).join(', '))})</div>
+            ${s.unlinked_rows > 0 ? `<div style="margin-top:2px;color:#D97706">صفوف بدون معرف أوردر: <b>${s.unlinked_rows}</b></div>` : ''}
+          </div>
+        `;
+      }
+    } else {
+      throw new Error(data?.error || 'Failed to import products');
+    }
+  } catch (err) {
+    showToast('✕ خطأ في الاستيراد', err.message);
+    if (resDiv) {
+      resDiv.style.display = 'block';
+      resDiv.innerHTML = `<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:12px;font-size:12px;color:#DC2626">خطأ: ${escapeHtml(err.message)}</div>`;
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ رفع واستيراد الأوردرات'; }
+  }
+};
+
+window.submitExcelLogsImport = async function() {
+  const fileInput = document.getElementById('excelHistoricalLogsFileInput');
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    showToast('⚠️ تنبيه', 'يرجى اختيار ملف اللوجز أولاً');
+    return;
+  }
+  const file = fileInput.files[0];
+  const btn = document.getElementById('btnUploadHistoricalLogs');
+  const resDiv = document.getElementById('excelLogsImportResult');
+  if (btn) { btn.disabled = true; btn.textContent = 'جاري الرفع...'; }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await fetch('/api/integrations/excel/import-logs', {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+    if (data && data.success) {
+      const s = data.summary;
+      showToast('✓ نجاح استيراد اللوجز', `تم استيراد ${s.logs_inserted} سجل لـ ${s.unique_orders} أوردر.`);
+      if (resDiv) {
+        resDiv.style.display = 'block';
+        resDiv.innerHTML = `
+          <div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:12px;font-size:12px;color:#15803D">
+            <b>✓ اكتمل استيراد اللوج: ${escapeHtml(s.filename)}</b>
+            <div style="margin-top:4px">إجمالي الصفوف: <b>${s.total_rows}</b> | أوردرات فريدة: <b>${s.unique_orders}</b> | سجلات تم إدراجها: <b>${s.logs_inserted}</b></div>
+          </div>
+        `;
+      }
+    } else {
+      throw new Error(data?.error || 'Failed to import logs');
+    }
+  } catch (err) {
+    showToast('✕ خطأ في الاستيراد', err.message);
+    if (resDiv) {
+      resDiv.style.display = 'block';
+      resDiv.innerHTML = `<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:12px;font-size:12px;color:#DC2626">خطأ: ${escapeHtml(err.message)}</div>`;
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✓ رفع واستيراد سجلات اللوج'; }
+  }
+};
+
+window.runExcelAutoScanAction = async function() {
+  const btn = document.getElementById('btnRunExcelAutoScan');
+  const resDiv = document.getElementById('excelAutoScanResultContainer');
+  if (btn) { btn.disabled = true; btn.textContent = 'جاري الفحص...'; }
+
+  try {
+    const res = await apiFetch('/api/integrations/excel/auto-seed', { method: 'POST' });
+    if (res && res.success) {
+      const r = res.results || {};
+      showToast('✓ اكتمل المسح التلقائي', 'تم فحص ملفات Excel المتوفرة في المشروع وتحديث الجداول.');
+      if (resDiv) {
+        resDiv.innerHTML = `
+          <div style="background:#FFF;border:1px solid #DDD6FE;border-radius:8px;padding:14px;font-size:12.5px;color:#5B21B6">
+            <b>نتيجة المسح التلقائي للملفات المحلية:</b>
+            <div style="margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div style="background:#FAF5FF;padding:10px;border-radius:6px">
+                <b>Specific Orders:</b> ${r.products ? `${r.products.filename} (صفوف: ${r.products.total_rows}, أوردرات: ${r.products.unique_orders}, تجار: ${r.products.merchant_codes_count})` : 'لم يتم العثور على ملف أوردرات جديد'}
+              </div>
+              <div style="background:#FAF5FF;padding:10px;border-radius:6px">
+                <b>Historical Logs:</b> ${r.logs ? `${r.logs.filename} (صفوف: ${r.logs.total_rows}, أوردرات: ${r.logs.unique_orders})` : 'لم يتم العثور على ملف لوجز جديد'}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+    }
+  } catch (err) {
+    showToast('✕ خطأ في الفحص', err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🚀 تشغيل Auto-Scan الآن'; }
+  }
+};
+
+function renderVendoorIdentityTab(queueItems = []) {
+  const unmatched = (queueItems || []).filter(q => q.status === 'UNMATCHED' || q.status === 'NEEDS_REVIEW');
+  const mapped = (queueItems || []).filter(q => q.status === 'EXPLICIT_MAPPING' || q.status === 'EXACT_MATCH' || q.status === 'NORMALIZED');
 
   return `
     <div class="panel" style="margin-bottom:20px;padding:16px 20px">
@@ -8828,14 +9302,20 @@ async function loadCurrentOrdersView() {
                 phoneBadgeHtml = '<span class="ds-badge ds-badge-danger" title="نُفذ إجراء بدون رقم ثانٍ">بدون ثانٍ ⚠</span>';
               }
 
+              const oq = o.overall_quality || {
+                status: (alerts.length > 0) ? 'QUALITY_ISSUES_FOUND' : 'QUALITY_UNKNOWN',
+                issues: alerts
+              };
+
               let alertsHtml = '';
-              if (!aq.is_valid && isActioned) {
-                alertsHtml += `<span class="ds-badge ds-badge-danger" title="${aq.reason}" style="margin-right:4px">عنوان ⚠</span>`;
-              }
-              if (dq.needs_attention) {
-                alertsHtml += `<span class="ds-badge ds-badge-warning" title="${dq.alert}" style="margin-right:4px">تسليم ${dq.rate}% ⚠</span>`;
-              }
-              if (!alertsHtml && alerts.length === 0) {
+              if (oq.status === 'QUALITY_ISSUES_FOUND') {
+                const issueTitles = (oq.issues || alerts).map(i => escapeHtml(i.title || i.type)).join(' + ');
+                alertsHtml = `<span class="ds-badge ds-badge-danger" title="${escapeHtml((oq.issues || alerts).map(i => i.title + ': ' + i.reason).join(' | '))}">مشاكل جودة (${(oq.issues || alerts).length}) ⚠</span>`;
+              } else if (oq.status === 'QUALITY_PENDING') {
+                alertsHtml = '<span class="ds-badge ds-badge-warning" title="في انتظار حسم الإجراء ومراجعة الجودة">في الانتظار ⏳</span>';
+              } else if (oq.status === 'QUALITY_UNKNOWN') {
+                alertsHtml = '<span class="ds-badge ds-badge-neutral" title="بيانات غير كافية للحكم">غير محدد ❓</span>';
+              } else if (oq.status === 'QUALITY_CLEAR') {
                 alertsHtml = '<span style="color:var(--ds-success);font-size:11.5px">✓ سليم</span>';
               }
 
@@ -13112,22 +13592,57 @@ window.openOrderDrawer = async function(orderCode) {
       }
     }
 
-    // Attention Banner (The Locked Exceptions)
-    const alerts = o.operational_alerts || [];
+    // Attention Banner (Unified Operational Quality Summary)
+    const oq = o.overall_quality || {
+      status: (o.operational_alerts && o.operational_alerts.length > 0) ? 'QUALITY_ISSUES_FOUND' : 'QUALITY_UNKNOWN',
+      issues: o.operational_alerts || [],
+      action_confirmed: Boolean(o.is_actioned)
+    };
     const banner = document.getElementById('odAttentionBanner');
-    if (alerts.length > 0) {
+
+    if (oq.status === 'QUALITY_ISSUES_FOUND') {
+      const issues = oq.issues || o.operational_alerts || [];
+      const actionBadge = oq.action_confirmed
+        ? '<span class="ds-badge ds-badge-info" style="font-size:11px">Action Confirmed = Yes</span>'
+        : '<span class="ds-badge ds-badge-warning" style="font-size:11px">Action Confirmed = No (لم يتأكد الإجراء بعد)</span>';
+
       banner.innerHTML = `
         <div style="background:#FEF2F2;border:1.5px solid #FECACA;border-radius:10px;padding:12px 14px;margin-bottom:12px">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-            <span style="font-size:16px">🚨</span>
-            <b style="font-size:13px;color:#991B1B">تنبيهات استثنائية مطلوب مراجعتها (${alerts.length})</b>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:16px">🚨</span>
+              <b style="font-size:13px;color:#991B1B">تنبيهات جودة الطلب والاستثناءات (${issues.length})</b>
+            </div>
+            <div>${actionBadge}</div>
           </div>
-          ${alerts.map(a => `
-            <div style="font-size:12px;color:#B91C1C;margin-top:4px;display:flex;align-items:center;gap:6px">
-              <span>⚠</span>
-              <b>${a.title}:</b> <span>${a.reason}</span>
+          ${issues.map(a => `
+            <div style="font-size:12px;color:#B91C1C;margin-top:4px;display:flex;align-items:flex-start;gap:6px">
+              <span style="margin-top:1px">⚠</span>
+              <div><b>${escapeHtml(a.title)}:</b> <span>${escapeHtml(a.reason)}</span></div>
             </div>
           `).join('')}
+          ${!oq.action_confirmed ? `
+            <div style="font-size:11.5px;color:#7F1D1D;margin-top:8px;padding-top:6px;border-top:1px dashed #FECACA">
+              ℹ <b>ملاحظة تشغيلية:</b> توجد مشاكل جودة مؤكدة موضحة أعلاه، والإجراء لم يُحسم بعد (Action Confirmed = No). لا يُعتمد الطلب كسليم ولا يُحتسب كإجراء مكتمل.
+            </div>
+          ` : ''}
+        </div>
+      `;
+    } else if (oq.status === 'QUALITY_PENDING') {
+      banner.innerHTML = `
+        <div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:10px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;color:#92400E;font-size:12px;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span>⏳</span>
+            <b>في انتظار حسم الإجراء ومراجعة الجودة (توجد فحوص لم تُحسم بعد).</b>
+          </div>
+          <span class="ds-badge ds-badge-warning" style="font-size:11px">Action Confirmed = No</span>
+        </div>
+      `;
+    } else if (oq.status === 'QUALITY_UNKNOWN') {
+      banner.innerHTML = `
+        <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:8px;color:#475569;font-size:12px;margin-bottom:12px">
+          <span>❓</span>
+          <b>البيانات غير كافية للحكم على معايير الجودة (UNKNOWN).</b>
         </div>
       `;
     } else {
@@ -13155,7 +13670,7 @@ window.openOrderDrawer = async function(orderCode) {
       phoneBadge.className = 'ds-badge ds-badge-danger';
     }
     if (document.getElementById('odActionConfirmed')) {
-      document.getElementById('odActionConfirmed').textContent = o.is_actioned ? 'نعم (تم الإجراء)' : 'لا (في الانتظار)';
+      document.getElementById('odActionConfirmed').textContent = o.is_actioned ? 'نعم (Action Confirmed = Yes)' : 'لا (Action Confirmed = No)';
       document.getElementById('odActionConfirmed').className = o.is_actioned ? 'ds-badge ds-badge-info' : 'ds-badge ds-badge-neutral';
     }
     if (document.getElementById('odDistinctPhone')) {
@@ -13175,8 +13690,8 @@ window.openOrderDrawer = async function(orderCode) {
       addrBadge.textContent = 'عنوان صالح ومكتمل ✓';
       addrBadge.className = 'ds-badge ds-badge-success';
     } else {
-      addrBadge.textContent = aq.code === 'WEAK_WORD_COUNT' ? 'عنوان ضعيف ⚠' : 'عنوان غير صالح ⚠';
-      addrBadge.className = 'ds-badge ds-badge-danger';
+      addrBadge.textContent = (aq.result === 'ADDRESS_WEAK' || aq.code === 'WEAK_WORD_COUNT') ? 'عنوان ضعيف ⚠' : 'عنوان غير صالح ⚠';
+      addrBadge.className = 'ds-badge ds-badge-warning';
     }
     document.getElementById('odAddressReason').textContent = aq.reason || '-';
 

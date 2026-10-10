@@ -93,19 +93,19 @@ export function importProductsFromExcel(buffer, filename = 'orders.xlsx') {
       const rawMerchantName = cleanStr(r['اسم التاجر'] || r['Merchant Name'] || r.merchant_name);
       const merchantName = rawMerchantName && rawMerchantName !== '-' ? rawMerchantName : null;
 
-      // Extract Warehouse from product name e.g. (مخزن 77)
-      const warehouse = extractWarehouse(productName);
+      // Extract Warehouse from product name e.g. (مخزن 77) or row columns
+      const warehouse = extractWarehouse(productName, r);
       if (warehouse) warehousesFound.add(warehouse);
       if (merchantCode) merchantCodesFound.add(merchantCode);
 
       const qty = parseInt(r['الكمية'] || r['Quantity'] || 1, 10) || 1;
       const price = parseFloat(r['السعر'] || r['Total'] || r['Net'] || 0) || 0;
 
-      if (productName) {
+      if (productName || productSku) {
         const res = insertProductStmt.run(
           activeCode,
           orderId || null,
-          productName,
+          productName || '',
           productSku || null,
           merchantCode,
           merchantName,
@@ -119,8 +119,8 @@ export function importProductsFromExcel(buffer, filename = 'orders.xlsx') {
 
         // Update corresponding order in current_work_orders and vendoor_orders without changing status or CS
         try {
-          updateWorkOrderStmt.run(merchantCode, merchantName, productName, warehouse, activeCode);
-          updateVendoorOrderStmt.run(merchantCode, merchantName, productName, warehouse, activeCode);
+          updateWorkOrderStmt.run(merchantCode, merchantName, productName || null, warehouse, activeCode);
+          updateVendoorOrderStmt.run(merchantCode, merchantName, productName || null, warehouse, activeCode);
         } catch (_) {}
       }
     }
@@ -211,52 +211,68 @@ export function importHistoricalLogsFromExcel(buffer, filename = 'logs.xlsx') {
  * Scans workspace root and public directories for available sample and export Excel files
  * and seeds product and log tables safely.
  */
-export function autoScanAndSeedAvailableExcelFiles() {
+export function autoScanAndSeedAvailableExcelFiles(options = {}) {
   const root = process.cwd();
   const results = {
     products: null,
     logs: null
   };
 
-  // 1. Check for specific orders export files
-  const candidatesOrders = [
-    'SpcificOrders (1) (2).xlsx',
-    'SpcificOrders (1).xlsx',
-    'SpcificOrders.xlsx',
-    'test_real_vendoor_export.xlsx'
-  ];
+  const force = options?.force === true;
+  let existingOrdersCount = 0;
+  let existingLogsCount = 0;
+  try {
+    existingOrdersCount = db.prepare('SELECT COUNT(*) as c FROM specific_orders_uploads').get()?.c || 0;
+    existingLogsCount = db.prepare('SELECT COUNT(*) as c FROM raw_log_records').get()?.c || 0;
+  } catch (_) {}
 
-  for (const c of candidatesOrders) {
-    const p = path.join(root, c);
-    if (fs.existsSync(p)) {
-      try {
-        const buf = fs.readFileSync(p);
-        results.products = importProductsFromExcel(buf, c);
-        break;
-      } catch (e) {
-        console.warn(`Could not parse ${c}:`, e.message);
+  // 1. Check for specific orders export files
+  if (force || existingOrdersCount === 0) {
+    const candidatesOrders = [
+      'SpcificOrders (1) (2).xlsx',
+      'SpcificOrders (1).xlsx',
+      'SpcificOrders.xlsx',
+      'test_real_vendoor_export.xlsx'
+    ];
+
+    for (const c of candidatesOrders) {
+      const p = path.join(root, c);
+      if (fs.existsSync(p)) {
+        try {
+          const buf = fs.readFileSync(p);
+          results.products = importProductsFromExcel(buf, c);
+          break;
+        } catch (e) {
+          console.warn(`Could not parse ${c}:`, e.message);
+        }
       }
     }
+  } else {
+    results.products = { skipped: true, count: existingOrdersCount, message: 'Existing orders already present in database' };
   }
 
   // 2. Check for historical logs files
-  const candidatesLogs = [
-    'HISTORICAL_LOGS_1.xlsx',
-    'HISTORICAL_LOGS.xlsx',
-    'sample_log.xlsx'
-  ];
+  if (force || existingLogsCount === 0) {
+    const candidatesLogs = [
+      'HISTORICAL_LOGS_1.xlsx',
+      'HISTORICAL_LOGS.xlsx',
+      'sample_log.xlsx'
+    ];
 
-  for (const c of candidatesLogs) {
-    const p = path.join(root, c);
-    if (fs.existsSync(p)) {
-      try {
-        const buf = fs.readFileSync(p);
-        results.logs = importHistoricalLogsFromExcel(buf, c);
-        break;
-      } catch (e) {
-        console.warn(`Could not parse ${c}:`, e.message);
+    for (const c of candidatesLogs) {
+      const p = path.join(root, c);
+      if (fs.existsSync(p)) {
+        try {
+          const buf = fs.readFileSync(p);
+          results.logs = importHistoricalLogsFromExcel(buf, c);
+          break;
+        } catch (e) {
+          console.warn(`Could not parse ${c}:`, e.message);
+        }
       }
     }
+  } else {
+    results.logs = { skipped: true, count: existingLogsCount, message: 'Existing logs already present in database' };
   }
 
   return results;
