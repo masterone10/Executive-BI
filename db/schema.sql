@@ -735,6 +735,8 @@ CREATE TABLE IF NOT EXISTS account_schedules (
   new_end_time TEXT,
   pending_start_time TEXT,
   pending_end_time TEXT,
+  new_enabled INTEGER DEFAULT 1,
+  pending_enabled INTEGER DEFAULT 1,
   day_schedules_json TEXT, -- JSON mapping of day-specific schedule overrides: { "friday": { "new_start_time": "", ... }, ... }
   config_version INTEGER DEFAULT 1,
   updated_at TEXT DEFAULT (datetime('now')),

@@ -2,6 +2,8 @@ import { db } from '../db/index.js';
 import { formatDateKey, isCSName, isCsEmployee, normalizeEmployeeName, matchEmployeeInMaster, parseDate, KNOWN_STATUSES, STATUS_RE, ALT_RE, ADDED_RE } from './parser.js';
 import { extractCanonicalStatus } from './vendoor/actions.js';
 
+import { getCairoBusinessDate } from './time_utils.js';
+
 export { isCsEmployee };
 
 export function getSystemWeights() {
@@ -1043,5 +1045,174 @@ export function calculateSmartAllocationScore(employeeId, profile, currentWorklo
     perf_component: Math.round(perfNorm * 10) / 10,
     cap_component: Math.round(capNorm * 10) / 10,
     fair_component: Math.round(fairNorm * 10) / 10
+  };
+}
+
+/**
+ * Returns the exact deduplicated records that built a given employee's metric for a work date.
+ * Record count strictly matches the canonical count shown on the profile card.
+ */
+export function getEmployeeMetricDrilldown(workDate, employeeName, metric = 'ALL') {
+  const targetDate = workDate || getCairoBusinessDate();
+  const rawRows = db.prepare(`
+    SELECT employee_name, action, status, order_code, event_datetime, is_cs, work_date
+    FROM raw_log_records
+    WHERE work_date = ?
+    ORDER BY event_datetime ASC
+  `).all(targetDate);
+
+  if (rawRows.length === 0) {
+    return {
+      success: true,
+      work_date: targetDate,
+      employee_name: employeeName,
+      metric,
+      total_count: 0,
+      records: []
+    };
+  }
+
+  // Uniform record normalization
+  const normalizedRecords = rawRows.map(r => {
+    const rawName = r.employee_name || '';
+    const orderCode = r.order_code || '';
+    const actionText = r.action || '';
+    let statusText = r.status || null;
+
+    let dt = null;
+    if (r.event_datetime) {
+      dt = parseDate(r.event_datetime);
+    }
+
+    const isNote = /ملاحظ/i.test(actionText) || /note/i.test(actionText);
+    const isAddressEdit = /عدل.*العنوان|تعديل.*العنوان/i.test(actionText);
+    const isClientEdit = /عدل.*اسم.*العميل|تعديل.*اسم.*العميل/i.test(actionText);
+    const isAlt = !isNote && !isAddressEdit && !isClientEdit && ALT_RE.test(actionText);
+    const isAdded = !isNote && !isAddressEdit && !isClientEdit && ADDED_RE.test(actionText);
+
+    if (isNote || isAddressEdit || isClientEdit) {
+      statusText = null;
+    } else if (r.status && KNOWN_STATUSES.has(r.status === 'Canceled' ? 'Cancelled' : r.status)) {
+      statusText = r.status === 'Canceled' ? 'Cancelled' : r.status;
+    } else if (!isAlt && !isAdded) {
+      const m = STATUS_RE.exec(actionText);
+      if (m) {
+        const candidate = m[1].trim() === 'Canceled' ? 'Cancelled' : m[1].trim();
+        statusText = KNOWN_STATUSES.has(candidate) ? candidate : null;
+      } else {
+        const canonical = extractCanonicalStatus(actionText, r.status);
+        statusText = KNOWN_STATUSES.has(canonical) ? canonical : null;
+      }
+    }
+
+    return {
+      name: rawName,
+      order: orderCode,
+      act: actionText,
+      st: statusText,
+      dt,
+      event_datetime: r.event_datetime,
+      isCS: isCsEmployee(rawName),
+      alt: isAlt,
+      added: isAdded
+    };
+  });
+
+  const empDisplayNames = new Map();
+  function getCanonicalEmpName(rawName) {
+    if (!rawName) return '';
+    const norm = normalizeEmployeeName(rawName);
+    if (empDisplayNames.has(norm)) return empDisplayNames.get(norm);
+    const match = matchEmployeeInMaster(rawName);
+    const displayName = match ? match.name : String(rawName).trim();
+    empDisplayNames.set(norm, displayName);
+    return displayName;
+  }
+
+  const targetNorm = normalizeEmployeeName(employeeName);
+  const statusGroups = new Map();
+  const altGroups = new Map();
+
+  for (const r of normalizedRecords) {
+    const canonicalName = getCanonicalEmpName(r.name);
+    const isCS = r.isCS;
+    if (!isCS) continue;
+
+    if (r.alt) {
+      const key = `${r.order}|${canonicalName}`;
+      if (!altGroups.has(key)) altGroups.set(key, []);
+      altGroups.get(key).push({ dt: r.dt || 0, r, canonicalName });
+    }
+
+    if (r.st) {
+      const key = `${r.order}|${canonicalName}|${r.st}`;
+      if (!statusGroups.has(key)) statusGroups.set(key, []);
+      statusGroups.get(key).push({ dt: r.dt || 0, r, canonicalName });
+    }
+  }
+
+  // Deduplicate CS Status Events (120s sliding window)
+  const dedupedCSActions = [];
+  for (const [, items] of statusGroups.entries()) {
+    items.sort((a, b) => a.dt - b.dt);
+    let lastTs = -Infinity;
+    for (const item of items) {
+      if (item.dt - lastTs > 120000) {
+        dedupedCSActions.push({ ...item.r, canonicalName: item.canonicalName });
+        lastTs = item.dt;
+      }
+    }
+  }
+
+  // Deduplicate Alt Phones (120s sliding window)
+  const dedupedAltPhones = [];
+  for (const [, items] of altGroups.entries()) {
+    items.sort((a, b) => a.dt - b.dt);
+    let lastTs = -Infinity;
+    for (const item of items) {
+      if (item.dt - lastTs > 120000) {
+        dedupedAltPhones.push({ ...item.r, canonicalName: item.canonicalName });
+        lastTs = item.dt;
+      }
+    }
+  }
+
+  const normMetric = String(metric || 'ALL').trim().toUpperCase();
+  let matched = [];
+
+  if (normMetric === 'ALT' || normMetric === 'ALT_PHONE') {
+    matched = dedupedAltPhones.filter(r => normalizeEmployeeName(r.canonicalName) === targetNorm || normalizeEmployeeName(r.name) === targetNorm);
+  } else {
+    const empActions = dedupedCSActions.filter(r => normalizeEmployeeName(r.canonicalName) === targetNorm || normalizeEmployeeName(r.name) === targetNorm);
+    if (normMetric === 'PRINTED') {
+      matched = empActions.filter(r => r.st === 'Printed');
+    } else if (normMetric === 'PENDING') {
+      matched = empActions.filter(r => r.st === 'Pending');
+    } else if (normMetric === 'CANCEL' || normMetric === 'CANCELLED') {
+      matched = empActions.filter(r => r.st === 'Cancelled');
+    } else if (normMetric === 'PROCESSING') {
+      matched = empActions.filter(r => r.st === 'Processing');
+    } else {
+      // ACTIONS or ALL
+      matched = empActions;
+    }
+  }
+
+  // Sort descending by event_datetime
+  matched.sort((a, b) => (b.dt || 0) - (a.dt || 0));
+
+  return {
+    success: true,
+    work_date: targetDate,
+    employee_name: employeeName,
+    metric: normMetric,
+    total_count: matched.length,
+    records: matched.map(m => ({
+      order_code: m.order,
+      status: m.st || (m.alt ? 'Alt Phone' : 'Action'),
+      action: m.act,
+      event_datetime: m.event_datetime,
+      work_date: targetDate
+    }))
   };
 }

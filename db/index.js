@@ -82,6 +82,20 @@ export function runMigrations(database = db) {
 
   // Safe table migration: Ensure employee_lifecycle_audit and order_review_queue exist
   try {
+    const accCols = database.prepare("PRAGMA table_info(account_schedules)").all();
+    if (accCols.length > 0) {
+      if (!accCols.some(c => c.name === 'new_enabled')) {
+        database.exec("ALTER TABLE account_schedules ADD COLUMN new_enabled INTEGER DEFAULT 1");
+      }
+      if (!accCols.some(c => c.name === 'pending_enabled')) {
+        database.exec("ALTER TABLE account_schedules ADD COLUMN pending_enabled INTEGER DEFAULT 1");
+      }
+    }
+  } catch (e) {
+    console.warn('Migration check for account_schedules enabled columns:', e.message);
+  }
+
+  try {
     database.exec(`
       CREATE TABLE IF NOT EXISTS employee_lifecycle_audit (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

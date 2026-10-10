@@ -42,6 +42,7 @@ export const ALLOCATION_ERROR_CODES = {
   ACCOUNT_STATUS_OUTSIDE_TIME_WINDOW: 'ACCOUNT_STATUS_OUTSIDE_TIME_WINDOW',
   ACCOUNT_STATUS_NOT_YET_OPEN: 'ACCOUNT_STATUS_NOT_YET_OPEN',
   ACCOUNT_STATUS_CLOSED: 'ACCOUNT_STATUS_CLOSED',
+  ACCOUNT_SCHEDULE_CLOSED: 'ACCOUNT_SCHEDULE_CLOSED',
   ORDER_INVALID: 'ORDER_INVALID',
   DAILY_PENDING_STATE_BLOCKS_NEW: 'DAILY_PENDING_STATE_BLOCKS_NEW',
   RESCUE_CONDITION_NOT_MET: 'RESCUE_CONDITION_NOT_MET',
@@ -178,6 +179,8 @@ export function getEnterpriseAllocationConfig(workDate = null) {
       new_end_time: newEnd,
       pending_start_time: pendStart,
       pending_end_time: pendEnd,
+      new_enabled: existing?.new_enabled !== undefined ? Boolean(existing.new_enabled) : true,
+      pending_enabled: existing?.pending_enabled !== undefined ? Boolean(existing.pending_enabled) : true,
       day_schedules: daySchedules,
       is_new_all_day: !newStart && !newEnd,
       is_pending_all_day: !pendStart && !pendEnd
@@ -716,6 +719,9 @@ export function saveAccountDaySchedule({
   new_end_time = null,
   pending_start_time = null,
   pending_end_time = null,
+  new_enabled = null,
+  pending_enabled = null,
+  enabled = null,
   operator = 'Supervisor'
 }) {
   const cleanAcc = String(account || '').trim();
@@ -737,6 +743,13 @@ export function saveAccountDaySchedule({
   let finalNewEnd = new_end_time !== null && new_end_time !== undefined ? (String(new_end_time).trim() || null) : null;
   let finalPendStart = pending_start_time !== null && pending_start_time !== undefined ? (String(pending_start_time).trim() || null) : null;
   let finalPendEnd = pending_end_time !== null && pending_end_time !== undefined ? (String(pending_end_time).trim() || null) : null;
+  let finalNewEnabled = new_enabled !== null && new_enabled !== undefined ? Boolean(new_enabled) : null;
+  let finalPendEnabled = pending_enabled !== null && pending_enabled !== undefined ? Boolean(pending_enabled) : null;
+
+  if (enabled !== null && enabled !== undefined) {
+    if (normStatus.includes('PENDING')) finalPendEnabled = Boolean(enabled);
+    else finalNewEnabled = Boolean(enabled);
+  }
 
   if (start !== null && start !== undefined) {
     const cleanStart = String(start).trim() || null;
@@ -771,20 +784,26 @@ export function saveAccountDaySchedule({
     const ps = finalPendStart !== null ? finalPendStart : (existing ? existing.pending_start_time : null);
     const pe = finalPendEnd !== null ? finalPendEnd : (existing ? existing.pending_end_time : null);
 
+    const nEn = finalNewEnabled !== null ? (finalNewEnabled ? 1 : 0) : (existing?.new_enabled !== undefined ? existing.new_enabled : 1);
+    const pEn = finalPendEnabled !== null ? (finalPendEnabled ? 1 : 0) : (existing?.pending_enabled !== undefined ? existing.pending_enabled : 1);
+
     db.prepare(`
       INSERT INTO account_schedules (
         account, new_start_time, new_end_time, pending_start_time, pending_end_time,
+        new_enabled, pending_enabled,
         day_schedules_json, config_version, updated_at, updated_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
       ON CONFLICT(account) DO UPDATE SET
         new_start_time = excluded.new_start_time,
         new_end_time = excluded.new_end_time,
         pending_start_time = excluded.pending_start_time,
         pending_end_time = excluded.pending_end_time,
+        new_enabled = excluded.new_enabled,
+        pending_enabled = excluded.pending_enabled,
         config_version = excluded.config_version,
         updated_at = datetime('now'),
         updated_by = excluded.updated_by
-    `).run(targetAccountName, ns, ne, ps, pe, existing?.day_schedules_json || null, newVersion, operator);
+    `).run(targetAccountName, ns, ne, ps, pe, nEn, pEn, existing?.day_schedules_json || null, newVersion, operator);
   } else {
     // Updating Specific Day Schedule
     const currentDayEntry = daySchedules[normDay] || {};
@@ -792,7 +811,9 @@ export function saveAccountDaySchedule({
       new_start_time: finalNewStart !== null ? finalNewStart : (currentDayEntry.new_start_time || ''),
       new_end_time: finalNewEnd !== null ? finalNewEnd : (currentDayEntry.new_end_time || ''),
       pending_start_time: finalPendStart !== null ? finalPendStart : (currentDayEntry.pending_start_time || ''),
-      pending_end_time: finalPendEnd !== null ? finalPendEnd : (currentDayEntry.pending_end_time || '')
+      pending_end_time: finalPendEnd !== null ? finalPendEnd : (currentDayEntry.pending_end_time || ''),
+      new_enabled: finalNewEnabled !== null ? finalNewEnabled : (currentDayEntry.new_enabled !== undefined ? currentDayEntry.new_enabled : true),
+      pending_enabled: finalPendEnabled !== null ? finalPendEnabled : (currentDayEntry.pending_enabled !== undefined ? currentDayEntry.pending_enabled : true)
     };
 
     daySchedules[normDay] = updatedDayEntry;
@@ -822,6 +843,7 @@ export function saveAccountDaySchedule({
     day: normDay,
     status: normStatus,
     version: newVersion,
+    saved_at: new Date().toISOString(),
     day_schedules: daySchedules
   };
 }
@@ -917,6 +939,25 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
     const specificDaySched = dayName && daySchedules ? daySchedules[dayName] : null;
     if (specificDaySched && typeof specificDaySched === 'object') {
       dayOverrideApplied = true;
+      const isEnabled = isPending
+        ? (specificDaySched.pending_enabled !== false && specificDaySched.enabled !== false)
+        : (specificDaySched.new_enabled !== false && specificDaySched.enabled !== false);
+
+      if (!isEnabled) {
+        return {
+          account,
+          work_type: isPending ? 'PENDING' : 'NEW',
+          status: 'CLOSED',
+          is_open: false,
+          start_time: null,
+          end_time: null,
+          current_time: nowTime,
+          day_override: dayName,
+          reason_code: ALLOCATION_ERROR_CODES.ACCOUNT_SCHEDULE_CLOSED || 'ACCOUNT_SCHEDULE_CLOSED',
+          time_priority_rank: 99
+        };
+      }
+
       if (isPending) {
         start = specificDaySched.pending_start_time !== undefined && specificDaySched.pending_start_time !== null ? (String(specificDaySched.pending_start_time).trim() || null) : null;
         end = specificDaySched.pending_end_time !== undefined && specificDaySched.pending_end_time !== null ? (String(specificDaySched.pending_end_time).trim() || null) : null;
@@ -925,6 +966,25 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
         end = specificDaySched.new_end_time !== undefined && specificDaySched.new_end_time !== null ? (String(specificDaySched.new_end_time).trim() || null) : null;
       }
     } else {
+      const isDefaultEnabled = isPending
+        ? (sched.pending_enabled !== false && sched.enabled !== false)
+        : (sched.new_enabled !== false && sched.enabled !== false);
+
+      if (!isDefaultEnabled) {
+        return {
+          account,
+          work_type: isPending ? 'PENDING' : 'NEW',
+          status: 'CLOSED',
+          is_open: false,
+          start_time: null,
+          end_time: null,
+          current_time: nowTime,
+          day_override: null,
+          reason_code: ALLOCATION_ERROR_CODES.ACCOUNT_SCHEDULE_CLOSED || 'ACCOUNT_SCHEDULE_CLOSED',
+          time_priority_rank: 99
+        };
+      }
+
       if (isPending) {
         start = sched.pending_start_time ? (sched.pending_start_time.trim() || null) : null;
         end = sched.pending_end_time ? (sched.pending_end_time.trim() || null) : null;
@@ -961,7 +1021,7 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
       end_time: end,
       current_time: nowTime,
       day_override: dayOverrideApplied ? dayName : null,
-      reason_code: ALLOCATION_ERROR_CODES.ACCOUNT_STATUS_NOT_YET_OPEN,
+      reason_code: ALLOCATION_ERROR_CODES.ACCOUNT_STATUS_NOT_YET_OPEN || 'ACCOUNT_STATUS_NOT_YET_OPEN',
       time_priority_rank: 99
     };
   }
@@ -976,7 +1036,7 @@ export function evaluateAccountTimeStatus(account, workType, currentTimeStr = nu
       end_time: end,
       current_time: nowTime,
       day_override: dayOverrideApplied ? dayName : null,
-      reason_code: ALLOCATION_ERROR_CODES.ACCOUNT_STATUS_CLOSED,
+      reason_code: ALLOCATION_ERROR_CODES.ACCOUNT_STATUS_CLOSED || 'ACCOUNT_STATUS_CLOSED',
       time_priority_rank: 99
     };
   }

@@ -4131,18 +4131,31 @@ function updateAccountScheduleRowLive(acc, day, rowId) {
   let ne = '';
   let ps = '';
   let pe = '';
+  let newEnabled = true;
+  let pendEnabled = true;
 
   if (!isDaySpecific) {
     ns = acc.new_start_time || '';
     ne = acc.new_end_time || '';
     ps = acc.pending_start_time || '';
     pe = acc.pending_end_time || '';
+    newEnabled = acc.new_enabled !== false;
+    pendEnabled = acc.pending_enabled !== false;
   } else {
     if (hasDayOverride) {
       ns = dayOverrides.new_start_time !== undefined && dayOverrides.new_start_time !== null ? dayOverrides.new_start_time : '';
       ne = dayOverrides.new_end_time !== undefined && dayOverrides.new_end_time !== null ? dayOverrides.new_end_time : '';
       ps = dayOverrides.pending_start_time !== undefined && dayOverrides.pending_start_time !== null ? dayOverrides.pending_start_time : '';
       pe = dayOverrides.pending_end_time !== undefined && dayOverrides.pending_end_time !== null ? dayOverrides.pending_end_time : '';
+      newEnabled = dayOverrides.new_enabled !== undefined ? Boolean(dayOverrides.new_enabled) : (acc.new_enabled !== false);
+      pendEnabled = dayOverrides.pending_enabled !== undefined ? Boolean(dayOverrides.pending_enabled) : (acc.pending_enabled !== false);
+    } else {
+      ns = '';
+      ne = '';
+      ps = '';
+      pe = '';
+      newEnabled = acc.new_enabled !== false;
+      pendEnabled = acc.pending_enabled !== false;
     }
   }
 
@@ -4151,22 +4164,37 @@ function updateAccountScheduleRowLive(acc, day, rowId) {
   const effPs = hasDayOverride ? ps : (acc.pending_start_time || '');
   const effPe = hasDayOverride ? pe : (acc.pending_end_time || '');
 
-  const newStatus = (!effNs && !effNe) ? 'ALL_DAY' : (isTimeWindowOpen(effNs, effNe) ? 'OPEN' : 'CLOSED');
-  const pendStatus = (!effPs && !effPe) ? 'ALL_DAY' : (isTimeWindowOpen(effPs, effPe) ? 'OPEN' : 'CLOSED');
+  const newStatus = !newEnabled ? 'DISABLED' : ((!effNs && !effNe) ? 'ALL_DAY' : (isTimeWindowOpen(effNs, effNe) ? 'OPEN' : 'CLOSED'));
+  const pendStatus = !pendEnabled ? 'DISABLED' : ((!effPs && !effPe) ? 'ALL_DAY' : (isTimeWindowOpen(effPs, effPe) ? 'OPEN' : 'CLOSED'));
 
   const newBadge = document.getElementById(`${rowId}_newBadge`);
   if (newBadge) {
     newBadge.textContent = newStatus;
-    newBadge.style.background = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
-    newBadge.style.color = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
+    if (newStatus === 'DISABLED') {
+      newBadge.style.background = '#F1F5F9';
+      newBadge.style.color = '#64748B';
+    } else {
+      newBadge.style.background = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
+      newBadge.style.color = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
+    }
   }
 
   const pendBadge = document.getElementById(`${rowId}_pendBadge`);
   if (pendBadge) {
     pendBadge.textContent = pendStatus;
-    pendBadge.style.background = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
-    pendBadge.style.color = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
+    if (pendStatus === 'DISABLED') {
+      pendBadge.style.background = '#F1F5F9';
+      pendBadge.style.color = '#64748B';
+    } else {
+      pendBadge.style.background = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
+      pendBadge.style.color = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
+    }
   }
+
+  const newEnCb = document.getElementById(`${rowId}_newEn`);
+  if (newEnCb) newEnCb.checked = newEnabled;
+  const pendEnCb = document.getElementById(`${rowId}_pendEn`);
+  if (pendEnCb) pendEnCb.checked = pendEnabled;
 
   const dayTag = document.getElementById(`${rowId}_dayTag`);
   if (dayTag && isDaySpecific) {
@@ -5216,10 +5244,17 @@ function changeAccountScheduleDayView(day) {
 }
 
 window.autoSaveAccountScheduleField = async function(accountName, field, val, day, rowId) {
-  const cleanVal = (val || '').trim();
-  if (cleanVal && !/^([01]\d|2[0-3]):[0-5]\d$/.test(cleanVal)) {
-    showToast('⚠️ تنسيق خاطئ', 'الوقت يجب أن يكون بصيغة HH:MM (مثال 18:00) أو اتركه فارغاً للعمل طوال اليوم');
-    return;
+  let cleanVal;
+  if (typeof val === 'boolean') {
+    cleanVal = val;
+  } else if (field.endsWith('_enabled')) {
+    cleanVal = Boolean(val);
+  } else {
+    cleanVal = (val || '').trim();
+    if (cleanVal && !/^([01]\d|2[0-3]):[0-5]\d$/.test(cleanVal)) {
+      showToast('⚠️ تنسيق خاطئ', 'الوقت يجب أن يكون بصيغة HH:MM (مثال 18:00) أو اتركه فارغاً للعمل طوال اليوم');
+      return;
+    }
   }
 
   const indicator = document.getElementById(`${rowId}_saveStatus`);
@@ -5254,6 +5289,9 @@ window.autoSaveAccountScheduleField = async function(accountName, field, val, da
           acc.day_schedules[day][field] = cleanVal;
         }
         updateAccountScheduleRowLive(acc, day, rowId);
+        if (typeof syncQuickScheduleFormValues === 'function') {
+          syncQuickScheduleFormValues();
+        }
       }
     } else {
       throw new Error(res?.error || 'Failed to save');
@@ -5262,6 +5300,146 @@ window.autoSaveAccountScheduleField = async function(accountName, field, val, da
     if (indicator) {
       indicator.innerHTML = `<span style="font-size:11px;color:#DC2626;font-weight:700">✕ خطأ</span>`;
     }
+    showToast('✕ خطأ في الحفظ', err.message);
+  }
+};
+
+window.syncQuickScheduleFormValues = function() {
+  const accSelect = document.getElementById('quickSchedAccount');
+  const statusSelect = document.getElementById('quickSchedStatus');
+  const daySelect = document.getElementById('quickSchedDay');
+  if (!accSelect || !statusSelect || !daySelect) return;
+
+  const account = accSelect.value;
+  const status = statusSelect.value;
+  const day = daySelect.value;
+
+  const acc = (allAccountSchedulesList || []).find(a => a.account.toLowerCase() === account.toLowerCase());
+  if (!acc) return;
+
+  const isDaySpecific = day && day !== 'all';
+  const daySched = isDaySpecific && acc.day_schedules ? acc.day_schedules[day] : null;
+
+  let start = '';
+  let end = '';
+  let enabled = true;
+
+  if (status === 'NEW') {
+    if (daySched) {
+      start = daySched.new_start_time !== undefined && daySched.new_start_time !== null ? daySched.new_start_time : (acc.new_start_time || '');
+      end = daySched.new_end_time !== undefined && daySched.new_end_time !== null ? daySched.new_end_time : (acc.new_end_time || '');
+      enabled = daySched.new_enabled !== undefined ? Boolean(daySched.new_enabled) : (acc.new_enabled !== false);
+    } else {
+      start = acc.new_start_time || '';
+      end = acc.new_end_time || '';
+      enabled = acc.new_enabled !== false;
+    }
+  } else {
+    if (daySched) {
+      start = daySched.pending_start_time !== undefined && daySched.pending_start_time !== null ? daySched.pending_start_time : (acc.pending_start_time || '');
+      end = daySched.pending_end_time !== undefined && daySched.pending_end_time !== null ? daySched.pending_end_time : (acc.pending_end_time || '');
+      enabled = daySched.pending_enabled !== undefined ? Boolean(daySched.pending_enabled) : (acc.pending_enabled !== false);
+    } else {
+      start = acc.pending_start_time || '';
+      end = acc.pending_end_time || '';
+      enabled = acc.pending_enabled !== false;
+    }
+  }
+
+  const startInp = document.getElementById('quickSchedStart');
+  const endInp = document.getElementById('quickSchedEnd');
+  const enInp = document.getElementById('quickSchedEnabled');
+  if (startInp) startInp.value = start || '';
+  if (endInp) endInp.value = end || '';
+  if (enInp) enInp.checked = enabled;
+};
+
+window.submitQuickScheduleConfig = async function() {
+  const accSelect = document.getElementById('quickSchedAccount');
+  const statusSelect = document.getElementById('quickSchedStatus');
+  const daySelect = document.getElementById('quickSchedDay');
+  const startInp = document.getElementById('quickSchedStart');
+  const endInp = document.getElementById('quickSchedEnd');
+  const enInp = document.getElementById('quickSchedEnabled');
+  const fb = document.getElementById('quickSchedFeedback');
+
+  if (!accSelect || !statusSelect || !daySelect) return;
+
+  const account = accSelect.value;
+  const status = statusSelect.value;
+  const day = daySelect.value;
+  const start = (startInp?.value || '').trim();
+  const end = (endInp?.value || '').trim();
+  const enabled = Boolean(enInp?.checked);
+
+  if (start && !/^([01]\d|2[0-3]):[0-5]\d$/.test(start)) {
+    showToast('⚠️ تنسيق خاطئ', 'وقت البداية يجب أن يكون بصيغة HH:MM (مثال 18:00) أو اتركه فارغاً');
+    return;
+  }
+  if (end && !/^([01]\d|2[0-3]):[0-5]\d$/.test(end)) {
+    showToast('⚠️ تنسيق خاطئ', 'وقت النهاية يجب أن يكون بصيغة HH:MM (مثال 23:00) أو اتركه فارغاً');
+    return;
+  }
+
+  if (fb) fb.innerHTML = '<span style="color:#2563EB">⏳ جاري الحفظ والتأكيد من الخادم...</span>';
+
+  try {
+    const payload = {
+      account,
+      status,
+      day,
+      start,
+      end,
+      enabled,
+      [status === 'NEW' ? 'new_start_time' : 'pending_start_time']: start,
+      [status === 'NEW' ? 'new_end_time' : 'pending_end_time']: end,
+      [status === 'NEW' ? 'new_enabled' : 'pending_enabled']: enabled
+    };
+
+    const res = await apiFetch('/api/allocation/schedule/day-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (res && res.success) {
+      if (fb) fb.innerHTML = `<span style="color:#16A34A">✓ تم حفظ جدول ${escapeHtml(account)} (${status} - ${getArabicDayName(day)}) بنجاح!</span>`;
+      showToast('✓ تم الحفظ بنجاح', `تم تحديث جدول الحساب ${account} وحفظه في قاعدة البيانات.`);
+      setTimeout(() => { if (fb) fb.innerHTML = ''; }, 4000);
+
+      // Update in memory
+      let acc = allAccountSchedulesList.find(a => a.account.toLowerCase() === account.toLowerCase());
+      if (acc) {
+        if (!acc.day_schedules) acc.day_schedules = {};
+        if (day === 'all') {
+          if (status === 'NEW') {
+            acc.new_start_time = start;
+            acc.new_end_time = end;
+            acc.new_enabled = enabled;
+          } else {
+            acc.pending_start_time = start;
+            acc.pending_end_time = end;
+            acc.pending_enabled = enabled;
+          }
+        } else {
+          if (!acc.day_schedules[day]) acc.day_schedules[day] = {};
+          if (status === 'NEW') {
+            acc.day_schedules[day].new_start_time = start;
+            acc.day_schedules[day].new_end_time = end;
+            acc.day_schedules[day].new_enabled = enabled;
+          } else {
+            acc.day_schedules[day].pending_start_time = start;
+            acc.day_schedules[day].pending_end_time = end;
+            acc.day_schedules[day].pending_enabled = enabled;
+          }
+        }
+        renderAccountConfigUI();
+      }
+    } else {
+      throw new Error(res?.error || 'Failed to save');
+    }
+  } catch (err) {
+    if (fb) fb.innerHTML = `<span style="color:#DC2626">✕ خطأ: ${escapeHtml(err.message)}</span>`;
     showToast('✕ خطأ في الحفظ', err.message);
   }
 };
@@ -5336,14 +5514,14 @@ function renderAccountConfigUI() {
           <div style="display:flex;align-items:center;gap:6px">
             <label style="font-size:12.5px;font-weight:700;color:var(--navy)">📅 اليوم المختص:</label>
             <select id="accSchedDaySelect" class="filter" style="padding:6px 12px;border-radius:8px;border:1.5px solid #2563EB;font-weight:700;color:var(--navy);background:#F8FAFC" onchange="changeAccountScheduleDayView(this.value)">
+              <option value="saturday" ${accountConfigSelectedDay === 'saturday' ? 'selected' : ''}>السبت / Saturday ${cairoTodayDay === 'saturday' ? '🌟 (اليوم)' : ''}</option>
+              <option value="sunday" ${accountConfigSelectedDay === 'sunday' ? 'selected' : ''}>الأحد / Sunday ${cairoTodayDay === 'sunday' ? '🌟 (اليوم)' : ''}</option>
+              <option value="monday" ${accountConfigSelectedDay === 'monday' ? 'selected' : ''}>الاثنين / Monday ${cairoTodayDay === 'monday' ? '🌟 (اليوم)' : ''}</option>
+              <option value="tuesday" ${accountConfigSelectedDay === 'tuesday' ? 'selected' : ''}>الثلاثاء / Tuesday ${cairoTodayDay === 'tuesday' ? '🌟 (اليوم)' : ''}</option>
+              <option value="wednesday" ${accountConfigSelectedDay === 'wednesday' ? 'selected' : ''}>الأربعاء / Wednesday ${cairoTodayDay === 'wednesday' ? '🌟 (اليوم)' : ''}</option>
+              <option value="thursday" ${accountConfigSelectedDay === 'thursday' ? 'selected' : ''}>الخميس / Thursday ${cairoTodayDay === 'thursday' ? '🌟 (اليوم)' : ''}</option>
+              <option value="friday" ${accountConfigSelectedDay === 'friday' ? 'selected' : ''}>الجمعة / Friday ${cairoTodayDay === 'friday' ? '🌟 (اليوم)' : ''}</option>
               <option value="all" ${accountConfigSelectedDay === 'all' ? 'selected' : ''}>🌐 All Days (Default) / جميع الأيام (الافتراضي العام)</option>
-              <option value="sunday" ${accountConfigSelectedDay === 'sunday' ? 'selected' : ''}>الأحد / Sunday ${cairoTodayDay === 'sunday' ? '🌟 (TODAY)' : ''}</option>
-              <option value="monday" ${accountConfigSelectedDay === 'monday' ? 'selected' : ''}>الإثنين / Monday ${cairoTodayDay === 'monday' ? '🌟 (TODAY)' : ''}</option>
-              <option value="tuesday" ${accountConfigSelectedDay === 'tuesday' ? 'selected' : ''}>الثلاثاء / Tuesday ${cairoTodayDay === 'tuesday' ? '🌟 (TODAY)' : ''}</option>
-              <option value="wednesday" ${accountConfigSelectedDay === 'wednesday' ? 'selected' : ''}>الأربعاء / Wednesday ${cairoTodayDay === 'wednesday' ? '🌟 (TODAY)' : ''}</option>
-              <option value="thursday" ${accountConfigSelectedDay === 'thursday' ? 'selected' : ''}>الخميس / Thursday ${cairoTodayDay === 'thursday' ? '🌟 (TODAY)' : ''}</option>
-              <option value="friday" ${accountConfigSelectedDay === 'friday' ? 'selected' : ''}>🕌 الجمعة / Friday ${cairoTodayDay === 'friday' ? '🌟 (TODAY)' : ''}</option>
-              <option value="saturday" ${accountConfigSelectedDay === 'saturday' ? 'selected' : ''}>السبت / Saturday ${cairoTodayDay === 'saturday' ? '🌟 (TODAY)' : ''}</option>
             </select>
           </div>
           <button class="btn sm" onclick="changeAccountScheduleDayView('${cairoTodayDay}')" style="background:${accountConfigSelectedDay === cairoTodayDay ? '#DCFCE7' : '#EFF6FF'};color:${accountConfigSelectedDay === cairoTodayDay ? '#15803D' : '#1D4ED8'};border:1.5px solid ${accountConfigSelectedDay === cairoTodayDay ? '#86EFAC' : '#BFDBFE'};font-weight:700" title="الانتقال لليوم الحالي">
@@ -5356,6 +5534,61 @@ function renderAccountConfigUI() {
         </div>
       </div>
 
+      <!-- Quick Schedule Configurator -->
+      <div style="background:#F8FAFC;border:1.5px solid #CBD5E1;border-radius:10px;padding:14px 18px;margin-bottom:14px">
+        <div style="font-weight:700;color:var(--navy);margin-bottom:10px;font-size:13.5px;display:flex;align-items:center;gap:8px">
+          <span>⚙️ Quick Schedule Configurator / إعداد سريع لجدول الحساب:</span>
+          <span style="font-size:11px;font-weight:400;color:var(--mut)">(تحديد الحساب والحالة واليوم والمواعيد مع التفعيل التلقائي)</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)) 95px 95px 105px 140px;gap:10px;align-items:flex-end">
+          <div>
+            <label style="display:block;font-size:11.5px;font-weight:700;color:var(--slate);margin-bottom:4px">Account / الحساب</label>
+            <select id="quickSchedAccount" class="filter" style="width:100%;padding:6px 10px;border-radius:6px;background:#fff" onchange="syncQuickScheduleFormValues()">
+              ${allAccountSchedulesList.map(a => `<option value="${escapeHtml(a.account)}">${escapeHtml(a.account)}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11.5px;font-weight:700;color:var(--slate);margin-bottom:4px">Order Status / حالة الطلب</label>
+            <select id="quickSchedStatus" class="filter" style="width:100%;padding:6px 10px;border-radius:6px;background:#fff" onchange="syncQuickScheduleFormValues()">
+              <option value="NEW">NEW (الطلبات الجديدة)</option>
+              <option value="PENDING">PENDING (طلبات المعلقة)</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11.5px;font-weight:700;color:var(--slate);margin-bottom:4px">Day of Week / يوم الأسبوع</label>
+            <select id="quickSchedDay" class="filter" style="width:100%;padding:6px 10px;border-radius:6px;background:#fff" onchange="syncQuickScheduleFormValues()">
+              <option value="saturday">السبت / Saturday</option>
+              <option value="sunday">الأحد / Sunday</option>
+              <option value="monday">الاثنين / Monday</option>
+              <option value="tuesday">الثلاثاء / Tuesday</option>
+              <option value="wednesday">الأربعاء / Wednesday</option>
+              <option value="thursday">الخميس / Thursday</option>
+              <option value="friday">الجمعة / Friday</option>
+              <option value="all">جميع الأيام (الافتراضي العام)</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11.5px;font-weight:700;color:var(--slate);margin-bottom:4px">Start Time</label>
+            <input type="text" id="quickSchedStart" placeholder="HH:MM" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:12px;background:#fff">
+          </div>
+          <div>
+            <label style="display:block;font-size:11.5px;font-weight:700;color:var(--slate);margin-bottom:4px">End Time</label>
+            <input type="text" id="quickSchedEnd" placeholder="HH:MM" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:12px;background:#fff">
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center">
+            <label style="font-size:11.5px;font-weight:700;color:var(--slate);margin-bottom:4px">Enabled</label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px">
+              <input type="checkbox" id="quickSchedEnabled" checked style="width:16px;height:16px">
+              <span style="font-weight:600">مفعل</span>
+            </label>
+          </div>
+          <div>
+            <button class="btn primary sm" onclick="submitQuickScheduleConfig()" style="width:100%;padding:7px 12px;font-weight:700;font-size:12px">💾 حفظ وتطبيق</button>
+          </div>
+        </div>
+        <div id="quickSchedFeedback" style="margin-top:8px;font-size:11.5px;font-weight:700"></div>
+      </div>
+
       <div style="background:${accountConfigSelectedDay === cairoTodayDay ? '#F0FDF4' : '#EFF6FF'};border:1.5px solid ${accountConfigSelectedDay === cairoTodayDay ? '#86EFAC' : '#BFDBFE'};border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:${accountConfigSelectedDay === cairoTodayDay ? '#166534' : '#1E40AF'}">
         <span>📅 <b>النظام يطبق التوقيت الرسمي Africa/Cairo:</b> ${accountConfigSelectedDay === 'all' ? 'يتم تطبيق هذا الجدول كافتراضي لجميع الأيام ما لم يتم تخصيص يوم محدد.' : `يتم تخصيص مواعيد يوم ${getArabicDayName(accountConfigSelectedDay)} (${accountConfigSelectedDay.toUpperCase()}) حصرياً. التعديل يحفظ تلقائياً.`}</span>
       </div>
@@ -5364,11 +5597,13 @@ function renderAccountConfigUI() {
         <table id="accountSchedulesTable">
           <thead>
             <tr>
-              <th style="width:40px">#</th>
+              <th style="width:36px">#</th>
               <th>Account</th>
+              <th style="text-align:center;width:60px">NEW En</th>
               <th>NEW Start</th>
               <th>NEW End</th>
               <th>NEW Status</th>
+              <th style="text-align:center;width:60px">PEND En</th>
               <th>PENDING Start</th>
               <th>PENDING End</th>
               <th>PENDING Status</th>
@@ -5378,7 +5613,7 @@ function renderAccountConfigUI() {
           </thead>
           <tbody>
             ${allAccountSchedulesList.length === 0 ? `
-              <tr><td colspan="${isDaySpecific ? 10 : 9}" style="text-align:center;padding:32px;color:var(--mut)">لا توجد حسابات مسجلة في قاعدة البيانات.</td></tr>
+              <tr><td colspan="${isDaySpecific ? 12 : 11}" style="text-align:center;padding:32px;color:var(--mut)">لا توجد حسابات مسجلة في قاعدة البيانات.</td></tr>
             ` : allAccountSchedulesList.map((acc, idx) => {
               const dayOverrides = (acc.day_schedules && acc.day_schedules[accountConfigSelectedDay]) || null;
               const hasDayOverride = !!dayOverrides;
@@ -5387,18 +5622,31 @@ function renderAccountConfigUI() {
               let ne = '';
               let ps = '';
               let pe = '';
+              let newEnabled = true;
+              let pendEnabled = true;
 
               if (!isDaySpecific) {
                 ns = acc.new_start_time || '';
                 ne = acc.new_end_time || '';
                 ps = acc.pending_start_time || '';
                 pe = acc.pending_end_time || '';
+                newEnabled = acc.new_enabled !== false;
+                pendEnabled = acc.pending_enabled !== false;
               } else {
                 if (hasDayOverride) {
                   ns = dayOverrides.new_start_time !== undefined && dayOverrides.new_start_time !== null ? dayOverrides.new_start_time : '';
                   ne = dayOverrides.new_end_time !== undefined && dayOverrides.new_end_time !== null ? dayOverrides.new_end_time : '';
                   ps = dayOverrides.pending_start_time !== undefined && dayOverrides.pending_start_time !== null ? dayOverrides.pending_start_time : '';
                   pe = dayOverrides.pending_end_time !== undefined && dayOverrides.pending_end_time !== null ? dayOverrides.pending_end_time : '';
+                  newEnabled = dayOverrides.new_enabled !== undefined ? Boolean(dayOverrides.new_enabled) : (acc.new_enabled !== false);
+                  pendEnabled = dayOverrides.pending_enabled !== undefined ? Boolean(dayOverrides.pending_enabled) : (acc.pending_enabled !== false);
+                } else {
+                  ns = '';
+                  ne = '';
+                  ps = '';
+                  pe = '';
+                  newEnabled = acc.new_enabled !== false;
+                  pendEnabled = acc.pending_enabled !== false;
                 }
               }
 
@@ -5407,13 +5655,13 @@ function renderAccountConfigUI() {
               const effPs = hasDayOverride ? ps : (acc.pending_start_time || '');
               const effPe = hasDayOverride ? pe : (acc.pending_end_time || '');
 
-              const newStatus = (!effNs && !effNe) ? 'ALL_DAY' : (isTimeWindowOpen(effNs, effNe) ? 'OPEN' : 'CLOSED');
-              const pendStatus = (!effPs && !effPe) ? 'ALL_DAY' : (isTimeWindowOpen(effPs, effPe) ? 'OPEN' : 'CLOSED');
+              const newStatus = !newEnabled ? 'DISABLED' : ((!effNs && !effNe) ? 'ALL_DAY' : (isTimeWindowOpen(effNs, effNe) ? 'OPEN' : 'CLOSED'));
+              const pendStatus = !pendEnabled ? 'DISABLED' : ((!effPs && !effPe) ? 'ALL_DAY' : (isTimeWindowOpen(effPs, effPe) ? 'OPEN' : 'CLOSED'));
 
-              const newBadgeBg = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
-              const newBadgeCol = newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
-              const pendBadgeBg = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2';
-              const pendBadgeCol = pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#15803D' : '#991B1B';
+              const newBadgeBg = newStatus === 'DISABLED' ? '#F1F5F9' : (newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2');
+              const newBadgeCol = newStatus === 'DISABLED' ? '#64748B' : (newStatus === 'OPEN' || newStatus === 'ALL_DAY' ? '#15803D' : '#991B1B');
+              const pendBadgeBg = pendStatus === 'DISABLED' ? '#F1F5F9' : (pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#DCFCE7' : '#FEE2E2');
+              const pendBadgeCol = pendStatus === 'DISABLED' ? '#64748B' : (pendStatus === 'OPEN' || pendStatus === 'ALL_DAY' ? '#15803D' : '#991B1B');
 
               const safeAccId = 'mgmtAccRow_' + idx;
               const inputBg = hasDayOverride ? '#F0F9FF' : '#fff';
@@ -5430,27 +5678,37 @@ function renderAccountConfigUI() {
                       </span>
                     </span>
                   </td>
+                  <td style="text-align:center">
+                    <input type="checkbox" id="${safeAccId}_newEn" ${newEnabled ? 'checked' : ''} 
+                           onchange="autoSaveAccountScheduleField('${escapeHtml(acc.account)}', 'new_enabled', this.checked, '${accountConfigSelectedDay}', '${safeAccId}')"
+                           title="تفعيل / تعطيل NEW لهذا اليوم">
+                  </td>
                   <td>
                     <input type="text" id="${safeAccId}_ns" placeholder="${acc.new_start_time ? `Def: ${acc.new_start_time}` : 'HH:MM'}" value="${escapeHtml(ns)}" 
-                           style="width:75px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
+                           style="width:70px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
                            onchange="autoSaveAccountScheduleField('${escapeHtml(acc.account)}', 'new_start_time', this.value, '${accountConfigSelectedDay}', '${safeAccId}')">
                   </td>
                   <td>
                     <input type="text" id="${safeAccId}_ne" placeholder="${acc.new_end_time ? `Def: ${acc.new_end_time}` : 'HH:MM'}" value="${escapeHtml(ne)}" 
-                           style="width:75px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
+                           style="width:70px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
                            onchange="autoSaveAccountScheduleField('${escapeHtml(acc.account)}', 'new_end_time', this.value, '${accountConfigSelectedDay}', '${safeAccId}')">
                   </td>
                   <td>
                     <span id="${safeAccId}_newBadge" class="tag sm" style="background:${newBadgeBg};color:${newBadgeCol};font-weight:700">${newStatus}</span>
                   </td>
+                  <td style="text-align:center">
+                    <input type="checkbox" id="${safeAccId}_pendEn" ${pendEnabled ? 'checked' : ''} 
+                           onchange="autoSaveAccountScheduleField('${escapeHtml(acc.account)}', 'pending_enabled', this.checked, '${accountConfigSelectedDay}', '${safeAccId}')"
+                           title="تفعيل / تعطيل PENDING لهذا اليوم">
+                  </td>
                   <td>
                     <input type="text" id="${safeAccId}_ps" placeholder="${acc.pending_start_time ? `Def: ${acc.pending_start_time}` : 'HH:MM'}" value="${escapeHtml(ps)}" 
-                           style="width:75px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
+                           style="width:70px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
                            onchange="autoSaveAccountScheduleField('${escapeHtml(acc.account)}', 'pending_start_time', this.value, '${accountConfigSelectedDay}', '${safeAccId}')">
                   </td>
                   <td>
                     <input type="text" id="${safeAccId}_pe" placeholder="${acc.pending_end_time ? `Def: ${acc.pending_end_time}` : 'HH:MM'}" value="${escapeHtml(pe)}" 
-                           style="width:75px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
+                           style="width:70px;padding:4px 6px;border:${inputBorder};border-radius:6px;font-family:monospace;font-size:12px;background:${inputBg}"
                            onchange="autoSaveAccountScheduleField('${escapeHtml(acc.account)}', 'pending_end_time', this.value, '${accountConfigSelectedDay}', '${safeAccId}')">
                   </td>
                   <td>
@@ -5985,7 +6243,7 @@ async function loadVendoorIntegrationView() {
       apiFetch('/api/integrations/vendoor/sync/history').catch(e => ({ success: false, runs: [] })),
       apiFetch('/api/integrations/vendoor/identity/queue').catch(e => ({ success: false, items: [] })),
       apiFetch(`/api/integrations/vendoor/productivity?date=${currentWorkDate}`).catch(e => ({ success: false, profiles: [] })),
-      apiFetch('/api/employees').catch(() => [])
+      apiFetch('/api/employees?cs_only=true').catch(() => [])
     ]);
 
     vendoorStatusData = statusRes;
@@ -5993,7 +6251,15 @@ async function loadVendoorIntegrationView() {
     vendoorSyncHistoryData = Array.isArray(syncHistRes?.runs) ? syncHistRes.runs : [];
     vendoorIdentityQueueData = identRes || { items: [] };
     vendoorProductivityData = prodRes || { profiles: [] };
-    vendoorMasterEmployeesList = Array.isArray(empRes) ? empRes : (Array.isArray(allEmployeesMaster) ? allEmployeesMaster : []);
+    const rawEmps = Array.isArray(empRes) ? empRes : (empRes?.employees || allEmployeesMaster || []);
+    vendoorMasterEmployeesList = rawEmps.filter(e => {
+      if (!e) return false;
+      const dept = String(e.department || '').trim().toUpperCase();
+      const name = String(e.name || '').trim().toUpperCase();
+      if (dept === 'CS' || dept === 'CUSTOMER SERVICE' || dept.startsWith('CS ') || dept.endsWith(' CS')) return true;
+      if (name.endsWith(' CS') || name.startsWith('CS ') || name.includes(' CS ')) return true;
+      return false;
+    });
 
     renderVendoorIntegrationUI();
   } catch (err) {
@@ -11677,17 +11943,37 @@ function pages(){
 }
 
 function profileCard(e,i){
-  const col=AV[i%AV.length];const t=e.printed+e.pending+e.processing+e.cancelled||1;
+  const col=AV[i%AV.length];
+  const t=e.printed+e.pending+e.processing+e.cancelled||1;
+  const hasActions = (e.actions > 0);
+  const printedRateStr = hasActions ? `${e.own_printed_rate}%` : 'N/A';
+  const pendingRateStr = hasActions ? `${e.own_pending_rate}%` : 'N/A';
+  const cancelRateStr = hasActions ? `${e.own_cancel_rate}%` : 'N/A';
+  const altRateStr = hasActions ? `${e.own_alt_rate}%` : 'N/A';
+  const gradeStr = e.grade || (hasActions ? 'C' : 'N/A');
+  const safeName = escapeHtml(e.name);
+
   return `
-    <div class="prof">
+    <div class="prof" style="cursor:pointer;transition:transform 0.15s,box-shadow 0.15s" onclick="openEmployeeDrilldownModal('${safeName}', 'ALL')" title="انقر لعرض سجلات الموظف كاملة">
       <div class="ph"><div class="av" style="background:linear-gradient(135deg,${col},${col}cc)">${initials(e.name)}</div>
-        <div style="flex:1"><div class="pn">${e.name}</div><div class="pr">Rank #${e.rank || '-'} · <span class="grade gr-${(e.grade||'N')[0]}" style="padding:1px 7px">${e.grade || 'N/A'}</span> · ${e.segment || 'Core'}</div></div>
+        <div style="flex:1">
+          <div class="pn">${e.name}</div>
+          <div class="pr">Rank #${e.rank || '-'} · <span class="grade gr-${(gradeStr)[0]}" style="padding:1px 7px">${gradeStr}</span> · ${e.segment || 'Core'}</div>
+        </div>
       </div>
       <div class="stats">
-        <div class="st"><b>${fmt(e.actions)}</b><span>ACTIONS</span></div>
-        <div class="st"><b>${e.printed}</b><span>PRINTED</span></div>
-        <div class="st"><b>${e.pending}</b><span>PENDING</span></div>
-        <div class="st" style="background:${e.cancelled>0?'#FEF2F2':'var(--panel2)'}"><b style="color:${RED}">${e.cancelled}</b><span>CANCEL</span></div>
+        <div class="st" style="cursor:pointer" onclick="event.stopPropagation();openEmployeeDrilldownModal('${safeName}', 'ACTIONS')" title="عرض جميع الحركات">
+          <b>${fmt(e.actions)}</b><span>ACTIONS</span>
+        </div>
+        <div class="st" style="cursor:pointer" onclick="event.stopPropagation();openEmployeeDrilldownModal('${safeName}', 'PRINTED')" title="عرض أوردرات الطباعة">
+          <b>${fmt(e.printed)}</b><span>PRINTED</span>
+        </div>
+        <div class="st" style="cursor:pointer" onclick="event.stopPropagation();openEmployeeDrilldownModal('${safeName}', 'PENDING')" title="عرض حركات المعلق">
+          <b>${fmt(e.pending)}</b><span>PENDING</span>
+        </div>
+        <div class="st" style="background:${e.cancelled>0?'#FEF2F2':'var(--panel2)'};cursor:pointer" onclick="event.stopPropagation();openEmployeeDrilldownModal('${safeName}', 'CANCEL')" title="عرض حركات الإلغاء">
+          <b style="color:${RED}">${fmt(e.cancelled)}</b><span>CANCEL</span>
+        </div>
       </div>
       <div class="stack">
         <div class="sg" style="background:${GREEN};width:${e.printed/t*100}%">${e.printed/t>0.1?e.printed:''}</div>
@@ -11695,13 +11981,128 @@ function profileCard(e,i){
         <div class="sg" style="background:${AMBER};width:${e.processing/t*100}%"></div>
         <div class="sg" style="background:${RED};width:${e.cancelled/t*100}%">${e.cancelled/t>0.1?e.cancelled:''}</div>
       </div>
-      <div class="metric"><div class="ml"><span>Printed rate (own)</span><b>${e.own_printed_rate}%</b></div><div class="pbar"><i style="width:${e.own_printed_rate}%;background:${GREEN}"></i></div></div>
-      <div class="metric"><div class="ml"><span>Pending rate (own)</span><b>${e.own_pending_rate}%</b></div><div class="pbar"><i style="width:${Math.min(e.own_pending_rate*2,100)}%;background:${PURPLE}"></i></div></div>
-      <div class="metric"><div class="ml"><span>Cancel rate (own)</span><b style="color:${e.own_cancel_rate>=D.team_cancel_rate*1.5?RED:'var(--slate)'}">${e.own_cancel_rate}%</b></div><div class="pbar"><i style="width:${Math.min(e.own_cancel_rate*2,100)}%;background:${e.own_cancel_rate>=D.team_cancel_rate*1.5?RED:AMBER}"></i></div></div>
-      <div class="metric"><div class="ml"><span>Alt-phone rate (own)</span><b>${e.own_alt_rate}%</b></div><div class="pbar"><i style="width:${Math.min(e.own_alt_rate*3,100)}%;background:${BLUE}"></i></div></div>
+      <div class="metric" style="cursor:pointer" onclick="event.stopPropagation();openEmployeeDrilldownModal('${safeName}', 'PRINTED')" title="انقر لعرض تفاصيل Printed">
+        <div class="ml"><span>Printed rate (own)</span><b>${printedRateStr}</b></div>
+        <div class="pbar"><i style="width:${hasActions?e.own_printed_rate:0}%;background:${GREEN}"></i></div>
+      </div>
+      <div class="metric" style="cursor:pointer" onclick="event.stopPropagation();openEmployeeDrilldownModal('${safeName}', 'PENDING')" title="انقر لعرض تفاصيل Pending">
+        <div class="ml"><span>Pending rate (own)</span><b>${pendingRateStr}</b></div>
+        <div class="pbar"><i style="width:${hasActions?Math.min(e.own_pending_rate*2,100):0}%;background:${PURPLE}"></i></div>
+      </div>
+      <div class="metric" style="cursor:pointer" onclick="event.stopPropagation();openEmployeeDrilldownModal('${safeName}', 'CANCEL')" title="انقر لعرض تفاصيل Cancel">
+        <div class="ml"><span>Cancel rate (own)</span><b style="color:${hasActions && e.own_cancel_rate>=D.team_cancel_rate*1.5?RED:'var(--slate)'}">${cancelRateStr}</b></div>
+        <div class="pbar"><i style="width:${hasActions?Math.min(e.own_cancel_rate*2,100):0}%;background:${hasActions && e.own_cancel_rate>=D.team_cancel_rate*1.5?RED:AMBER}"></i></div>
+      </div>
+      <div class="metric" style="cursor:pointer" onclick="event.stopPropagation();openEmployeeDrilldownModal('${safeName}', 'ALT')" title="انقر لعرض تفاصيل Alt-phone">
+        <div class="ml"><span>Alt-phone rate (own)</span><b>${altRateStr}</b></div>
+        <div class="pbar"><i style="width:${hasActions?Math.min(e.own_alt_rate*3,100):0}%;background:${BLUE}"></i></div>
+      </div>
     </div>
   `;
 }
+
+window.openEmployeeDrilldownModal = async function(employeeName, metric = 'ALL') {
+  let modal = document.getElementById('employeeDrilldownModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'employeeDrilldownModal';
+    modal.className = 'modal-backdrop';
+    document.body.appendChild(modal);
+  }
+
+  modal.innerHTML = `
+    <div class="modal" style="max-width:850px;width:95%;max-height:88vh;display:flex;flex-direction:column;border-radius:12px;overflow:hidden">
+      <div class="hd" style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line);background:#F8FAFC">
+        <div>
+          <h3 style="margin:0 0 4px 0;font-size:16px;color:var(--navy)">📊 تفاصيل سجلات الموظف / Employee Records Drilldown</h3>
+          <p style="margin:0;font-size:12px;color:var(--mut)">
+            الموظف: <b>${escapeHtml(employeeName)}</b> · التاريخ: <b>${formatDisplayDate(currentWorkDate)}</b> · المقياس: <b>${escapeHtml(metric)}</b>
+          </p>
+        </div>
+        <button class="btn sm" onclick="document.getElementById('employeeDrilldownModal').style.display='none'" style="font-size:16px;padding:4px 10px">&times;</button>
+      </div>
+      <div id="employeeDrilldownBody" style="padding:20px;overflow-y:auto;flex:1">
+        <div style="text-align:center;padding:40px;color:var(--mut)">⏳ جاري تحميل السجلات الفعلية من قاعدة البيانات...</div>
+      </div>
+    </div>
+  `;
+  modal.style.display = 'flex';
+
+  try {
+    const res = await apiFetch(`/api/employee-profile/drilldown?name=${encodeURIComponent(employeeName)}&date=${encodeURIComponent(currentWorkDate)}&metric=${encodeURIComponent(metric)}`);
+    const body = document.getElementById('employeeDrilldownBody');
+    if (!body) return;
+
+    if (!res || !res.success) {
+      body.innerHTML = `<div style="padding:30px;text-align:center;color:#DC2626">✕ فشل في تحميل السجلات: ${escapeHtml(res?.error || 'خطأ غير معروف')}</div>`;
+      return;
+    }
+
+    const records = res.records || [];
+    body.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="tag" style="background:#EFF6FF;color:#1D4ED8;font-weight:700;font-size:12px">
+            إجمالي السجلات: ${records.length}
+          </span>
+          <span style="font-size:12px;color:var(--slate)">مطابق للعدد المعروض في اللوحة</span>
+        </div>
+        <div class="search" style="max-width:240px">
+          <span class="si">🔍</span>
+          <input type="text" placeholder="بحث برقم الأوردر..." oninput="filterEmployeeDrilldownTable(this.value)">
+        </div>
+      </div>
+      ${records.length === 0 ? `
+        <div style="padding:32px;text-align:center;color:var(--mut);background:#F8FAFC;border-radius:8px">
+          لا توجد سجلات مسجلة لهذا المقياس في هذا اليوم.
+        </div>
+      ` : `
+        <div class="tbl-scroll" style="max-height:55vh;overflow-y:auto">
+          <table id="empDrilldownTable">
+            <thead>
+              <tr>
+                <th style="width:40px">#</th>
+                <th>Order Code / كود الأوردر</th>
+                <th>Status / الحالة</th>
+                <th>Action Text / نص الحركة</th>
+                <th style="text-align:right">Time / التوقيت</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${records.map((r, idx) => `
+                <tr data-order="${escapeHtml(String(r.order_code).toLowerCase())}">
+                  <td><span class="rk">${idx + 1}</span></td>
+                  <td><b style="color:var(--navy);font-family:monospace">${escapeHtml(r.order_code)}</b></td>
+                  <td>
+                    <span class="tag sm" style="font-weight:700;background:${r.status === 'Printed' ? '#DCFCE7' : (r.status === 'Pending' ? '#F3E8FF' : (r.status === 'Cancelled' ? '#FEE2E2' : '#EFF6FF'))};color:${r.status === 'Printed' ? '#15803D' : (r.status === 'Pending' ? '#7C3AED' : (r.status === 'Cancelled' ? '#991B1B' : '#1D4ED8'))}">
+                      ${escapeHtml(r.status || 'Action')}
+                    </span>
+                  </td>
+                  <td style="font-size:12px;color:var(--slate)">${escapeHtml(r.action || '—')}</td>
+                  <td style="text-align:right;font-size:11.5px;color:var(--mut);font-family:monospace">${escapeHtml(r.event_datetime || '—')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `}
+    `;
+  } catch (err) {
+    const body = document.getElementById('employeeDrilldownBody');
+    if (body) {
+      body.innerHTML = `<div style="padding:30px;text-align:center;color:#DC2626">✕ حدث خطأ أثناء الاتصال بالخادم: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+};
+
+window.filterEmployeeDrilldownTable = function(query) {
+  const q = String(query || '').trim().toLowerCase();
+  const rows = document.querySelectorAll('#empDrilldownTable tbody tr');
+  rows.forEach(r => {
+    const code = r.getAttribute('data-order') || '';
+    r.style.display = !q || code.includes(q) ? '' : 'none';
+  });
+};
 
 function tableRows(list){
   return list.map(e=>`

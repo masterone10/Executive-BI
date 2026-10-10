@@ -229,6 +229,7 @@ describe('Enterprise Allocation Engine - Complete Specification Verification', (
 
     before(() => {
       // Set ARC NEW 18:00 - 23:00, ARC PENDING ALL_DAY
+      db.prepare('DELETE FROM account_schedules WHERE account = ? COLLATE NOCASE').run('ARC');
       const cfg = getEnterpriseAllocationConfig();
       saveEnterpriseAllocationConfig({
         ...cfg,

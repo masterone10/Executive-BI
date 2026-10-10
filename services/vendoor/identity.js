@@ -13,14 +13,15 @@
  */
 
 import { db } from '../../db/index.js';
-import { normalizeEmployeeName } from '../parser.js';
+import { normalizeEmployeeName, isCsDept } from '../parser.js';
 
 export const MATCH_STATUS = {
   EXACT_MATCH: 'EXACT_MATCH',
   EXPLICIT_MAPPING: 'EXPLICIT_MAPPING',
   ALIAS_MATCH: 'ALIAS_MATCH',
   UNMATCHED: 'UNMATCHED',
-  NEEDS_REVIEW: 'NEEDS_REVIEW'
+  NEEDS_REVIEW: 'NEEDS_REVIEW',
+  NON_CS_ACTOR: 'NON_CS_ACTOR'
 };
 
 /**
@@ -36,6 +37,35 @@ const RESOLUTION_CACHE_TTL_MS = 30000;
 
 export function invalidateIdentityResolutionCache() {
   identityResolutionCache.clear();
+}
+
+/**
+ * Checks whether a raw or normalized actor name belongs to a Merchant, Marketer,
+ * non-CS department employee, or system actor. Such actors are strictly excluded from CS matching.
+ */
+export function isNonCsActor(rawName, normName) {
+  if (!rawName && !normName) return false;
+  const raw = String(rawName || '').trim();
+  const norm = String(normName || normalizeEmployeeName(raw)).toLowerCase();
+
+  const systemActors = ['system', 'vendoor', 'vendoor system', 'admin', 'administrator', 'auto', 'automatic', 'api', 'bot', 'cron', 'integration'];
+  if (systemActors.includes(norm) || systemActors.includes(raw.toLowerCase())) return true;
+
+  try {
+    // 1. Check merchants table
+    const isMerch = db.prepare('SELECT 1 FROM merchants WHERE LOWER(merchant_name) = ? OR LOWER(merchant_code) = ? LIMIT 1').get(norm, norm);
+    if (isMerch) return true;
+
+    // 2. Check marketers table
+    const isMkt = db.prepare('SELECT 1 FROM marketers WHERE LOWER(marketer_name) = ? OR LOWER(affiliate_name) = ? OR LOWER(affiliate_code) = ? LIMIT 1').get(norm, norm, norm);
+    if (isMkt) return true;
+
+    // 3. Check employees master for non-CS department (e.g. Data Entry, Logistics)
+    const nonCsEmp = db.prepare("SELECT 1 FROM employees WHERE (LOWER(name) = ? OR LOWER(name) = ?) AND UPPER(department) != 'CS' LIMIT 1").get(raw.toLowerCase(), norm);
+    if (nonCsEmp) return true;
+  } catch (_) {}
+
+  return false;
 }
 
 /**
@@ -80,6 +110,26 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
     return cached.result;
   }
 
+  // 0. Exclude Merchants, Marketers, Non-CS employees, and Vendoor actors
+  if (isNonCsActor(raw, norm)) {
+    if (persistIdentity) {
+      touchIdentityRecord(raw, norm, null, 'NON_CS_ACTOR', 'NON_CS_EXCLUDED', 0.0);
+    }
+    const nonCsRes = {
+      source_name: raw,
+      normalized_name: norm,
+      status: 'NON_CS_ACTOR',
+      match_method: 'NON_CS_EXCLUDED',
+      employee_id: null,
+      employee_name: null,
+      department: 'NON_CS',
+      confidence: 0,
+      is_cs: false
+    };
+    identityResolutionCache.set(raw, { timestamp: Date.now(), result: nonCsRes });
+    return nonCsRes;
+  }
+
   // 1. Check Explicit Persistent Mapping in DB
   try {
     const mapping = db.prepare(`
@@ -89,7 +139,7 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
       WHERE LOWER(m.vendoor_name) = LOWER(?) OR LOWER(m.normalized_name) = LOWER(?)
     `).get(raw, norm);
 
-    if (mapping && mapping.status === 'MAPPED' && mapping.employee_id && mapping.master_emp_name) {
+    if (mapping && mapping.status === 'MAPPED' && mapping.employee_id && mapping.master_emp_name && isCsDept(mapping.department)) {
       if (persistIdentity) {
         touchIdentityRecord(raw, norm, mapping.employee_id, MATCH_STATUS.EXPLICIT_MAPPING, 'EXPLICIT_DB_MAPPING', 1.0);
       }
@@ -123,8 +173,8 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
     // Database table might not be created yet during initial run
   }
 
-  // 2. Exact Match in Employee Master (Case-insensitive & whitespace-normalized)
-  const masterEmployees = db.prepare('SELECT id, name, department, active FROM employees').all();
+  // 2. Exact Match in Employee Master (Case-insensitive & whitespace-normalized, CS ONLY)
+  const masterEmployees = db.prepare('SELECT id, name, department, active FROM employees').all().filter(e => isCsDept(e.department));
   const exactMatches = masterEmployees.filter(e => normalizeEmployeeName(e.name) === norm);
 
   if (exactMatches.length === 1) {
@@ -161,6 +211,47 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
     };
     identityResolutionCache.set(raw, { timestamp: Date.now(), result: res });
     return res;
+  }
+
+  // 2b. Case-insensitive CS suffix token matching (e.g. "Ahmed CS", "Ahmed cs", "Ahmed Cs", "Ahmed cS")
+  const stripCsToken = (s) => s.replace(/(?:^|\s+)cs(?:\s+|$)/gi, ' ').trim().replace(/\s+/g, ' ');
+  const baseNorm = stripCsToken(norm);
+  if (baseNorm.length > 2) {
+    const baseMatches = masterEmployees.filter(e => stripCsToken(normalizeEmployeeName(e.name)) === baseNorm);
+    if (baseMatches.length === 1) {
+      const matched = baseMatches[0];
+      if (persistIdentity) {
+        touchIdentityRecord(raw, norm, matched.id, MATCH_STATUS.EXACT_MATCH, 'CS_SUFFIX_CASE_INSENSITIVE', 0.98);
+      }
+      const res = {
+        source_name: raw,
+        normalized_name: norm,
+        status: MATCH_STATUS.EXACT_MATCH,
+        match_method: 'CS_SUFFIX_CASE_INSENSITIVE',
+        employee_id: matched.id,
+        employee_name: matched.name,
+        department: matched.department,
+        confidence: 0.98
+      };
+      identityResolutionCache.set(raw, { timestamp: Date.now(), result: res });
+      return res;
+    } else if (baseMatches.length > 1) {
+      if (persistIdentity) {
+        touchIdentityRecord(raw, norm, null, MATCH_STATUS.NEEDS_REVIEW, 'AMBIGUOUS_MULTIPLE_CS_TOKEN_MATCHES', 0.5);
+      }
+      const res = {
+        source_name: raw,
+        normalized_name: norm,
+        status: MATCH_STATUS.NEEDS_REVIEW,
+        match_method: 'AMBIGUOUS_MULTIPLE_CS_TOKEN_MATCHES',
+        employee_id: null,
+        employee_name: null,
+        department: null,
+        confidence: 0.5
+      };
+      identityResolutionCache.set(raw, { timestamp: Date.now(), result: res });
+      return res;
+    }
   }
 
   // 3. Known Aliases Check
@@ -355,7 +446,14 @@ export function getIdentityMappingsQueue(filter = 'ALL') {
       statsMap.set(normalizeEmployeeName(s.employee_name), s);
     }
 
-    const items = rows.map(r => {
+    // Filter out rows that belong to Merchants, Marketers, Non-CS employees, or Vendoor system actors
+    const csRows = rows.filter(r => {
+      if (r.status === 'NON_CS_ACTOR' || r.status === 'IGNORED') return false;
+      if (isNonCsActor(r.vendoor_name, r.normalized_name)) return false;
+      return true;
+    });
+
+    const items = csRows.map(r => {
       const stats = statsMap.get(normalizeEmployeeName(r.vendoor_name)) || { action_count: 0, order_count: 0 };
       return {
         id: r.id,

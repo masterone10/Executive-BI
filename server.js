@@ -7,7 +7,7 @@ import XLSX from 'xlsx';
 import { db } from './db/index.js';
 import { parseDailyLogBuffer, parseSpecificOrdersBuffer, isCsEmployee } from './services/parser.js';
 import { getCairoBusinessDate, getPreviousCompletedWeekRange } from './services/time_utils.js';
-import { computePerformanceFromRecords, savePerformanceSnapshotToDB, getSystemWeights } from './services/performance.js';
+import { computePerformanceFromRecords, savePerformanceSnapshotToDB, getSystemWeights, getEmployeeMetricDrilldown } from './services/performance.js';
 import {
   saveCurrentWorkOrders,
   stageSpecificOrdersFile,
@@ -1656,7 +1656,11 @@ app.post('/api/allocation/configuration/save', requireSupervisor, (req, res) => 
 // 3B. POST Save Specific Account Day Schedule (Atomic, Partial Merge)
 app.post('/api/allocation/schedule/day-save', requireSupervisor, (req, res) => {
   try {
-    const { account, status, day, start, end, new_start_time, new_end_time, pending_start_time, pending_end_time } = req.body;
+    const {
+      account, status, day, start, end,
+      new_start_time, new_end_time, pending_start_time, pending_end_time,
+      new_enabled, pending_enabled, enabled
+    } = req.body;
     const operator = req.body.operator || req.headers['x-user'] || 'Supervisor';
     if (!account) return res.status(400).json({ success: false, error: 'account is required' });
     if (!day) return res.status(400).json({ success: false, error: 'day is required' });
@@ -1671,6 +1675,9 @@ app.post('/api/allocation/schedule/day-save', requireSupervisor, (req, res) => {
       new_end_time,
       pending_start_time,
       pending_end_time,
+      new_enabled,
+      pending_enabled,
+      enabled,
       operator
     });
     res.json(result);
@@ -3249,6 +3256,21 @@ app.get('/api/data', (req, res) => {
   } catch (err) {
     console.error('Failed to get operational dashboard data for date', reqDate, err);
     return res.status(500).json({ exists: false, error: err.message });
+  }
+});
+
+// Employee Profile Metric Drilldown API (Insights -> Employee Profiles)
+app.get('/api/employee-profile/drilldown', (req, res) => {
+  try {
+    const { name, date, metric } = req.query;
+    const workDate = date || getEffectiveWorkDate();
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'Employee name is required' });
+    }
+    const result = getEmployeeMetricDrilldown(workDate, name, metric || 'ALL');
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
