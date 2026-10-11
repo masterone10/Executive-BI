@@ -13,7 +13,7 @@
  */
 
 import { db } from '../../db/index.js';
-import { normalizeEmployeeName, isCsDept } from '../parser.js';
+import { normalizeEmployeeName, isCsDept, isCsEmployee } from '../parser.js';
 
 export const MATCH_STATUS = {
   EXACT_MATCH: 'EXACT_MATCH',
@@ -35,9 +35,17 @@ const BASE_ALIASES = new Map([
 const identityResolutionCache = new Map();
 const RESOLUTION_CACHE_TTL_MS = 30000;
 
+// Cache for isNonCsActor checks
+const nonCsActorCheckCache = new Map();
+
 export function invalidateIdentityResolutionCache() {
   identityResolutionCache.clear();
+  nonCsActorCheckCache.clear();
 }
+
+let stmtMerchCheck = null;
+let stmtMktCheck = null;
+let stmtNonCsEmpCheck = null;
 
 /**
  * Checks whether a raw or normalized actor name belongs to a Merchant, Marketer,
@@ -48,23 +56,47 @@ export function isNonCsActor(rawName, normName) {
   const raw = String(rawName || '').trim();
   const norm = String(normName || normalizeEmployeeName(raw)).toLowerCase();
 
+  const cacheKey = `${raw.toLowerCase()}|${norm}`;
+  if (nonCsActorCheckCache.has(cacheKey)) {
+    return nonCsActorCheckCache.get(cacheKey);
+  }
+
   const systemActors = ['system', 'vendoor', 'vendoor system', 'admin', 'administrator', 'auto', 'automatic', 'api', 'bot', 'cron', 'integration'];
-  if (systemActors.includes(norm) || systemActors.includes(raw.toLowerCase())) return true;
+  if (systemActors.includes(norm) || systemActors.includes(raw.toLowerCase())) {
+    nonCsActorCheckCache.set(cacheKey, true);
+    return true;
+  }
 
   try {
-    // 1. Check merchants table
-    const isMerch = db.prepare('SELECT 1 FROM merchants WHERE LOWER(merchant_name) = ? OR LOWER(merchant_code) = ? LIMIT 1').get(norm, norm);
-    if (isMerch) return true;
+    if (!stmtMerchCheck) {
+      stmtMerchCheck = db.prepare('SELECT 1 FROM merchants WHERE LOWER(merchant_name) = ? OR LOWER(merchant_code) = ? LIMIT 1');
+    }
+    const isMerch = stmtMerchCheck.get(norm, norm);
+    if (isMerch) {
+      nonCsActorCheckCache.set(cacheKey, true);
+      return true;
+    }
 
-    // 2. Check marketers table
-    const isMkt = db.prepare('SELECT 1 FROM marketers WHERE LOWER(marketer_name) = ? OR LOWER(affiliate_name) = ? OR LOWER(affiliate_code) = ? LIMIT 1').get(norm, norm, norm);
-    if (isMkt) return true;
+    if (!stmtMktCheck) {
+      stmtMktCheck = db.prepare('SELECT 1 FROM marketers WHERE LOWER(marketer_name) = ? OR LOWER(affiliate_name) = ? OR LOWER(affiliate_code) = ? LIMIT 1');
+    }
+    const isMkt = stmtMktCheck.get(norm, norm, norm);
+    if (isMkt) {
+      nonCsActorCheckCache.set(cacheKey, true);
+      return true;
+    }
 
-    // 3. Check employees master for non-CS department (e.g. Data Entry, Logistics)
-    const nonCsEmp = db.prepare("SELECT 1 FROM employees WHERE (LOWER(name) = ? OR LOWER(name) = ?) AND UPPER(department) != 'CS' LIMIT 1").get(raw.toLowerCase(), norm);
-    if (nonCsEmp) return true;
+    if (!stmtNonCsEmpCheck) {
+      stmtNonCsEmpCheck = db.prepare("SELECT 1 FROM employees WHERE (LOWER(name) = ? OR LOWER(name) = ?) AND UPPER(department) != 'CS' LIMIT 1");
+    }
+    const nonCsEmp = stmtNonCsEmpCheck.get(raw.toLowerCase(), norm);
+    if (nonCsEmp) {
+      nonCsActorCheckCache.set(cacheKey, true);
+      return true;
+    }
   } catch (_) {}
 
+  nonCsActorCheckCache.set(cacheKey, false);
   return false;
 }
 
@@ -213,11 +245,18 @@ export function resolveEmployeeIdentity(sourceName, options = {}) {
     return res;
   }
 
-  // 2b. Case-insensitive CS suffix token matching (e.g. "Ahmed CS", "Ahmed cs", "Ahmed Cs", "Ahmed cS")
+  // 2b. Case-insensitive standalone CS token matching (e.g. "Ahmed CS", "Ahmed cs", "Ahmed Cs", "Ahmed cS")
+  const hasCsToken = (s) => /(?:^|\s+)cs(?:\s+|$)/i.test(s);
   const stripCsToken = (s) => s.replace(/(?:^|\s+)cs(?:\s+|$)/gi, ' ').trim().replace(/\s+/g, ' ');
   const baseNorm = stripCsToken(norm);
-  if (baseNorm.length > 2) {
-    const baseMatches = masterEmployees.filter(e => stripCsToken(normalizeEmployeeName(e.name)) === baseNorm);
+  if (baseNorm.length > 2 && (hasCsToken(norm) || masterEmployees.some(e => hasCsToken(e.name)))) {
+    const baseMatches = masterEmployees.filter(e => {
+      if (!isCsDept(e.department) || !isCsEmployee(e)) return false;
+      const empHasCs = hasCsToken(e.name);
+      const inputHasCs = hasCsToken(norm);
+      if (!empHasCs && !inputHasCs) return false;
+      return stripCsToken(normalizeEmployeeName(e.name)) === baseNorm;
+    });
     if (baseMatches.length === 1) {
       const matched = baseMatches[0];
       if (persistIdentity) {
@@ -364,6 +403,9 @@ export function saveExplicitIdentityMapping(vendoorName, employeeId, notes = '')
   const emp = db.prepare('SELECT id, name, department FROM employees WHERE id = ?').get(employeeId);
   if (!emp) {
     throw new Error(`Target Employee ID ${employeeId} does not exist in Employee Master.`);
+  }
+  if (!isCsDept(emp.department) || !isCsEmployee(emp.id)) {
+    throw new Error(`Target Employee ${emp.name} (Dept: ${emp.department}) is not an eligible CS employee.`);
   }
 
   const stmt = db.prepare(`

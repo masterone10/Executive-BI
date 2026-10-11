@@ -1072,6 +1072,9 @@ export function getEmployeeMetricDrilldown(workDate, employeeName, metric = 'ALL
     };
   }
 
+  const masterEmployees = db.prepare('SELECT id, name, department, active FROM employees').all();
+  const csCache = new Map();
+
   // Uniform record normalization
   const normalizedRecords = rawRows.map(r => {
     const rawName = r.employee_name || '';
@@ -1105,6 +1108,21 @@ export function getEmployeeMetricDrilldown(workDate, employeeName, metric = 'ALL
       }
     }
 
+    let isCS = false;
+    if (r.is_cs === 1 || r.is_cs === true) {
+      isCS = true;
+    } else if (r.is_cs === 0 || r.is_cs === false) {
+      isCS = false;
+    } else {
+      const norm = normalizeEmployeeName(rawName);
+      if (csCache.has(norm)) {
+        isCS = csCache.get(norm);
+      } else {
+        isCS = isCsEmployee(rawName, masterEmployees);
+        csCache.set(norm, isCS);
+      }
+    }
+
     return {
       name: rawName,
       order: orderCode,
@@ -1112,7 +1130,7 @@ export function getEmployeeMetricDrilldown(workDate, employeeName, metric = 'ALL
       st: statusText,
       dt,
       event_datetime: r.event_datetime,
-      isCS: isCsEmployee(rawName),
+      isCS,
       alt: isAlt,
       added: isAdded
     };
@@ -1123,7 +1141,7 @@ export function getEmployeeMetricDrilldown(workDate, employeeName, metric = 'ALL
     if (!rawName) return '';
     const norm = normalizeEmployeeName(rawName);
     if (empDisplayNames.has(norm)) return empDisplayNames.get(norm);
-    const match = matchEmployeeInMaster(rawName);
+    const match = matchEmployeeInMaster(rawName, masterEmployees);
     const displayName = match ? match.name : String(rawName).trim();
     empDisplayNames.set(norm, displayName);
     return displayName;

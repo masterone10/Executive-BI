@@ -215,7 +215,7 @@ import {
 const requireSupervisor = requireRole([USER_ROLES.SUPERVISOR, USER_ROLES.MANAGER, USER_ROLES.ADMIN]);
 
 const app = express();
-const PORT = parseInt(process.env.PORT, 10) || 3000;
+const PORT = parseInt(process.env.DEFAULT_APP_PORT, 10) || 3000;
 const HOST = '0.0.0.0';
 const ROOT_DIR = process.cwd();
 const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
@@ -1621,7 +1621,7 @@ app.get('/api/work/available-orders', (req, res) => {
  */
 
 // 1. GET Centralized Allocation Configuration
-app.get('/api/allocation/configuration', (req, res) => {
+app.get(['/api/allocation/configuration', '/api/allocation/enterprise/config', '/api/allocation/config'], (req, res) => {
   try {
     const config = getEnterpriseAllocationConfig();
     res.json({ success: true, ...config });
@@ -1631,7 +1631,7 @@ app.get('/api/allocation/configuration', (req, res) => {
 });
 
 // 2. POST Validate Configuration Draft
-app.post('/api/allocation/configuration/validate', (req, res) => {
+app.post(['/api/allocation/configuration/validate', '/api/allocation/enterprise/config/validate', '/api/allocation/config/validate'], (req, res) => {
   try {
     const result = validateEnterpriseAllocationConfig(req.body);
     res.json(result);
@@ -1641,7 +1641,7 @@ app.post('/api/allocation/configuration/validate', (req, res) => {
 });
 
 // 3. POST Save All Configuration (Atomic, Versioned)
-app.post('/api/allocation/configuration/save', requireSupervisor, (req, res) => {
+app.post(['/api/allocation/configuration/save', '/api/allocation/enterprise/config/save', '/api/allocation/config/save'], requireSupervisor, (req, res) => {
   try {
     const operator = req.body.operator || req.headers['x-user'] || 'Supervisor';
     const expectedVersion = req.body.expected_version !== undefined ? req.body.expected_version : null;
@@ -2124,18 +2124,32 @@ app.put('/api/allocations/:id', (req, res) => {
   }
 });
 
-app.delete('/api/allocations/:id', (req, res) => {
+// Dedicated item deletion route (distinct from date-level deletions)
+app.delete(['/api/allocation-items/:id', '/api/allocations/item/:id'], requireSupervisor, (req, res) => {
   const { id } = req.params;
   try {
-    const result = deleteAllocationItem(parseInt(id, 10));
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) return res.status(400).json({ error: 'Valid numeric allocation item ID is required' });
+    const result = deleteAllocationItem(numId);
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
+// Explicit date-level allocation deletion routes (strictly non-ambiguous regex or parameter)
 app.delete(['/api/allocations/date/:date', '/api/allocations/:date'], requireSupervisor, (req, res) => {
-  const date = req.params.date || req.body?.work_date || req.body?.date || getCairoBusinessDate();
+  const param = req.params.date || req.body?.work_date || req.body?.date || '';
+  // If param is purely numeric and short (e.g. item ID), route to deleteAllocationItem safely
+  if (/^d{1,6}$/.test(param)) {
+    try {
+      const result = deleteAllocationItem(parseInt(param, 10));
+      return res.json(result);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+  }
+  const date = param || getCairoBusinessDate();
   try {
     const result = deleteAllocationForDate(date);
     res.json(result);
@@ -4516,13 +4530,15 @@ if (!isTestExecution) {
     } catch (pollerErr) {
       console.warn('Poller startup notice:', pollerErr.message);
     }
-    setTimeout(() => {
-      try {
-        autoScanAndSeedAvailableExcelFiles({ force: false });
-      } catch (seedErr) {
-        console.warn('Excel autoScan notice:', seedErr.message);
-      }
-    }, 1500).unref();
+    if (process.env.SEED_DEMO_DATA === 'true') {
+      setTimeout(() => {
+        try {
+          autoScanAndSeedAvailableExcelFiles({ force: false });
+        } catch (seedErr) {
+          console.warn('Excel autoScan notice:', seedErr.message);
+        }
+      }, 5000).unref();
+    }
   });
 
   server.on('error', (err) => {

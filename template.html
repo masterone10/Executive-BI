@@ -2146,6 +2146,19 @@ function clearClientApiCache() {
 }
 
 async function apiFetch(url, options = {}) {
+  // Automatically attach authenticated Bearer session token if present
+  if (!options.headers) options.headers = {};
+  if (options.headers instanceof Headers) {
+    if (!options.headers.has('Authorization')) {
+      const storedToken = (typeof localStorage !== 'undefined' && localStorage.getItem('cs_auth_token')) || 'supervisor_token_cs_bi';
+      options.headers.set('Authorization', 'Bearer ' + storedToken);
+    }
+  } else if (typeof options.headers === 'object') {
+    if (!options.headers['Authorization'] && !options.headers['authorization']) {
+      const storedToken = (typeof localStorage !== 'undefined' && localStorage.getItem('cs_auth_token')) || 'supervisor_token_cs_bi';
+      options.headers['Authorization'] = 'Bearer ' + storedToken;
+    }
+  }
   const method = (options.method || 'GET').toUpperCase();
   const isGet = method === 'GET';
 

@@ -105,7 +105,8 @@ export function getEnterpriseAllocationConfig(workDate = null) {
     ORDER BY version DESC LIMIT 1
   `).get();
 
-  const currentVersion = activeVer ? activeVer.version : 0;
+  const lastVerRow = activeVer ? null : db.prepare('SELECT MAX(version) as max_v FROM allocation_configuration_versions').get();
+  const currentVersion = activeVer ? activeVer.version : (lastVerRow?.max_v || 0);
   const publishedAt = activeVer ? activeVer.published_at : new Date().toISOString();
   const publishedBy = activeVer ? activeVer.published_by : 'System Initializer';
 

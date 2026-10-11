@@ -91,12 +91,15 @@ describe('Resumed Checkpoint Verification Suite — Identity, Employee Profiles 
         { code: 'ORD_ALT2', act: 'تحديث رقم التليفون البديل', st: null, time: `${TEST_DATE} 13:30:00` }
       ];
 
-      for (const ev of testEvents) {
-        db.prepare(`
-          INSERT INTO raw_log_records (employee_name, order_code, action, status, event_datetime, work_date, is_cs)
-          VALUES (?, ?, ?, ?, ?, ?, 1)
-        `).run(empName, ev.code, ev.act, ev.st, ev.time, TEST_DATE);
-      }
+      const insertStmt = db.prepare(`
+        INSERT INTO raw_log_records (employee_name, order_code, action, status, event_datetime, work_date, is_cs)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
+      `);
+      db.transaction(() => {
+        for (const ev of testEvents) {
+          insertStmt.run(empName, ev.code, ev.act, ev.st, ev.time, TEST_DATE);
+        }
+      })();
 
       // Check drilldown for PRINTED
       const printDrill = getEmployeeMetricDrilldown(TEST_DATE, empName, 'PRINTED');

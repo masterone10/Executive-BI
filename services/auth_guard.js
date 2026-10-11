@@ -76,11 +76,26 @@ export const ROLE_PERMISSIONS = Object.freeze({
 });
 
 // Known system tokens (can be configured via environment)
-const VALID_TOKENS = new Map([
-  [process.env.ADMIN_API_TOKEN || 'admin_token_enterprise_bi', { user: 'Admin User', role: USER_ROLES.ADMIN }],
-  [process.env.SUPERVISOR_API_TOKEN || 'supervisor_token_cs_bi', { user: 'Supervisor User', role: USER_ROLES.SUPERVISOR }],
-  [process.env.CS_AGENT_API_TOKEN || 'cs_agent_token', { user: 'CS Agent', role: USER_ROLES.CS_EMPLOYEE }]
-]);
+// In production, fallback static tokens are strictly forbidden to prevent hardcoded credential vulnerabilities.
+const isProd = process.env.NODE_ENV === 'production';
+const VALID_TOKENS = new Map();
+if (process.env.ADMIN_API_TOKEN) {
+  VALID_TOKENS.set(process.env.ADMIN_API_TOKEN.trim(), { user: 'Admin User', role: USER_ROLES.ADMIN });
+} else if (!isProd) {
+  VALID_TOKENS.set('admin_token_enterprise_bi', { user: 'Admin User', role: USER_ROLES.ADMIN });
+}
+
+if (process.env.SUPERVISOR_API_TOKEN) {
+  VALID_TOKENS.set(process.env.SUPERVISOR_API_TOKEN.trim(), { user: 'Supervisor User', role: USER_ROLES.SUPERVISOR });
+} else if (!isProd) {
+  VALID_TOKENS.set('supervisor_token_cs_bi', { user: 'Supervisor User', role: USER_ROLES.SUPERVISOR });
+}
+
+if (process.env.CS_AGENT_API_TOKEN) {
+  VALID_TOKENS.set(process.env.CS_AGENT_API_TOKEN.trim(), { user: 'CS Agent', role: USER_ROLES.CS_EMPLOYEE });
+} else if (!isProd) {
+  VALID_TOKENS.set('cs_agent_token', { user: 'CS Agent', role: USER_ROLES.CS_EMPLOYEE });
+}
 
 /**
  * Extracts and verifies user identity from incoming HTTP request.
@@ -108,13 +123,25 @@ export function extractUserIdentity(req) {
     };
   }
 
-  // 2. In test/development environment, allow controlled headers for automated test suites
+  // 2. In strict production mode, NEVER trust x-user-role, body.role, or query.role!
+  // Production requests without a validated token fail-closed as ANONYMOUS.
+  if (process.env.NODE_ENV === 'production' && !isTestEnv) {
+    return {
+      user: 'Anonymous',
+      role: USER_ROLES.ANONYMOUS,
+      token: null,
+      permissions: ROLE_PERMISSIONS.ANONYMOUS,
+      isSupervisor: false,
+      isCsEmployee: false,
+      isAuthenticated: false
+    };
+  }
+
+  // 3. In automated test/sandbox environments, support test runner headers (x-user-role)
   if (isTestEnv || process.env.NODE_ENV !== 'production') {
     const rawRole = (
       req.headers['x-user-role'] ||
       req.headers['x-role'] ||
-      req.body?.role ||
-      req.query?.role ||
       ''
     ).trim().toUpperCase();
 
