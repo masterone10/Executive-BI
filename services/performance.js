@@ -41,6 +41,12 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
     }
   }
 
+  if (!dbEmployeesMap) {
+    try {
+      dbEmployeesMap = db.prepare('SELECT id, name, department, active, status, team_membership FROM employees').all();
+    } catch (_) {}
+  }
+
   // Canonical employee display names map: normalized -> display name
   const empDisplayNames = new Map();
 
@@ -1166,12 +1172,23 @@ export function calculateSmartAllocationScore(employeeId, profile, currentWorklo
  */
 export function getEmployeeMetricDrilldown(workDate, employeeName, metric = 'ALL') {
   const targetDate = workDate || getCairoBusinessDate();
-  const rawRows = db.prepare(`
-    SELECT employee_name, action, status, order_code, event_datetime, is_cs, work_date
+  let rawRows = db.prepare(`
+    SELECT employee_name, action, status, order_code, event_datetime, is_cs, work_date, 'RAW_LOGS' as source
     FROM raw_log_records
     WHERE work_date = ?
     ORDER BY event_datetime ASC
   `).all(targetDate);
+
+  if (rawRows.length === 0) {
+    try {
+      rawRows = db.prepare(`
+        SELECT employee_name, action, action as status, order_code, timestamp_str as event_datetime, 1 as is_cs, work_date, 'VENDOOR_LOGS' as source
+        FROM vendoor_logs
+        WHERE work_date = ?
+        ORDER BY timestamp_str ASC
+      `).all(targetDate);
+    } catch (_) {}
+  }
 
   if (rawRows.length === 0) {
     return {
@@ -1246,7 +1263,8 @@ export function getEmployeeMetricDrilldown(workDate, employeeName, metric = 'ALL
       event_datetime: r.event_datetime,
       isCS,
       alt: isAlt,
-      added: isAdded
+      added: isAdded,
+      source: r.source || 'VENDOOR_LOGS'
     };
   });
 
@@ -1341,10 +1359,12 @@ export function getEmployeeMetricDrilldown(workDate, employeeName, metric = 'ALL
     total_count: matched.length,
     records: matched.map(m => ({
       order_code: m.order,
-      status: m.st || (m.alt ? 'Alt Phone' : 'Action'),
+      status: m.st || (m.alt ? 'Alt Phone' : (m.added ? 'Added Order' : 'Action')),
       action: m.act,
       event_datetime: m.event_datetime,
-      work_date: targetDate
+      work_date: targetDate,
+      raw_actor_name: m.name,
+      source: m.source || 'VENDOOR_LOGS'
     }))
   };
 }
@@ -1407,6 +1427,21 @@ export function getEmployeeProfile(workDate, employeeIdOrName) {
   const uniqueProcessingOrders = new Set(processingActions.map(r => r.order_code).filter(Boolean));
   const altDrilldown = getEmployeeMetricDrilldown(targetDate, rawTargetName, 'ALT');
   const altActions = altDrilldown.records || [];
+
+  // Combine actions so Activity History displays all real actions including alt phones
+  const combinedMap = new Map();
+  for (const r of records) {
+    combinedMap.set(`${r.order_code}|${r.event_datetime}|${r.action}`, r);
+  }
+  for (const r of altActions) {
+    const k = `${r.order_code}|${r.event_datetime}|${r.action}`;
+    if (!combinedMap.has(k)) {
+      combinedMap.set(k, r);
+    }
+  }
+  const allActionsRecords = Array.from(combinedMap.values()).sort((a, b) => {
+    return (b.event_datetime || '').localeCompare(a.event_datetime || '');
+  });
 
   // 3. Assigned Orders from order_level_allocations
   let assignedOrders = [];
@@ -1527,6 +1562,6 @@ export function getEmployeeProfile(workDate, employeeIdOrName) {
       total_recorded_dates: historicalSnapshots.length,
       snapshots: historicalSnapshots
     },
-    drilldown_records: records
+    drilldown_records: allActionsRecords
   };
 }

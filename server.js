@@ -218,7 +218,7 @@ import {
 const requireSupervisor = requireRole([USER_ROLES.SUPERVISOR, USER_ROLES.MANAGER, USER_ROLES.ADMIN]);
 
 const app = express();
-const PORT = parseInt(process.env.DEFAULT_APP_PORT, 10) || 3000;
+const PORT = parseInt(process.env.PORT, 10) || parseInt(process.env.DEFAULT_APP_PORT, 10) || 3000;
 const HOST = '0.0.0.0';
 const ROOT_DIR = process.cwd();
 const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
@@ -4105,8 +4105,37 @@ app.get('/api/reports/merchant', (req, res) => {
   }
 });
 
+app.get('/api/reports/marketer/:identifier', (req, res) => {
+  try {
+    const { identifier } = req.params;
+    const report = generateSingleMarketerReport({
+      dateMode: req.query.date_mode || 'day',
+      targetDate: req.query.target_date || req.query.date || getEffectiveWorkDate(),
+      startDate: req.query.start_date,
+      endDate: req.query.end_date,
+      marketer: identifier,
+      filters: req.query
+    });
+    return res.json(report);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/reports/marketer', (req, res) => {
   try {
+    if (req.query.marketer || req.query.marketer_name || req.query.affiliate_code) {
+      const report = generateSingleMarketerReport({
+        dateMode: req.query.date_mode || 'day',
+        targetDate: req.query.target_date || req.query.date || getEffectiveWorkDate(),
+        startDate: req.query.start_date,
+        endDate: req.query.end_date,
+        marketer: req.query.marketer || req.query.marketer_name || req.query.affiliate_code,
+        filters: req.query
+      });
+      return res.json(report);
+    }
+
     const cacheKey = `rep_mark_${JSON.stringify(req.query)}`;
     const cached = getCachedApiResponse(cacheKey);
     if (cached) return res.json(cached);
@@ -4394,17 +4423,33 @@ app.get('/api/reports/history', (req, res) => {
 app.get('/api/reports/export/:format', requireAuth, (req, res) => {
   try {
     const format = req.params.format?.toLowerCase();
-    const type = req.query.report_type || 'employee';
+    const type = req.query.type || req.query.report_type || 'employee';
     let data;
 
     switch (type) {
       case 'executive_summary':
+      case 'executive':
         data = generateExecutiveSummaryReport(req.query);
         break;
       case 'employee':
-        data = generateEmployeeReport(req.query);
+      case 'employees':
+        if (req.query.employee || req.query.employee_name || req.query.name) {
+          const empTarget = req.query.employee || req.query.employee_name || req.query.name;
+          const tDate = req.query.target_date || req.query.date || getEffectiveWorkDate();
+          data = getEmployeeProfile(tDate, empTarget);
+        } else {
+          data = generateEmployeeReport(req.query);
+        }
         break;
+      case 'single_employee':
+      case 'employee_profile': {
+        const empTarget = req.query.employee || req.query.employee_name || req.query.name || req.query.id;
+        const tDate = req.query.target_date || req.query.date || getEffectiveWorkDate();
+        data = getEmployeeProfile(tDate, empTarget);
+        break;
+      }
       case 'account':
+      case 'accounts':
         data = generateAccountReport(req.query);
         break;
       case 'allocation':
@@ -4427,12 +4472,49 @@ app.get('/api/reports/export/:format', requireAuth, (req, res) => {
         data = generateSystemHealthReport(req.query);
         break;
       case 'merchant':
+      case 'merchants':
         data = generateMerchantReport(req.query);
         break;
       case 'marketer':
+      case 'marketers':
       case 'affiliate':
-        data = generateMarketerReport(req.query);
+        if (req.query.marketer || req.query.marketer_name || req.query.affiliate_code) {
+          data = generateSingleMarketerReport(req.query);
+        } else {
+          data = generateMarketerReport(req.query);
+        }
         break;
+      case 'single_marketer':
+        data = generateSingleMarketerReport(req.query);
+        break;
+      case 'trends':
+      case 'cancellation': {
+        const tDate = req.query.target_date || req.query.date || getEffectiveWorkDate();
+        const snap = getOperationalDashboardData(tDate);
+        data = {
+          report_type: 'cancellation_trends',
+          target_date: tDate,
+          rows: (snap.employees || []).map(e => ({
+            Employee: e.name,
+            Approval_Status: e.status || (e.is_approved ? 'ACTIVE' : 'HISTORICAL_UNLINKED'),
+            Total_Real_Actions: e.actions || 0,
+            Printed_Orders: e.printed || 0,
+            Unique_Printed_Orders: e.unique_printed_orders || 0,
+            Pending_Actions: e.pending || 0,
+            Unique_Pending_Orders: e.unique_pending_orders || 0,
+            Cancelled_Actions: e.cancelled || 0,
+            Unique_Cancelled_Orders: e.unique_cancelled_orders || 0,
+            Processing_Actions: e.processing || 0,
+            Added_Phones: e.alt || 0,
+            Unique_Orders_Touched: e.unique_orders_touched || 0,
+            Print_Rate: `${e.own_printed_rate || 0}%`,
+            Cancel_Rate: `${e.own_cancel_rate || 0}%`,
+            Cancellation_Formula: `${e.cancelled || 0} cancelled ÷ ${e.actions || 0} total actions`,
+            Performance_Score: e.performance_score || 0
+          }))
+        };
+        break;
+      }
       case 'phone_alerts':
       case 'phone_match_alerts':
         data = generatePhoneAlertsReport(req.query);

@@ -1818,6 +1818,10 @@ export function exportReportToCSV(reportData) {
     rows = reportData.daily_breakdown;
   } else if (reportData.cycles && Array.isArray(reportData.cycles)) {
     rows = reportData.cycles;
+  } else if (reportData.orders && Array.isArray(reportData.orders)) {
+    rows = reportData.orders;
+  } else if (reportData.drilldown_records && Array.isArray(reportData.drilldown_records)) {
+    rows = reportData.drilldown_records;
   }
 
   if (rows.length === 0) {
@@ -1846,6 +1850,86 @@ export function exportReportToCSV(reportData) {
  * Convert report data to Excel buffer
  */
 export function exportReportToExcel(reportData, sheetName = 'Report') {
+  const wb = XLSX.utils.book_new();
+
+  // 1. Single Marketer Report format
+  if (reportData.report_type === 'single_marketer' || (reportData.marketer && reportData.orders)) {
+    const m = reportData.marketer || {};
+    const met = reportData.metrics || {};
+    const summaryRows = [
+      { Metric: 'Marketer Name', Value: m.name || '—' },
+      { Metric: 'Affiliate Code', Value: m.affiliate_code || '—' },
+      { Metric: 'Report Date / Range', Value: `${reportData.start_date || reportData.target_date} → ${reportData.end_date || reportData.target_date}` },
+      { Metric: 'Entity Type', Value: m.entity_type || 'ECOMMERCE_MARKETER_AFFILIATE' },
+      { Metric: 'Total Unique Orders', Value: met.total_orders || 0 },
+      { Metric: 'New Orders', Value: met.new_orders || 0 },
+      { Metric: 'Pending Orders', Value: met.pending_orders || 0 },
+      { Metric: 'Printed / Confirmed Orders', Value: met.printed_orders || 0 },
+      { Metric: 'Cancelled Orders', Value: met.cancelled_orders || 0 },
+      { Metric: 'Completed / Delivered Orders', Value: met.completed_orders || 0 },
+      { Metric: 'Processing Orders', Value: met.processing_orders || 0 },
+      { Metric: 'Shipped Orders', Value: met.shipped_orders || 0 },
+      { Metric: 'Total GMV (EGP)', Value: met.total_gmv || 0 },
+      { Metric: 'Cancellation Rate %', Value: `${met.cancellation_rate || 0}% (${met.cancellation_formula || ''})` },
+      { Metric: 'Delivery Rate %', Value: `${met.delivery_rate || 0}% (${met.delivery_formula || ''})` },
+      { Metric: 'Promoted Merchants Count', Value: met.merchants_count || 0 },
+      { Metric: 'Promoted Merchants List', Value: (met.linked_merchants || []).join(', ') }
+    ];
+    const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+    const orders = (reportData.orders && Array.isArray(reportData.orders)) ? reportData.orders : [];
+    const wsOrders = XLSX.utils.json_to_sheet(orders.length > 0 ? orders : [{ Status: 'No orders found' }]);
+    XLSX.utils.book_append_sheet(wb, wsOrders, 'Orders');
+
+    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  }
+
+  // 2. Employee Profile format
+  if (reportData.employee && (reportData.metrics || reportData.drilldown_records)) {
+    const emp = reportData.employee || {};
+    const met = reportData.metrics || {};
+    const acts = met.actions || {};
+    const unq = met.unique_orders || {};
+    const rates = met.rates || {};
+    const scores = met.scores || {};
+
+    const summaryRows = [
+      { Metric: 'Employee Name', Value: emp.name || '—' },
+      { Metric: 'Employee ID', Value: emp.id || 'N/A' },
+      { Metric: 'Approval Status', Value: emp.status || (emp.is_approved ? 'ACTIVE' : 'HISTORICAL_UNLINKED') },
+      { Metric: 'Identity Type', Value: emp.identity_type || '—' },
+      { Metric: 'Department', Value: emp.department || 'CS' },
+      { Metric: 'Work Date', Value: reportData.work_date || '—' },
+      { Metric: 'Total Real Actions', Value: acts.total_real_actions || 0 },
+      { Metric: 'Printed Actions', Value: acts.printed_actions || 0 },
+      { Metric: 'Unique Printed Orders', Value: unq.unique_printed_orders || 0 },
+      { Metric: 'Pending Actions', Value: acts.pending_actions || 0 },
+      { Metric: 'Unique Pending Orders', Value: unq.unique_pending_orders || 0 },
+      { Metric: 'Cancelled Actions', Value: acts.cancelled_actions || 0 },
+      { Metric: 'Unique Cancelled Orders', Value: unq.unique_cancelled_orders || 0 },
+      { Metric: 'Processing Actions', Value: acts.processing_actions || 0 },
+      { Metric: 'Alt Phones Added', Value: acts.alt_phones_added || 0 },
+      { Metric: 'Unique Orders Touched', Value: unq.unique_orders_touched || 0 },
+      { Metric: 'Printed Rate %', Value: `${rates.own_printed_rate || 0}%` },
+      { Metric: 'Pending Rate %', Value: `${rates.own_pending_rate || 0}%` },
+      { Metric: 'Cancel Rate %', Value: `${rates.own_cancel_rate || 0}%` },
+      { Metric: 'Alt Phone Rate %', Value: `${rates.own_alt_rate || 0}%` },
+      { Metric: 'Performance Score', Value: scores.performance_score || 0 },
+      { Metric: 'Performance Grade', Value: scores.grade || '—' },
+      { Metric: 'Segment', Value: scores.segment || '—' }
+    ];
+    const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+    const records = (reportData.drilldown_records && Array.isArray(reportData.drilldown_records)) ? reportData.drilldown_records : [];
+    const wsRecords = XLSX.utils.json_to_sheet(records.length > 0 ? records : [{ Status: 'No recorded activity' }]);
+    XLSX.utils.book_append_sheet(wb, wsRecords, 'Activity History');
+
+    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  }
+
+  // 3. Generic Rows Table
   let rows = [];
   if (reportData.rows && Array.isArray(reportData.rows)) {
     rows = reportData.rows;
@@ -1853,9 +1937,10 @@ export function exportReportToExcel(reportData, sheetName = 'Report') {
     rows = reportData.daily_breakdown;
   } else if (reportData.cycles && Array.isArray(reportData.cycles)) {
     rows = reportData.cycles;
+  } else if (reportData.orders && Array.isArray(reportData.orders)) {
+    rows = reportData.orders;
   }
 
-  const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ Status: 'No data' }]);
   XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });

@@ -11605,6 +11605,36 @@ function pages(){
   const topPhoneEmps = [...(D.employees||[])].sort((a, b) => (b.alt || b.added_phones || 0) - (a.alt || a.added_phones || 0)).slice(0, 10);
 
   const scorecard = `
+    <!-- Operational Business Date Context Header -->
+    <div class="panel" style="margin-bottom:20px;background:linear-gradient(135deg,#EFF6FF,#F8FAFC);border:1px solid #BFDBFE">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <h2 style="font-size:18px;font-weight:900;color:var(--navy);margin:0">★ CS Performance Scorecard</h2>
+            <span class="tag" style="background:${currentWorkDate === getTodayDate() ? '#DCFCE7;color:#15803D' : '#FEF3C7;color:#92400E'};font-weight:800">
+              ${currentWorkDate === getTodayDate() ? 'LIVE TODAY' : 'HISTORICAL ARCHIVE'}
+            </span>
+          </div>
+          <p style="font-size:12.5px;color:var(--slate);margin:4px 0 0 0">
+            تاريخ العمل المعتمد: <b>${formatDisplayDate(D.date || currentWorkDate)}</b> · التوقيت: <b>Africa/Cairo</b> · مصدر الحساب: <b>Canonical SQLite Engine</b>
+          </p>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="btn sm" onclick="openGlobalDatePicker()" style="font-weight:600">📅 تغيير التاريخ</button>
+          <a href="/api/reports/export/excel?type=cancellation&date=${encodeURIComponent(currentWorkDate)}" target="_blank" class="btn sm" style="background:#16A34A;color:#fff;text-decoration:none;font-weight:700">⬇ Export Scorecard (Excel)</a>
+        </div>
+      </div>
+    </div>
+
+    ${(D.employees || []).length === 0 ? `
+      <div class="panel" style="padding:36px;text-align:center;background:#FFFBEB;border:1px solid #FDE68A;margin-bottom:20px">
+        <div style="font-size:36px;margin-bottom:8px">📅</div>
+        <h3 style="color:#92400E;font-size:16px;margin-bottom:4px">لا توجد حركات مسجلة لموظفي CS في تاريخ العمل المحدد (${formatDisplayDate(currentWorkDate)})</h3>
+        <p style="color:var(--slate);font-size:13px;margin:0 0 16px 0">يمكنك اختيار تاريخ مسجل آخر من القائمة العلوية أو تنفيذ مزامنة سجلات Vendoor.</p>
+        <button class="btn primary sm" onclick="triggerQuickVendoorLogsSync()">⚡ مزامنة سجلات Vendoor لهذا اليوم</button>
+      </div>
+    ` : ''}
+
     <!-- Operational Evaluation KPI Cards -->
     <div class="kpis">
       ${kpiCard('✓', fmt(totalConfirmed), 'Confirmed Orders', `Team Total · Avg <b>${avgConfirmedTeam}</b> / agent`, GREEN)}
@@ -11638,57 +11668,83 @@ function pages(){
 
     <!-- Master Employee Operational Evaluation Table -->
     <div class="panel" style="margin-top:20px">
-      <div class="hd">
+      <div class="hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
         <div>
-          <h3>👥 Operational Employee Evaluation & Comparison</h3>
-          <p>Real confirmed orders, added phone numbers, and phone duplication alerts per agent</p>
+          <h3>👥 Operational Employee Evaluation & Comparison (${(D.employees || []).length} Active CS Agents)</h3>
+          <p>Real confirmed orders, unique orders touched, deduplicated actions & cancellation rates. انقر على اسم أي موظف لفتح ملفه التشغيلي الكامل.</p>
+        </div>
+        <div>
+          <input type="text" id="scorecardSearchInput" placeholder="بحث باسم الموظف..." onkeyup="filterScorecardTable()" style="padding:6px 12px;border:1px solid #CBD5E1;border-radius:6px;font-size:12px;width:220px">
         </div>
       </div>
       <div class="tbl-scroll">
-        <table>
+        <table id="scorecardMasterTable">
           <thead>
             <tr>
-              <th style="width:50px">Rank</th>
-              <th>Employee</th>
-              <th style="text-align:right;color:#15803D">Confirmed Orders</th>
-              <th style="text-align:right;color:var(--slate)">vs Team Avg</th>
-              <th style="text-align:right;color:#0284C7">Added Phones</th>
-              <th style="text-align:right;color:var(--slate)">vs Team Avg</th>
-              <th style="text-align:right;color:#DC2626">Phone Alerts</th>
-              <th style="text-align:right">Match Rate %</th>
+              <th style="width:40px">Rank</th>
+              <th>Employee Name (اسم الموظف)</th>
+              <th>Status / Link</th>
               <th style="text-align:right">Real Actions</th>
+              <th style="text-align:right;color:#15803D">Confirmed (Printed)</th>
+              <th style="text-align:right;color:${PURPLE}">Pending</th>
+              <th style="text-align:right;color:${RED}">Cancelled</th>
+              <th style="text-align:right;color:#0284C7">Added Phones</th>
+              <th style="text-align:right;color:var(--navy)">Unique Orders</th>
               <th style="text-align:right">Cancel %</th>
+              <th style="text-align:right">Score</th>
+              <th style="text-align:center">Profile</th>
             </tr>
           </thead>
           <tbody>
             ${(D.employees||[]).map((e, idx) => {
               const conf = e.printed || e.confirmed_orders || 0;
+              const unqPrinted = e.unique_printed_orders || conf;
               const phones = e.alt || e.added_phones || 0;
-              const alertsCount = e.phone_match_alerts || 0;
-              const matchRate = conf > 0 ? ((alertsCount / conf) * 100).toFixed(1) : '0.0';
-              const confDiff = (conf - parseFloat(avgConfirmedTeam)).toFixed(1);
-              const phoneDiff = (phones - parseFloat(avgAddedPhonesTeam)).toFixed(1);
+              const pnd = e.pending || 0;
+              const unqPnd = e.unique_pending_orders || pnd;
+              const cnl = e.cancelled || 0;
+              const unqCnl = e.unique_cancelled_orders || cnl;
+              const unqTouched = e.unique_orders_touched || e.actions || 0;
+              const cancelRate = e.own_cancel_rate || 0;
+              const isApproved = Boolean(e.is_approved || e.identity_type === 'APPROVED_EMPLOYEE' || e.has_operational_privileges);
 
               return `
-                <tr>
+                <tr class="sc-emp-row" data-name="${escapeHtml(String(e.name).toLowerCase())}">
                   <td><span class="rk ${idx < 3 ? 'g' + (idx + 1) : ''}">${idx + 1}</span></td>
-                  <td class="nm-cell"><b>${escapeHtml(e.name)}</b></td>
-                  <td style="text-align:right;color:#15803D;font-weight:800;font-size:13.5px">${fmt(conf)}</td>
-                  <td style="text-align:right;font-size:12px;font-weight:600;color:${parseFloat(confDiff) >= 0 ? '#15803D' : '#DC2626'}">
-                    ${parseFloat(confDiff) >= 0 ? '+' + confDiff : confDiff}
+                  <td class="nm-cell" style="cursor:pointer" onclick="openEmployeeProfileModal('${escapeHtml(e.name)}', 'overview')" title="انقر لفتح الملف التشغيلي الشامل للموظف">
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span style="color:var(--blue);font-weight:700;text-decoration:underline">${escapeHtml(e.name)}</span>
+                    </div>
+                  </td>
+                  <td>
+                    ${isApproved 
+                      ? `<span class="tag sm" style="background:#DCFCE7;color:#15803D;font-weight:700;font-size:10.5px">✓ Approved</span>` 
+                      : `<span class="tag sm" style="background:#FEF3C7;color:#92400E;font-weight:700;font-size:10.5px">📜 Historical CS</span>`}
+                  </td>
+                  <td style="text-align:right;font-weight:800">${fmt(e.actions || 0)}</td>
+                  <td style="text-align:right;color:#15803D;font-weight:700">
+                    ${fmt(conf)}
+                    <span style="font-size:11px;color:var(--slate);font-weight:400">(${fmt(unqPrinted)} unq)</span>
+                  </td>
+                  <td style="text-align:right;color:${PURPLE};font-weight:700">
+                    ${fmt(pnd)}
+                    <span style="font-size:11px;color:var(--slate);font-weight:400">(${fmt(unqPnd)} unq)</span>
+                  </td>
+                  <td style="text-align:right;color:${RED};font-weight:700">
+                    ${fmt(cnl)}
+                    <span style="font-size:11px;color:var(--slate);font-weight:400">(${fmt(unqCnl)} unq)</span>
                   </td>
                   <td style="text-align:right;color:#0284C7;font-weight:700">${fmt(phones)}</td>
-                  <td style="text-align:right;font-size:12px;font-weight:600;color:${parseFloat(phoneDiff) >= 0 ? '#0284C7' : '#DC2626'}">
-                    ${parseFloat(phoneDiff) >= 0 ? '+' + phoneDiff : phoneDiff}
-                  </td>
+                  <td style="text-align:right;font-weight:800;color:var(--navy)">${fmt(unqTouched)}</td>
                   <td style="text-align:right;font-weight:700">
-                    ${alertsCount > 0 
-                      ? `<span class="tag" style="background:#FEE2E2;color:#DC2626;font-weight:800">⚠️ ${alertsCount}</span>` 
-                      : '<span style="color:var(--slate)">0</span>'}
+                    <span style="color:${cancelRate >= (D.team_cancel_rate || 10) * 1.5 ? RED : 'var(--slate)'}" title="${cnl} cancelled ÷ ${e.actions || 1} total actions">
+                      ${cancelRate}%
+                    </span>
                   </td>
-                  <td style="text-align:right;font-weight:700;color:${parseFloat(matchRate) > 5 ? '#DC2626' : 'var(--slate)'}">${matchRate}%</td>
-                  <td style="text-align:right"><b>${fmt(e.actions || 0)}</b></td>
-                  <td style="text-align:right"><b style="color:${e.own_cancel_rate >= D.team_cancel_rate * 1.5 ? RED : 'var(--slate)'}">${e.own_cancel_rate || 0}%</b></td>
+                  <td style="text-align:right;font-weight:700"><b>${e.performance_score || '-'}</b></td>
+                  <td style="text-align:center">
+                    <button class="btn sm" onclick="openEmployeeProfileModal('${escapeHtml(e.name)}', 'overview')" style="padding:3px 8px;font-size:11px;font-weight:700" title="عرض الملف الكامل">👤 Profile</button>
+                  </td>
                 </tr>
               `;
             }).join('')}
@@ -11696,6 +11752,46 @@ function pages(){
         </table>
       </div>
     </div>
+
+    <!-- Working Team — No Recorded Activity Section -->
+    ${(D.working_team_no_activity && D.working_team_no_activity.length > 0) ? `
+      <div class="panel" style="margin-top:20px;border-left:4px solid #F59E0B">
+        <div class="hd">
+          <div>
+            <h3 style="color:#92400E">📋 Working Team — No Recorded Activity (${D.working_team_no_activity.length} Agents)</h3>
+            <p>أعضاء فريق العمل المدرجون في جدول التشغيل لهذا التاريخ دون حركات مسجلة (غير محسوبين ضمن الموظفين ذوي النشاط الفعلي أعلاه)</p>
+          </div>
+        </div>
+        <div class="tbl-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Employee Name</th>
+                <th>Department</th>
+                <th>Roster Source</th>
+                <th>Live Status</th>
+                <th style="text-align:center">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${D.working_team_no_activity.map((emp, i) => `
+                <tr>
+                  <td><span class="rk">${i + 1}</span></td>
+                  <td><b style="color:var(--navy)">${escapeHtml(emp.name)}</b></td>
+                  <td><span class="tag sm">${escapeHtml(emp.department || 'CS')}</span></td>
+                  <td><span class="tag sm" style="font-size:11px">${escapeHtml(emp.source || 'ROSTER')}</span></td>
+                  <td><span class="tag sm" style="background:#FEF3C7;color:#92400E">IDLE / NO RECORDED ACTIVITY</span></td>
+                  <td style="text-align:center">
+                    <button class="btn sm" onclick="openEmployeeProfileModal('${escapeHtml(emp.name)}', 'overview')" style="padding:3px 8px;font-size:11px">👤 Profile</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    ` : ''}
   `;
 
   // Added Orders: CS ONLY for Top Contributors (Part 23, 33, 60, 85)
@@ -12084,10 +12180,11 @@ window.openEmployeeProfileModal = async function(employeeIdOrName, initialTab = 
       <div style="display:flex;gap:4px;padding:8px 20px;background:#F1F5F9;border-bottom:1px solid var(--line);overflow-x:auto" id="empModalTabs">
         <button class="btn sm tab-btn active" onclick="switchEmployeeModalTab('overview')" id="empTabBtn_overview">📊 Overview & 5 Pillars</button>
         <button class="btn sm tab-btn" onclick="switchEmployeeModalTab('actions')" id="empTabBtn_actions">⚡ Actions Breakdown</button>
+        <button class="btn sm tab-btn" onclick="switchEmployeeModalTab('activity_log')" id="empTabBtn_activity_log">📋 Activity History (${formatDisplayDate(currentWorkDate)})</button>
         <button class="btn sm tab-btn" onclick="switchEmployeeModalTab('orders')" id="empTabBtn_orders">📦 Unique Orders</button>
         <button class="btn sm tab-btn" onclick="switchEmployeeModalTab('assigned')" id="empTabBtn_assigned">📋 Assigned Orders</button>
         <button class="btn sm tab-btn" onclick="switchEmployeeModalTab('workload')" id="empTabBtn_workload">⏳ Current Workload</button>
-        <button class="btn sm tab-btn" onclick="switchEmployeeModalTab('history')" id="empTabBtn_history">📜 Historical Activity</button>
+        <button class="btn sm tab-btn" onclick="switchEmployeeModalTab('history')" id="empTabBtn_history">📜 Multi-Day Snapshots</button>
       </div>
 
       <!-- Modal Body Content -->
@@ -12473,6 +12570,94 @@ function renderEmployeeModalTab(tabName) {
         </div>
       `}
     `;
+  } else if (tabName === 'activity_log') {
+    const actTypes = Array.from(new Set(records.map(r => r.status).filter(Boolean)));
+    const sources = Array.from(new Set(records.map(r => r.source).filter(Boolean)));
+
+    body.innerHTML = `
+      <div style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div>
+          <h4 style="margin:0 0 4px 0;font-size:15px;color:var(--navy)">سجل الحركات التفصيلي — Activity History (${records.length} حركة)</h4>
+          <p style="margin:0;font-size:12px;color:var(--mut)">
+            تاريخ العمل: <b>${formatDisplayDate(data.work_date || currentWorkDate)}</b> · كل حركة قابلة للتتبع مع اسم المنفذ الأصلي ومصدرها
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <a href="/api/reports/export/excel?type=employee_profile&employee=${encodeURIComponent(emp.name)}&date=${encodeURIComponent(data.work_date || currentWorkDate)}" target="_blank" class="btn sm" style="background:#16A34A;color:#fff;text-decoration:none;font-weight:700">⬇ Excel</a>
+          <a href="/api/reports/export/csv?type=employee_profile&employee=${encodeURIComponent(emp.name)}&date=${encodeURIComponent(data.work_date || currentWorkDate)}" target="_blank" class="btn sm" style="background:#0284C7;color:#fff;text-decoration:none;font-weight:700">⬇ CSV</a>
+        </div>
+      </div>
+
+      <!-- Search & Filters Bar -->
+      <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;background:#F8FAFC;padding:10px 14px;border-radius:8px;border:1px solid var(--line)">
+        <div style="flex:1;min-width:180px">
+          <input type="text" id="empActSearchInput" placeholder="بحث برقم الأوردر أو تفاصيل الحركة..." oninput="filterEmployeeActivityHistory()" class="inp sm" style="width:100%">
+        </div>
+        <div style="min-width:140px">
+          <select id="empActTypeFilter" onchange="filterEmployeeActivityHistory()" class="filter" style="width:100%;height:32px;font-size:12px">
+            <option value="">جميع أنواع الحركات (${actTypes.length})</option>
+            ${actTypes.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
+          </select>
+        </div>
+        <div style="min-width:140px">
+          <select id="empActSourceFilter" onchange="filterEmployeeActivityHistory()" class="filter" style="width:100%;height:32px;font-size:12px">
+            <option value="">جميع المصادر</option>
+            ${sources.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      ${records.length === 0 ? `
+        <div style="padding:40px;text-align:center;background:#F8FAFC;border-radius:10px;color:var(--mut)">
+          لا توجد حركات تفصيلية مسجلة لهذا الموظف في تاريخ العمل المحدد (${formatDisplayDate(data.work_date || currentWorkDate)}).
+        </div>
+      ` : `
+        <div class="tbl-scroll" style="max-height:55vh;overflow-y:auto">
+          <table id="empActivityHistoryTable">
+            <thead>
+              <tr>
+                <th style="width:40px">#</th>
+                <th>Order Code</th>
+                <th>Action Type</th>
+                <th>Action Details</th>
+                <th>Original Actor / المنفذ الأصلي</th>
+                <th>Source</th>
+                <th style="text-align:right">Event Timestamp</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${records.map((r, idx) => `
+                <tr class="emp-act-row" 
+                    data-order="${escapeHtml(String(r.order_code || '').toLowerCase())}"
+                    data-type="${escapeHtml(String(r.status || '').toLowerCase())}"
+                    data-source="${escapeHtml(String(r.source || '').toLowerCase())}"
+                    data-text="${escapeHtml(String(r.action || '').toLowerCase())}">
+                  <td><span class="rk">${idx + 1}</span></td>
+                  <td>
+                    <b style="font-family:monospace;color:var(--navy);font-size:13px">${escapeHtml(r.order_code)}</b>
+                  </td>
+                  <td>
+                    <span class="tag sm" style="font-weight:700;background:${r.status === 'Printed' ? '#DCFCE7' : (r.status === 'Pending' ? '#F3E8FF' : (r.status === 'Cancelled' ? '#FEE2E2' : (r.status === 'Alt Phone' ? '#EFF6FF' : '#F1F5F9')))};color:${r.status === 'Printed' ? '#15803D' : (r.status === 'Pending' ? '#7C3AED' : (r.status === 'Cancelled' ? '#DC2626' : (r.status === 'Alt Phone' ? '#1D4ED8' : 'var(--navy)')))}">
+                      ${escapeHtml(r.status || 'Action')}
+                    </span>
+                  </td>
+                  <td style="font-size:12px;color:var(--navy)">${escapeHtml(r.action || '—')}</td>
+                  <td>
+                    <span style="font-weight:600;color:var(--navy)">${escapeHtml(r.raw_actor_name || emp.name)}</span>
+                  </td>
+                  <td>
+                    <span class="tag sm" style="font-size:11px;background:#F8FAFC;border:1px solid #E2E8F0">${escapeHtml(r.source || 'VENDOOR_LOGS')}</span>
+                  </td>
+                  <td style="text-align:right;font-size:11.5px;color:var(--slate);font-family:monospace">
+                    ${escapeHtml(r.event_datetime || '—')}
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `}
+    `;
   } else if (tabName === 'history') {
     const snaps = hist.snapshots || [];
     body.innerHTML = `
@@ -12529,6 +12714,26 @@ window.filterEmployeeOrderTable = function(query) {
   rows.forEach(r => {
     const code = r.getAttribute('data-order') || '';
     r.style.display = !q || code.includes(q) ? '' : 'none';
+  });
+};
+
+window.filterEmployeeActivityHistory = function() {
+  const q = (document.getElementById('empActSearchInput')?.value || '').trim().toLowerCase();
+  const typeFilter = (document.getElementById('empActTypeFilter')?.value || '').trim().toLowerCase();
+  const sourceFilter = (document.getElementById('empActSourceFilter')?.value || '').trim().toLowerCase();
+
+  const rows = document.querySelectorAll('#empActivityHistoryTable tbody tr.emp-act-row');
+  rows.forEach(r => {
+    const order = r.getAttribute('data-order') || '';
+    const type = r.getAttribute('data-type') || '';
+    const src = r.getAttribute('data-source') || '';
+    const text = r.getAttribute('data-text') || '';
+
+    const matchesQ = !q || order.includes(q) || text.includes(q);
+    const matchesType = !typeFilter || type === typeFilter;
+    const matchesSource = !sourceFilter || src === sourceFilter;
+
+    r.style.display = (matchesQ && matchesType && matchesSource) ? '' : 'none';
   });
 };
 
@@ -13064,7 +13269,9 @@ async function loadReportsView(tab = 'executive') {
               <tbody>
                 ${(r.rows || []).map(row => `
                   <tr>
-                    <td><b>${escapeHtml(row.employee_name)}</b></td>
+                    <td style="cursor:pointer" onclick="openEmployeeProfileModal('${escapeHtml(row.employee_name)}', 'overview')" title="عرض الملف الكامل للموظف">
+                      <b style="color:var(--blue);text-decoration:underline">${escapeHtml(row.employee_name)}</b>
+                    </td>
                     <td><span class="tag">${escapeHtml(row.team_membership || 'STANDARD')}</span></td>
                     <td style="text-align:right;color:#15803D;font-weight:800;font-size:13.5px">${fmt(row.confirmed_orders || 0)}</td>
                     <td style="text-align:right;color:#0284C7;font-weight:700">${fmt(row.added_phone_numbers || 0)}</td>
@@ -13275,19 +13482,23 @@ async function loadReportsView(tab = 'executive') {
                   <th style="text-align:right">Cancelled</th>
                   <th style="text-align:right">Cancel Rate</th>
                   <th style="text-align:right">Total GMV (EGP)</th>
+                  <th style="text-align:center">Report</th>
                 </tr>
               </thead>
               <tbody>
-                ${(r.rows || []).map(row => `
+                ${(r.rows || []).map(row => {
+                  const mktIdentifier = row.marketer_name || row.affiliate_code || '';
+                  const safeIdent = escapeHtml(mktIdentifier);
+                  return `
                   <tr>
-                    <td>
+                    <td style="cursor:pointer" onclick="openSingleMarketerModal('${safeIdent}')" title="انقر لعرض تقرير المسوق المستقل التفصيلي">
                       ${row.marketer_name 
-                        ? `<b style="color:var(--navy);font-size:13px">${escapeHtml(row.marketer_name)}</b>` 
+                        ? `<b style="color:var(--blue);font-size:13px;text-decoration:underline">${escapeHtml(row.marketer_name)}</b>` 
                         : `<span class="tag" style="background:#F1F5F9;color:var(--slate);font-style:italic">No Name in Source</span>`}
                     </td>
                     <td>
                       ${row.affiliate_code 
-                        ? `<span class="tag" style="background:#F3E8FF;color:#7E22CE;font-weight:800;font-family:monospace;font-size:12px">${escapeHtml(row.affiliate_code)}</span>` 
+                        ? `<span class="tag" style="background:#F3E8FF;color:#7E22CE;font-weight:800;font-family:monospace;font-size:12px;cursor:pointer" onclick="openSingleMarketerModal('${safeIdent}')">${escapeHtml(row.affiliate_code)}</span>` 
                         : `<span style="color:var(--mut);font-size:12px">—</span>`}
                     </td>
                     <td>
@@ -13307,8 +13518,11 @@ async function loadReportsView(tab = 'executive') {
                       </span>
                     </td>
                     <td style="text-align:right;font-weight:700">${fmt(row.total_value)}</td>
+                    <td style="text-align:center">
+                      <button class="btn sm" onclick="openSingleMarketerModal('${safeIdent}')" style="padding:3px 8px;font-size:11px;font-weight:700">📣 Report</button>
+                    </td>
                   </tr>
-                `).join('')}
+                `}).join('')}
               </tbody>
             </table>
           </div>
@@ -13465,6 +13679,177 @@ function filterMarketerTable() {
     trs[i].style.display = text.toLowerCase().includes(filter) ? '' : 'none';
   }
 }
+
+// -------------------------------------------------------------
+// COMPREHENSIVE SINGLE MARKETER REPORT MODAL
+// -------------------------------------------------------------
+window.openSingleMarketerModal = async function(marketerIdentifier) {
+  let modal = document.getElementById('marketerDetailModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'marketerDetailModal';
+    modal.className = 'modal-backdrop';
+    document.body.appendChild(modal);
+  }
+
+  const activeDate = currentWorkDate || new Date().toISOString().slice(0, 10);
+  const startDate = currentReportStartDate || activeDate;
+  const endDate = currentReportEndDate || activeDate;
+  const dateMode = currentReportMode || 'day';
+
+  modal.innerHTML = `
+    <div class="modal" style="max-width:960px;width:96%;max-height:90vh;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;box-shadow:0 20px 45px rgba(0,0,0,0.2)">
+      <div class="hd" style="display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-bottom:1px solid var(--line);background:#F8FAFC">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div class="av" style="width:42px;height:42px;font-size:16px;background:#7C3AED;color:#fff">${initials(String(marketerIdentifier || 'M'))}</div>
+          <div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <h3 style="margin:0;font-size:17px;color:var(--navy)" id="mktModalTitle">${escapeHtml(String(marketerIdentifier))}</h3>
+              <span class="tag sm" style="background:#F3E8FF;color:#7C3AED;font-weight:700">📣 Affiliate Marketer</span>
+            </div>
+            <p style="margin:2px 0 0 0;font-size:12px;color:var(--mut)">
+              النطاق الزمني: <b>${dateMode === 'day' ? formatDisplayDate(activeDate) : `${startDate} → ${endDate}`}</b> · المرجعية: <b>Vendoor Direct Tracking</b>
+            </p>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <a href="/api/reports/export/excel?type=single_marketer&marketer=${encodeURIComponent(marketerIdentifier)}&date_mode=${dateMode}&target_date=${activeDate}&start_date=${startDate}&end_date=${endDate}" target="_blank" class="btn sm" style="background:#16A34A;color:#fff;text-decoration:none;font-weight:700">⬇ Excel</a>
+          <a href="/api/reports/export/csv?type=single_marketer&marketer=${encodeURIComponent(marketerIdentifier)}&date_mode=${dateMode}&target_date=${activeDate}&start_date=${startDate}&end_date=${endDate}" target="_blank" class="btn sm" style="background:#0284C7;color:#fff;text-decoration:none;font-weight:700">⬇ CSV</a>
+          <button class="btn sm" onclick="document.getElementById('marketerDetailModal').style.display='none'" style="font-size:18px;padding:4px 10px;line-height:1">&times;</button>
+        </div>
+      </div>
+
+      <div id="marketerModalBody" style="padding:22px;overflow-y:auto;flex:1;background:#fff">
+        <div style="text-align:center;padding:50px;color:var(--mut)">⏳ جاري تحميل تقرير المسوق التفصيلي...</div>
+      </div>
+    </div>
+  `;
+  modal.style.display = 'flex';
+
+  try {
+    const res = await apiFetch(`/api/reports/marketer/single?code=${encodeURIComponent(marketerIdentifier)}&date_mode=${dateMode}&target_date=${activeDate}&start_date=${startDate}&end_date=${endDate}`);
+    if (!res || !res.success) {
+      document.getElementById('marketerModalBody').innerHTML = `
+        <div style="padding:40px;text-align:center;color:#DC2626">✕ فشل في تحميل تقرير المسوق: ${escapeHtml(res?.error || 'البيانات غير متوفرة')}</div>
+      `;
+      return;
+    }
+
+    const mkt = res.marketer || {};
+    const met = res.metrics || {};
+    const orders = res.orders || [];
+
+    document.getElementById('marketerModalBody').innerHTML = `
+      <!-- Notice Banner: E-Commerce Partner Separation -->
+      <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:12px 16px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div>
+          <b style="color:var(--blue);font-size:13px">📣 شريك تجارة إلكترونية مستقل (Independent Marketer / Affiliate)</b>
+          <p style="margin:2px 0 0 0;font-size:12px;color:var(--slate)">
+            المسوق ليس موظف CS ولا يمتلك صلاحيات تشغيلية. تُقاس نتائجه بدورة حياة طلباته المنسوبة حصراً دون احتساب حركات موظفي CS.
+          </p>
+        </div>
+        <div>
+          <span class="tag" style="background:#fff;border:1px solid #CBD5E1;font-weight:700">Affiliate Code: ${escapeHtml(mkt.affiliate_code || 'None')}</span>
+        </div>
+      </div>
+
+      <!-- Key Performance Indicators -->
+      <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:12px;margin-bottom:20px">
+        <div class="card" style="padding:14px;border-left:4px solid var(--navy)">
+          <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Total Orders</div>
+          <div style="font-size:22px;font-weight:900;color:var(--navy);margin-top:2px">${fmt(met.total_orders)}</div>
+          <div style="font-size:11px;color:var(--mut)">New: ${fmt(met.new_orders)} | Pend: ${fmt(met.pending_orders)}</div>
+        </div>
+
+        <div class="card" style="padding:14px;border-left:4px solid #16A34A">
+          <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Printed / Confirmed</div>
+          <div style="font-size:22px;font-weight:900;color:#16A34A;margin-top:2px">${fmt(met.printed_orders)}</div>
+          <div style="font-size:11px;color:var(--mut)">Delivered: ${fmt(met.completed_orders)}</div>
+        </div>
+
+        <div class="card" style="padding:14px;border-left:4px solid #DC2626">
+          <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Cancellation Rate</div>
+          <div style="font-size:22px;font-weight:900;color:#DC2626;margin-top:2px">${met.cancellation_rate || 0}%</div>
+          <div style="font-size:11px;color:var(--mut)">${fmt(met.cancelled_orders)} cancelled orders</div>
+        </div>
+
+        <div class="card" style="padding:14px;border-left:4px solid var(--blue)">
+          <div style="font-size:11px;color:var(--slate);font-weight:700;text-transform:uppercase">Total GMV (Revenue)</div>
+          <div style="font-size:22px;font-weight:900;color:var(--blue);margin-top:2px">${fmt(met.total_gmv)} <span style="font-size:12px">EGP</span></div>
+          <div style="font-size:11px;color:var(--mut)">${met.merchants_count || (met.linked_merchants || []).length} Merchants</div>
+        </div>
+      </div>
+
+      <!-- Promoted Merchants Pills -->
+      ${(met.linked_merchants || []).length > 0 ? `
+        <div style="margin-bottom:18px;background:#F8FAFC;padding:12px 16px;border-radius:8px;border:1px solid var(--line)">
+          <b style="font-size:12px;color:var(--navy);display:block;margin-bottom:6px">🏪 التجار المرتبطون / المروج لهم (${(met.linked_merchants || []).length} Merchants):</b>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${(met.linked_merchants || []).map(m => `<span class="tag" style="background:#fff;border:1px solid #CBD5E1;font-weight:600;font-size:11.5px">${escapeHtml(m)}</span>`).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Itemized Orders Table -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:10px">
+        <h4 style="margin:0;font-size:14px;color:var(--navy)">📦 سجل الأوردرات المنسوبة للمسوق (${orders.length} طلب)</h4>
+        <input type="text" placeholder="تصفية بكود الأوردر أو التاجر..." oninput="filterMarketerOrderTable(this.value)" class="inp sm" style="width:220px">
+      </div>
+
+      ${orders.length === 0 ? `
+        <div style="padding:32px;text-align:center;color:var(--mut);background:#F8FAFC;border-radius:8px">
+          لا توجد أوردرات مسجلة لهذا المسوق في الفترة المحددة.
+        </div>
+      ` : `
+        <div class="tbl-scroll" style="max-height:50vh;overflow-y:auto">
+          <table id="mktOrdersDetailTable">
+            <thead>
+              <tr>
+                <th style="width:40px">#</th>
+                <th>Order Code</th>
+                <th>Status</th>
+                <th>Merchant / Account</th>
+                <th style="text-align:right">Price (EGP)</th>
+                <th>City</th>
+                <th style="text-align:right">Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${orders.map((o, idx) => `
+                <tr class="mkt-ord-row" data-search="${escapeHtml(String(o.order_code + ' ' + (o.merchant_name || '') + ' ' + (o.status || '')).toLowerCase())}">
+                  <td><span class="rk">${idx + 1}</span></td>
+                  <td><b style="font-family:monospace;color:var(--navy);font-size:13px">${escapeHtml(o.order_code)}</b></td>
+                  <td>
+                    <span class="tag sm" style="font-weight:700;background:${String(o.status).toLowerCase().includes('print') ? '#DCFCE7' : (String(o.status).toLowerCase().includes('pending') ? '#F3E8FF' : (String(o.status).toLowerCase().includes('cancel') ? '#FEE2E2' : '#EFF6FF'))};color:${String(o.status).toLowerCase().includes('print') ? '#15803D' : (String(o.status).toLowerCase().includes('pending') ? '#7C3AED' : (String(o.status).toLowerCase().includes('cancel') ? '#DC2626' : '#1D4ED8'))}">
+                      ${escapeHtml(o.status || 'New')}
+                    </span>
+                  </td>
+                  <td><b>${escapeHtml(o.merchant_name || o.account || '—')}</b></td>
+                  <td style="text-align:right;font-weight:700">${fmt(o.total_price || 0)}</td>
+                  <td>${escapeHtml(o.city || '—')}</td>
+                  <td style="text-align:right;font-size:11.5px;color:var(--slate);font-family:monospace">${escapeHtml(o.date || '—')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `}
+    `;
+  } catch (err) {
+    document.getElementById('marketerModalBody').innerHTML = `
+      <div style="padding:40px;text-align:center;color:#DC2626">✕ خطأ في الاتصال بالخادم: ${escapeHtml(err.message)}</div>
+    `;
+  }
+};
+
+window.filterMarketerOrderTable = function(query) {
+  const q = String(query || '').trim().toLowerCase();
+  const rows = document.querySelectorAll('#mktOrdersDetailTable tbody tr.mkt-ord-row');
+  rows.forEach(r => {
+    const text = r.getAttribute('data-search') || '';
+    r.style.display = !q || text.includes(q) ? '' : 'none';
+  });
+};
 
 async function loadUploadsManagementView() {
   const container = document.getElementById('uploadsManagementContainer');

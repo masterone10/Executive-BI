@@ -2703,11 +2703,21 @@ export function getOperationalDashboardData(workDate, options = {}) {
   }
 
   // 1. Validate snapshot against canonical raw logs if present
-  const rawRows = db.prepare(`
+  let rawRows = db.prepare(`
     SELECT employee_name, action, status, order_code, event_datetime, is_cs
     FROM raw_log_records 
     WHERE work_date = ?
   `).all(targetDate);
+
+  if (rawRows.length === 0) {
+    try {
+      rawRows = db.prepare(`
+        SELECT employee_name, action, action as status, order_code, timestamp_str as event_datetime, 1 as is_cs
+        FROM vendoor_logs
+        WHERE work_date = ?
+      `).all(targetDate);
+    } catch (_) {}
+  }
 
   let snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(targetDate);
 
@@ -2864,6 +2874,18 @@ export function getOperationalDashboardData(workDate, options = {}) {
 
       const dedup = parsed.dedup || { removed: 0, removed_pct: 0 };
 
+      let workingTeamNoActivity = [];
+      try {
+        const activeNames = new Set((emps || []).map(e => normalizeEmployeeName(e.name || e.employee_name)));
+        const dwtRows = db.prepare(`
+          SELECT dwt.employee_id, e.name, e.department, dwt.source, dwt.live_status
+          FROM daily_working_team dwt
+          JOIN employees e ON dwt.employee_id = e.id
+          WHERE dwt.work_date = ? AND (dwt.is_working = 1 OR dwt.is_working IS NULL)
+        `).all(targetDate);
+        workingTeamNoActivity = dwtRows.filter(r => !activeNames.has(normalizeEmployeeName(r.name)));
+      } catch (_) {}
+
       return {
         exists: parsed.exists ?? (emps.length > 0 || log_totals.actions > 0 || totalNew > 0 || cwoPending > 0),
         date: targetDate,
@@ -2872,6 +2894,7 @@ export function getOperationalDashboardData(workDate, options = {}) {
         is_time_window_active: false,
         ...parsed,
         employees: emps,
+        working_team_no_activity: workingTeamNoActivity,
         top10Performers: [...emps].sort((a, b) => (b.performance_score || 0) - (a.performance_score || 0)).slice(0, 10),
         mostActive: [...emps].sort((a, b) => (b.actions || 0) - (a.actions || 0)).slice(0, 10),
         topCSContributor: rawTopCS[0] || null,

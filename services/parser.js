@@ -557,6 +557,12 @@ export function matchEmployeeInMaster(name, dbEmployeesMap = null) {
   const norm = normalizeEmployeeName(raw);
   if (!norm) return null;
 
+  if (!dbEmployeesMap) {
+    try {
+      dbEmployeesMap = db.prepare('SELECT id, name, department, active, status, team_membership FROM employees').all();
+    } catch (_) {}
+  }
+
   if (!dbEmployeesMap) return null;
 
   if (dbEmployeesMap instanceof Map) {
