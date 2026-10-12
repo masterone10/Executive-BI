@@ -739,28 +739,51 @@ export function saveAccountDaySchedule({
   const existing = db.prepare('SELECT * FROM account_schedules WHERE account = ? COLLATE NOCASE').get(cleanAcc);
   const targetAccountName = existing ? existing.account : cleanAcc;
 
-  // Resolve start and end times
-  let finalNewStart = new_start_time !== null && new_start_time !== undefined ? (String(new_start_time).trim() || null) : null;
-  let finalNewEnd = new_end_time !== null && new_end_time !== undefined ? (String(new_end_time).trim() || null) : null;
-  let finalPendStart = pending_start_time !== null && pending_start_time !== undefined ? (String(pending_start_time).trim() || null) : null;
-  let finalPendEnd = pending_end_time !== null && pending_end_time !== undefined ? (String(pending_end_time).trim() || null) : null;
-  let finalNewEnabled = new_enabled !== null && new_enabled !== undefined ? Boolean(new_enabled) : null;
-  let finalPendEnabled = pending_enabled !== null && pending_enabled !== undefined ? Boolean(pending_enabled) : null;
+  // Resolve start and end times distinguishing provided vs omitted
+  let hasNewStart = new_start_time !== undefined;
+  let hasNewEnd = new_end_time !== undefined;
+  let hasPendStart = pending_start_time !== undefined;
+  let hasPendEnd = pending_end_time !== undefined;
+  let hasNewEnabled = new_enabled !== undefined && new_enabled !== null;
+  let hasPendEnabled = pending_enabled !== undefined && pending_enabled !== null;
 
-  if (enabled !== null && enabled !== undefined) {
-    if (normStatus.includes('PENDING')) finalPendEnabled = Boolean(enabled);
-    else finalNewEnabled = Boolean(enabled);
+  let finalNewStart = hasNewStart ? (new_start_time !== null ? String(new_start_time).trim() : '') : undefined;
+  let finalNewEnd = hasNewEnd ? (new_end_time !== null ? String(new_end_time).trim() : '') : undefined;
+  let finalPendStart = hasPendStart ? (pending_start_time !== null ? String(pending_start_time).trim() : '') : undefined;
+  let finalPendEnd = hasPendEnd ? (pending_end_time !== null ? String(pending_end_time).trim() : '') : undefined;
+  let finalNewEnabled = hasNewEnabled ? Boolean(new_enabled) : undefined;
+  let finalPendEnabled = hasPendEnabled ? Boolean(pending_enabled) : undefined;
+
+  if (start !== undefined) {
+    const cleanStart = start !== null ? String(start).trim() : '';
+    if (normStatus.includes('PENDING')) {
+      finalPendStart = cleanStart;
+      hasPendStart = true;
+    } else {
+      finalNewStart = cleanStart;
+      hasNewStart = true;
+    }
   }
 
-  if (start !== null && start !== undefined) {
-    const cleanStart = String(start).trim() || null;
-    if (normStatus.includes('PENDING')) finalPendStart = cleanStart;
-    else finalNewStart = cleanStart;
+  if (end !== undefined) {
+    const cleanEnd = end !== null ? String(end).trim() : '';
+    if (normStatus.includes('PENDING')) {
+      finalPendEnd = cleanEnd;
+      hasPendEnd = true;
+    } else {
+      finalNewEnd = cleanEnd;
+      hasNewEnd = true;
+    }
   }
-  if (end !== null && end !== undefined) {
-    const cleanEnd = String(end).trim() || null;
-    if (normStatus.includes('PENDING')) finalPendEnd = cleanEnd;
-    else finalNewEnd = cleanEnd;
+
+  if (enabled !== undefined && enabled !== null) {
+    if (normStatus.includes('PENDING')) {
+      finalPendEnabled = Boolean(enabled);
+      hasPendEnabled = true;
+    } else {
+      finalNewEnabled = Boolean(enabled);
+      hasNewEnabled = true;
+    }
   }
 
   // Load existing day_schedules_json from SQLite
@@ -780,13 +803,13 @@ export function saveAccountDaySchedule({
 
   if (normDay === 'all') {
     // Updating Default Schedule
-    const ns = finalNewStart !== null ? finalNewStart : (existing ? existing.new_start_time : null);
-    const ne = finalNewEnd !== null ? finalNewEnd : (existing ? existing.new_end_time : null);
-    const ps = finalPendStart !== null ? finalPendStart : (existing ? existing.pending_start_time : null);
-    const pe = finalPendEnd !== null ? finalPendEnd : (existing ? existing.pending_end_time : null);
+    const ns = hasNewStart ? (finalNewStart || null) : (existing ? existing.new_start_time : null);
+    const ne = hasNewEnd ? (finalNewEnd || null) : (existing ? existing.new_end_time : null);
+    const ps = hasPendStart ? (finalPendStart || null) : (existing ? existing.pending_start_time : null);
+    const pe = hasPendEnd ? (finalPendEnd || null) : (existing ? existing.pending_end_time : null);
 
-    const nEn = finalNewEnabled !== null ? (finalNewEnabled ? 1 : 0) : (existing?.new_enabled !== undefined ? existing.new_enabled : 1);
-    const pEn = finalPendEnabled !== null ? (finalPendEnabled ? 1 : 0) : (existing?.pending_enabled !== undefined ? existing.pending_enabled : 1);
+    const nEn = hasNewEnabled ? (finalNewEnabled ? 1 : 0) : (existing?.new_enabled !== undefined ? existing.new_enabled : 1);
+    const pEn = hasPendEnabled ? (finalPendEnabled ? 1 : 0) : (existing?.pending_enabled !== undefined ? existing.pending_enabled : 1);
 
     db.prepare(`
       INSERT INTO account_schedules (
@@ -809,12 +832,12 @@ export function saveAccountDaySchedule({
     // Updating Specific Day Schedule
     const currentDayEntry = daySchedules[normDay] || {};
     const updatedDayEntry = {
-      new_start_time: finalNewStart !== null ? finalNewStart : (currentDayEntry.new_start_time || ''),
-      new_end_time: finalNewEnd !== null ? finalNewEnd : (currentDayEntry.new_end_time || ''),
-      pending_start_time: finalPendStart !== null ? finalPendStart : (currentDayEntry.pending_start_time || ''),
-      pending_end_time: finalPendEnd !== null ? finalPendEnd : (currentDayEntry.pending_end_time || ''),
-      new_enabled: finalNewEnabled !== null ? finalNewEnabled : (currentDayEntry.new_enabled !== undefined ? currentDayEntry.new_enabled : true),
-      pending_enabled: finalPendEnabled !== null ? finalPendEnabled : (currentDayEntry.pending_enabled !== undefined ? currentDayEntry.pending_enabled : true)
+      new_start_time: hasNewStart ? finalNewStart : (currentDayEntry.new_start_time || ''),
+      new_end_time: hasNewEnd ? finalNewEnd : (currentDayEntry.new_end_time || ''),
+      pending_start_time: hasPendStart ? finalPendStart : (currentDayEntry.pending_start_time || ''),
+      pending_end_time: hasPendEnd ? finalPendEnd : (currentDayEntry.pending_end_time || ''),
+      new_enabled: hasNewEnabled ? finalNewEnabled : (currentDayEntry.new_enabled !== undefined ? currentDayEntry.new_enabled : true),
+      pending_enabled: hasPendEnabled ? finalPendEnabled : (currentDayEntry.pending_enabled !== undefined ? currentDayEntry.pending_enabled : true)
     };
 
     daySchedules[normDay] = updatedDayEntry;

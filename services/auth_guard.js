@@ -75,46 +75,84 @@ export const ROLE_PERMISSIONS = Object.freeze({
   ]
 });
 
-// Known system tokens (can be configured via environment)
-// In production, fallback static tokens are strictly forbidden to prevent hardcoded credential vulnerabilities.
+// Configured system tokens from environment
 const isProd = process.env.NODE_ENV === 'production';
 const VALID_TOKENS = new Map();
-if (process.env.ADMIN_API_TOKEN) {
-  VALID_TOKENS.set(process.env.ADMIN_API_TOKEN.trim(), { user: 'Admin User', role: USER_ROLES.ADMIN });
-} else if (!isProd) {
-  VALID_TOKENS.set('admin_token_enterprise_bi', { user: 'Admin User', role: USER_ROLES.ADMIN });
+
+// Dynamic sessions store for authenticated logins
+const ACTIVE_SESSIONS = new Map();
+
+export function registerSystemToken(token, user, role, employeeId = null) {
+  if (!token || typeof token !== 'string') return;
+  const clean = token.trim();
+  if (!clean) return;
+  VALID_TOKENS.set(clean, {
+    user: user || 'System User',
+    role: role || USER_ROLES.SUPERVISOR,
+    employeeId: employeeId ? parseInt(employeeId, 10) : null
+  });
 }
 
-if (process.env.SUPERVISOR_API_TOKEN) {
-  VALID_TOKENS.set(process.env.SUPERVISOR_API_TOKEN.trim(), { user: 'Supervisor User', role: USER_ROLES.SUPERVISOR });
-} else if (!isProd) {
-  VALID_TOKENS.set('supervisor_token_cs_bi', { user: 'Supervisor User', role: USER_ROLES.SUPERVISOR });
+export function createSessionToken(user, role, employeeId = null, ttlMs = 24 * 60 * 60 * 1000) {
+  const crypto = globalThis.crypto;
+  const token = crypto && crypto.randomUUID 
+    ? 'cs_sess_' + crypto.randomUUID().replace(/-/g, '') 
+    : 'cs_sess_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  
+  ACTIVE_SESSIONS.set(token, {
+    user: user || (role === USER_ROLES.CS_EMPLOYEE ? 'CS Employee' : 'Supervisor'),
+    role,
+    employeeId: employeeId ? parseInt(employeeId, 10) : null,
+    expiresAt: Date.now() + ttlMs
+  });
+  return token;
 }
 
-if (process.env.CS_AGENT_API_TOKEN) {
-  VALID_TOKENS.set(process.env.CS_AGENT_API_TOKEN.trim(), { user: 'CS Agent', role: USER_ROLES.CS_EMPLOYEE });
-} else if (!isProd) {
-  VALID_TOKENS.set('cs_agent_token', { user: 'CS Agent', role: USER_ROLES.CS_EMPLOYEE });
+export function revokeSessionToken(token) {
+  if (token) ACTIVE_SESSIONS.delete(token);
+}
+
+// Load env tokens
+if (process.env.ADMIN_API_TOKEN && process.env.ADMIN_API_TOKEN.trim()) {
+  registerSystemToken(process.env.ADMIN_API_TOKEN, 'Admin User', USER_ROLES.ADMIN);
+}
+if (process.env.SUPERVISOR_API_TOKEN && process.env.SUPERVISOR_API_TOKEN.trim()) {
+  registerSystemToken(process.env.SUPERVISOR_API_TOKEN, 'Supervisor User', USER_ROLES.SUPERVISOR);
+}
+if (process.env.CS_AGENT_API_TOKEN && process.env.CS_AGENT_API_TOKEN.trim()) {
+  registerSystemToken(process.env.CS_AGENT_API_TOKEN, 'CS Agent', USER_ROLES.CS_EMPLOYEE);
+}
+
+// In development or test, initialize a secure bootstrap token if none are set
+let devBootstrapToken = null;
+if (!isProd) {
+  devBootstrapToken = process.env.DEV_BOOTSTRAP_TOKEN || 'cs_dev_supervisor_bootstrap_token';
+  registerSystemToken(devBootstrapToken, 'Supervisor Dev', USER_ROLES.SUPERVISOR);
+}
+
+export function getDevBootstrapToken() {
+  return devBootstrapToken;
 }
 
 /**
  * Extracts and verifies user identity from incoming HTTP request.
+ * Strictly rejects forged headers (x-user-role, x-role, body.role, query.role)
+ * unless validated against a real token or session.
  */
 export function extractUserIdentity(req) {
-  const isTestEnv = process.env.NODE_ENV === 'test' || 
-    process.env.npm_lifecycle_event?.includes('test') || 
-    process.argv.some(arg => typeof arg === 'string' && (arg.includes('test') || arg.includes('spec')));
-
   const authHeader = req.headers['authorization'] || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : (req.headers['x-api-token'] || null);
+  const token = authHeader.startsWith('Bearer ') 
+    ? authHeader.slice(7).trim() 
+    : (req.headers['x-api-token'] || req.headers['x-session-token'] || null);
 
-  // 1. Valid token lookup
+  // 1. Check configured system tokens
   if (token && VALID_TOKENS.has(token)) {
     const info = VALID_TOKENS.get(token);
     const perms = ROLE_PERMISSIONS[info.role] || [];
     return {
       user: info.user,
       role: info.role,
+      employeeId: info.employeeId,
       token,
       permissions: perms,
       isSupervisor: info.role === USER_ROLES.SUPERVISOR || info.role === USER_ROLES.MANAGER || info.role === USER_ROLES.ADMIN,
@@ -123,65 +161,51 @@ export function extractUserIdentity(req) {
     };
   }
 
-  // 2. In strict production mode, NEVER trust x-user-role, body.role, or query.role!
-  // Production requests without a validated token fail-closed as ANONYMOUS.
-  if (process.env.NODE_ENV === 'production' && !isTestEnv) {
-    return {
-      user: 'Anonymous',
-      role: USER_ROLES.ANONYMOUS,
-      token: null,
-      permissions: ROLE_PERMISSIONS.ANONYMOUS,
-      isSupervisor: false,
-      isCsEmployee: false,
-      isAuthenticated: false
-    };
+  // 2. Check active dynamic sessions
+  if (token && ACTIVE_SESSIONS.has(token)) {
+    const sess = ACTIVE_SESSIONS.get(token);
+    if (sess.expiresAt && Date.now() > sess.expiresAt) {
+      ACTIVE_SESSIONS.delete(token);
+    } else {
+      const perms = ROLE_PERMISSIONS[sess.role] || [];
+      return {
+        user: sess.user,
+        role: sess.role,
+        employeeId: sess.employeeId,
+        token,
+        permissions: perms,
+        isSupervisor: sess.role === USER_ROLES.SUPERVISOR || sess.role === USER_ROLES.MANAGER || sess.role === USER_ROLES.ADMIN,
+        isCsEmployee: sess.role === USER_ROLES.CS_EMPLOYEE,
+        isAuthenticated: true
+      };
+    }
   }
 
-  // 3. In automated test/sandbox environments, support test runner headers (x-user-role)
-  if (isTestEnv || process.env.NODE_ENV !== 'production') {
-    const rawRole = (
-      req.headers['x-user-role'] ||
-      req.headers['x-role'] ||
-      ''
-    ).trim().toUpperCase();
+  // 3. For test environment with explicit test token
+  const isTestEnv = process.env.NODE_ENV === 'test' || 
+    process.env.npm_lifecycle_event?.includes('test') || 
+    process.argv.some(arg => typeof arg === 'string' && (arg.includes('test') || arg.includes('spec')));
 
-    const rawUser = (
-      req.headers['x-user'] ||
-      req.headers['x-user-id'] ||
-      req.body?.operator ||
-      req.query?.user ||
-      'Supervisor'
-    ).trim();
-
-    let role = USER_ROLES.SUPERVISOR;
-    if (rawRole === 'CS_EMPLOYEE' || rawRole === 'EMPLOYEE' || rawRole === 'AGENT') {
-      role = USER_ROLES.CS_EMPLOYEE;
-    } else if (rawRole === 'MANAGER') {
-      role = USER_ROLES.MANAGER;
-    } else if (rawRole === 'ADMIN') {
-      role = USER_ROLES.ADMIN;
-    } else if (rawRole === 'SUPERVISOR') {
-      role = USER_ROLES.SUPERVISOR;
-    } else if (!rawRole && token === 'cs_agent_token') {
-      role = USER_ROLES.CS_EMPLOYEE;
-    }
-
-    const perms = ROLE_PERMISSIONS[role] || [];
+  if (isTestEnv && req.headers['x-test-auth-token'] && VALID_TOKENS.has(req.headers['x-test-auth-token'])) {
+    const info = VALID_TOKENS.get(req.headers['x-test-auth-token']);
+    const perms = ROLE_PERMISSIONS[info.role] || [];
     return {
-      user: rawUser || (role === USER_ROLES.CS_EMPLOYEE ? 'CS Agent' : 'Supervisor'),
-      role,
-      token: token || 'dev_session',
+      user: info.user,
+      role: info.role,
+      employeeId: info.employeeId,
+      token: req.headers['x-test-auth-token'],
       permissions: perms,
-      isSupervisor: role === USER_ROLES.SUPERVISOR || role === USER_ROLES.MANAGER || role === USER_ROLES.ADMIN,
-      isCsEmployee: role === USER_ROLES.CS_EMPLOYEE,
+      isSupervisor: info.role === USER_ROLES.SUPERVISOR || info.role === USER_ROLES.MANAGER || info.role === USER_ROLES.ADMIN,
+      isCsEmployee: info.role === USER_ROLES.CS_EMPLOYEE,
       isAuthenticated: true
     };
   }
 
-  // 3. Fail closed in production for unauthenticated requests
+  // 4. Fail closed for all unauthenticated requests
   return {
     user: 'Anonymous',
     role: USER_ROLES.ANONYMOUS,
+    employeeId: null,
     token: null,
     permissions: ROLE_PERMISSIONS.ANONYMOUS,
     isSupervisor: false,
@@ -246,4 +270,32 @@ export function isSupervisor(req) {
 }
 
 export const requireSupervisor = requireRole([USER_ROLES.SUPERVISOR, USER_ROLES.MANAGER, USER_ROLES.ADMIN]);
+export const requireAuth = requireRole([USER_ROLES.SUPERVISOR, USER_ROLES.MANAGER, USER_ROLES.ADMIN, USER_ROLES.CS_EMPLOYEE]);
+export const requireCsOrSupervisor = requireAuth;
+
+/**
+ * Validates that an action executed on behalf of a specific employee ID
+ * is authorized by the caller. CS Agents can only act on their own ID;
+ * Supervisors/Admins can act on behalf of any employee.
+ */
+export function assertEmployeeAuthorization(req, targetEmployeeId) {
+  const identity = req.userIdentity || extractUserIdentity(req);
+  if (!identity.isAuthenticated) {
+    throw new Error('UNAUTHORIZED: Authentication required.');
+  }
+  if (identity.isSupervisor) {
+    return true;
+  }
+  if (identity.isCsEmployee) {
+    if (!targetEmployeeId) {
+      throw new Error('EMPLOYEE_ID_REQUIRED: CS employee must provide employee identity.');
+    }
+    const targetNum = parseInt(targetEmployeeId, 10);
+    if (identity.employeeId && identity.employeeId !== targetNum) {
+      throw new Error('FORBIDDEN_EMPLOYEE_MISMATCH: CS agents cannot perform actions on behalf of another employee.');
+    }
+    return true;
+  }
+  throw new Error('ROLE_PERMISSION_DENIED: Unauthorized action.');
+}
 

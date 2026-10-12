@@ -3591,21 +3591,29 @@ export function completeOrder(workDate, orderCode, employeeId) {
   return { success: true, work_state: 'COMPLETED', order_code: cleanCode };
 }
 
-export function cancelOrder(workDate, orderCode, employeeId = null, reason = 'Order Cancelled') {
+export function cancelOrder(workDate, orderCode, employeeId = null, reason = 'Order Cancelled', callerIdentity = null) {
   const date = workDate || getCairoBusinessDate();
   const cleanCode = String(orderCode || '').trim();
+  if (!cleanCode) throw new Error('Order code is required for cancellation');
+
+  // Cancellation strictly requires an authenticated session and verified employee/supervisor
+  if (!employeeId && !callerIdentity?.isSupervisor && !callerIdentity?.isAuthenticated) {
+    throw new Error('UNAUTHORIZED_CANCEL: Order cancellation requires an authenticated employee or supervisor session.');
+  }
 
   let emp = null;
   if (employeeId) {
     emp = assertActiveCsEmployee(employeeId, date);
+  } else if (callerIdentity?.employeeId) {
+    emp = assertActiveCsEmployee(callerIdentity.employeeId, date);
   }
 
   const order = db.prepare('SELECT * FROM current_work_orders WHERE work_date = ? AND order_code = ?').get(date, cleanCode);
   if (!order) throw new Error(`Order ${cleanCode} not found on date ${date}`);
 
   const now = new Date().toISOString();
-  const empId = emp ? emp.id : order.assigned_employee_id;
-  const empName = emp ? emp.name : order.assigned_employee_name;
+  const empId = emp ? emp.id : (callerIdentity?.employeeId || order.assigned_employee_id);
+  const empName = emp ? emp.name : (callerIdentity?.user || order.assigned_employee_name || 'Supervisor');
 
   db.transaction(() => {
     db.prepare(`

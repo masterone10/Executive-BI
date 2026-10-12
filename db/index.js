@@ -666,7 +666,7 @@ export function runMigrations(database = db) {
         database.exec("ALTER TABLE raw_log_records ADD COLUMN work_date TEXT");
       }
       if (!cols.some(c => c.name === 'is_cs')) {
-        database.exec("ALTER TABLE raw_log_records ADD COLUMN is_cs INTEGER DEFAULT 1");
+        database.exec("ALTER TABLE raw_log_records ADD COLUMN is_cs INTEGER DEFAULT 0");
       }
       if (!cols.some(c => c.name === 'is_deduped')) {
         database.exec("ALTER TABLE raw_log_records ADD COLUMN is_deduped INTEGER DEFAULT 1");
@@ -676,8 +676,41 @@ export function runMigrations(database = db) {
       database.exec("CREATE INDEX IF NOT EXISTS idx_raw_log_date_emp ON raw_log_records(work_date, employee_name)");
       database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_logs_dedup ON raw_log_records(work_date, order_code, employee_name, event_datetime, action)");
     }
+
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS import_quarantine_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_name TEXT,
+        row_number INTEGER,
+        work_date TEXT,
+        raw_order_code TEXT,
+        raw_employee_name TEXT,
+        raw_action TEXT,
+        raw_datetime TEXT,
+        raw_payload_json TEXT,
+        rejection_reason TEXT NOT NULL,
+        source TEXT DEFAULT 'EXCEL_IMPORT',
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_quarantine_file ON import_quarantine_records(file_name);
+      CREATE INDEX IF NOT EXISTS idx_quarantine_date ON import_quarantine_records(work_date);
+
+      CREATE TABLE IF NOT EXISTS report_generation_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_name TEXT,
+        user_role TEXT,
+        report_type TEXT NOT NULL,
+        business_date TEXT,
+        generated_at TEXT DEFAULT (datetime('now')),
+        row_count INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'SUCCESS',
+        export_id TEXT,
+        details_json TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_report_gen_date ON report_generation_logs(business_date);
+    `);
   } catch (e) {
-    console.warn('Migration for raw_log_records:', e.message);
+    console.warn('Migration for raw_log_records, quarantine & reports:', e.message);
   }
 
   // Safe table migration: Ensure vendoor_connection_tests exists
@@ -1537,11 +1570,13 @@ export function initDB() {
     seedInitialEmployees();
   }
 
-  // Seed baseline snapshot if 2026-09-08 is missing from daily_metrics_snapshots
-  const baselineDate = '2026-09-08';
-  const existing = db.prepare('SELECT id FROM daily_metrics_snapshots WHERE work_date = ?').get(baselineDate);
-  if (!existing) {
-    seedBaselineSnapshot();
+  // Seed baseline snapshot ONLY if explicitly requested in non-production environments
+  if (process.env.SEED_DEMO_DATA === 'true' && !isExplicitProd) {
+    const baselineDate = '2026-09-08';
+    const existing = db.prepare('SELECT id FROM daily_metrics_snapshots WHERE work_date = ?').get(baselineDate);
+    if (!existing) {
+      seedBaselineSnapshot();
+    }
   }
 }
 

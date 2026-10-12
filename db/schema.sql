@@ -85,9 +85,37 @@ CREATE TABLE IF NOT EXISTS raw_log_records (
   action TEXT,
   status TEXT,
   event_datetime TEXT,
-  is_cs INTEGER DEFAULT 1,
+  is_cs INTEGER DEFAULT 0,
   is_deduped INTEGER DEFAULT 1,
   created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS import_quarantine_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  file_name TEXT,
+  row_number INTEGER,
+  work_date TEXT,
+  raw_order_code TEXT,
+  raw_employee_name TEXT,
+  raw_action TEXT,
+  raw_datetime TEXT,
+  raw_payload_json TEXT,
+  rejection_reason TEXT NOT NULL,
+  source TEXT DEFAULT 'EXCEL_IMPORT',
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS report_generation_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_name TEXT,
+  user_role TEXT,
+  report_type TEXT NOT NULL,
+  business_date TEXT,
+  generated_at TEXT DEFAULT (datetime('now')),
+  row_count INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'SUCCESS',
+  export_id TEXT,
+  details_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS performance_snapshots (

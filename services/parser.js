@@ -619,6 +619,17 @@ export function isCsDept(dept) {
  * @param {Object} [options] - Optional settings { strictMaster: boolean }
  * @returns {boolean}
  */
+/**
+ * Authoritative Historical CS Name Detection Rule (A1).
+ * In historical logs and reports, any actor name containing 'CS' (case-insensitive, e.g. CS, Cs, cS, cs)
+ * after trimming surrounding whitespace is recognized as a historical CS identity.
+ */
+export function isHistoricalCsName(rawName) {
+  if (!rawName || typeof rawName !== 'string') return false;
+  const trimmed = rawName.trim();
+  return /cs/i.test(trimmed);
+}
+
 export function isCsEmployee(employee, dbEmployeesMap = null, options = {}) {
   if (employee === undefined || employee === null || employee === '') {
     return false;
@@ -736,14 +747,9 @@ export function isCsEmployee(employee, dbEmployeesMap = null, options = {}) {
     return false;
   }
 
-  // Fallback for parser / report calculation when actor is not found in Master:
-  // Match standard ' CS' name suffix
-  const csRegex = /(?:^|[^a-zA-Z0-9_])CS(?:[^a-zA-Z0-9_]|$)/i;
-  if (csRegex.test(rawName)) {
-    return true;
-  }
-
-  return false;
+  // Fallback for parser / historical analytics when actor is not found in Master (Rule A1):
+  // Any actor name containing 'CS' case-insensitively (/cs/i) is recognized as historical CS identity
+  return isHistoricalCsName(rawName);
 }
 
 /**

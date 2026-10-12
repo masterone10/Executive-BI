@@ -1,5 +1,5 @@
 import { db } from '../db/index.js';
-import { formatDateKey, isCSName, isCsEmployee, normalizeEmployeeName, matchEmployeeInMaster, parseDate, KNOWN_STATUSES, STATUS_RE, ALT_RE, ADDED_RE } from './parser.js';
+import { formatDateKey, isCSName, isCsEmployee, isHistoricalCsName, normalizeEmployeeName, matchEmployeeInMaster, parseDate, KNOWN_STATUSES, STATUS_RE, ALT_RE, ADDED_RE } from './parser.js';
 import { extractCanonicalStatus } from './vendoor/actions.js';
 
 import { getCairoBusinessDate } from './time_utils.js';
@@ -27,6 +27,19 @@ export function getSystemWeights() {
  */
 export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
   const weights = getSystemWeights();
+
+  let targetWorkDate = null;
+  if (typeof dbEmployeesMap === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dbEmployeesMap)) {
+    targetWorkDate = dbEmployeesMap;
+    dbEmployeesMap = null;
+  }
+  if (!targetWorkDate && records && records.length > 0) {
+    const firstRec = records.find(r => r.work_date || r.event_datetime);
+    if (firstRec) {
+      if (firstRec.work_date) targetWorkDate = String(firstRec.work_date).slice(0, 10);
+      else if (firstRec.event_datetime) targetWorkDate = String(firstRec.event_datetime).slice(0, 10);
+    }
+  }
 
   // Canonical employee display names map: normalized -> display name
   const empDisplayNames = new Map();
@@ -88,13 +101,10 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
       statusText = null;
     }
 
-    let isCS = false;
-    if (r.is_cs === 1 || r.is_cs === true || r.isCS === true) {
-      isCS = true;
-    } else if (r.is_cs === 0 || r.is_cs === false || r.isCS === false) {
-      isCS = false;
-    } else {
-      isCS = isCsEmployee({ name: rawName, employee_name: rawName, department: r.department }, dbEmployeesMap);
+    // Canonical CS verification: check Employee Master first, then historical CS name detection
+    let isCS = isCsEmployee({ name: rawName, employee_name: rawName, department: r.department }, dbEmployeesMap);
+    if (!isCS && (r.is_cs === 1 || r.is_cs === true || r.isCS === true)) {
+      isCS = isHistoricalCsName(rawName);
     }
 
     return {
@@ -120,8 +130,10 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
   const addedByEmpNonCS = new Map();
   const uniqueAddedOrders = new Set();
 
-  // All events by order for determining order-level metrics (latest status, etc.)
+  // Orders touched across the dataset for order-level metrics (Printed, Cancelled, Backlog)
   const orderEventsMap = new Map();
+  // Orders touched by CS actors strictly for CS order-level metrics
+  const csOrderEventsMap = new Map();
 
   let rawStatusCount = 0;
 
@@ -129,12 +141,17 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
     const canonicalName = getCanonicalEmpName(r.name);
     const isCS = r.isCS;
 
-    if (r.order) {
-      if (r.dt) {
-        if (!orderEventsMap.has(r.order)) {
-          orderEventsMap.set(r.order, []);
+    if (r.order && r.dt) {
+      if (!orderEventsMap.has(r.order)) {
+        orderEventsMap.set(r.order, []);
+      }
+      orderEventsMap.get(r.order).push(r);
+
+      if (isCS) {
+        if (!csOrderEventsMap.has(r.order)) {
+          csOrderEventsMap.set(r.order, []);
         }
-        orderEventsMap.get(r.order).push(r);
+        csOrderEventsMap.get(r.order).push(r);
       }
     }
 
@@ -171,6 +188,13 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
   const empActionsMap = new Map();
   const empStatusMap = new Map(); // emp -> { printed, pending, processing, cancelled }
 
+  // Per-Employee Unique Order Tracking
+  const empUniquePrinted = new Map(); // emp -> Set<orderCode>
+  const empUniquePending = new Map(); // emp -> Set<orderCode>
+  const empUniqueProcessing = new Map(); // emp -> Set<orderCode>
+  const empUniqueCancelled = new Map(); // emp -> Set<orderCode>
+  const empUniqueOrdersTouched = new Map(); // emp -> Set<orderCode>
+
   for (const [key, items] of statusGroups.entries()) {
     items.sort((a, b) => a.dt - b.dt);
     let lastTs = -Infinity;
@@ -182,15 +206,31 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
         const emp = item.r.name;
         empActionsMap.set(emp, (empActionsMap.get(emp) || 0) + 1);
 
+        if (!empUniqueOrdersTouched.has(emp)) empUniqueOrdersTouched.set(emp, new Set());
+        if (item.r.order) empUniqueOrdersTouched.get(emp).add(item.r.order);
+
         if (!empStatusMap.has(emp)) {
           empStatusMap.set(emp, { printed: 0, pending: 0, processing: 0, cancelled: 0 });
         }
         const counts = empStatusMap.get(emp);
         const st = item.r.st;
-        if (st === 'Printed') counts.printed++;
-        else if (st === 'Pending') counts.pending++;
-        else if (st === 'Processing') counts.processing++;
-        else if (st === 'Cancelled') counts.cancelled++;
+        if (st === 'Printed') {
+          counts.printed++;
+          if (!empUniquePrinted.has(emp)) empUniquePrinted.set(emp, new Set());
+          if (item.r.order) empUniquePrinted.get(emp).add(item.r.order);
+        } else if (st === 'Pending') {
+          counts.pending++;
+          if (!empUniquePending.has(emp)) empUniquePending.set(emp, new Set());
+          if (item.r.order) empUniquePending.get(emp).add(item.r.order);
+        } else if (st === 'Processing') {
+          counts.processing++;
+          if (!empUniqueProcessing.has(emp)) empUniqueProcessing.set(emp, new Set());
+          if (item.r.order) empUniqueProcessing.get(emp).add(item.r.order);
+        } else if (st === 'Cancelled') {
+          counts.cancelled++;
+          if (!empUniqueCancelled.has(emp)) empUniqueCancelled.set(emp, new Set());
+          if (item.r.order) empUniqueCancelled.get(emp).add(item.r.order);
+        }
       }
     }
   }
@@ -198,6 +238,7 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
   // Deduplicate Alt Phones (2-minute window)
   const empAltMap = new Map();
   const empAltMapCS = new Map();
+  const empAltVerifiedMapCS = new Map();
   let totalAltPhones = 0;
   for (const [key, timestamps] of altGroups.entries()) {
     timestamps.sort((a, b) => a - b);
@@ -210,6 +251,7 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
         empAltMap.set(empName, (empAltMap.get(empName) || 0) + 1);
         if (isCsAlt) {
           empAltMapCS.set(empName, (empAltMapCS.get(empName) || 0) + 1);
+          empAltVerifiedMapCS.set(empName, (empAltVerifiedMapCS.get(empName) || 0) + 1);
           totalAltPhones++;
         }
         lastTs = ts;
@@ -272,7 +314,24 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
     const counts = empStatusMap.get(name) || { printed: 0, pending: 0, processing: 0, cancelled: 0 };
     const actions = (counts.printed + counts.pending + counts.processing + counts.cancelled);
     const alt = empAltMapCS.get(name) || empAltMap.get(name) || 0;
+    const alt_verified = empAltVerifiedMapCS.get(name) || alt;
     const added = addedByEmpCS.get(name) || 0;
+
+    const unique_printed_orders = empUniquePrinted.get(name)?.size || 0;
+    const unique_pending_orders = empUniquePending.get(name)?.size || 0;
+    const unique_processing_orders = empUniqueProcessing.get(name)?.size || 0;
+    const unique_cancelled_orders = empUniqueCancelled.get(name)?.size || 0;
+    const unique_orders_touched = empUniqueOrdersTouched.get(name)?.size || 0;
+
+    const masterMatch = matchEmployeeInMaster(name, dbEmployeesMap);
+    const isApproved = Boolean(masterMatch);
+    const employeeId = masterMatch ? masterMatch.id : null;
+    const approvedName = masterMatch ? masterMatch.name : null;
+    const identityType = isApproved ? 'APPROVED_EMPLOYEE' : (isHistoricalCsName(name) ? 'UNLINKED_HISTORICAL_IDENTITY' : 'NON_CS_ACTOR');
+    const isActive = isApproved ? (masterMatch.active === 1) : false;
+    const statusStr = isApproved ? (masterMatch.status || (masterMatch.active === 1 ? 'ACTIVE' : 'INACTIVE')) : 'HISTORICAL_UNLINKED';
+    const csEligible = isApproved ? isCsEmployee(masterMatch) : false;
+    const teamMembership = masterMatch ? (masterMatch.team_membership || 'Both') : 'None';
 
     const own_printed_rate = actions > 0 ? Math.round((counts.printed / actions) * 1000) / 10 : 0;
     const own_pending_rate = actions > 0 ? Math.round((counts.pending / actions) * 1000) / 10 : 0;
@@ -315,15 +374,65 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
 
     const performance_score = Math.round(rawScore * 10) / 10;
 
+    let assigned_orders = 0;
+    let assigned_accounts = 0;
+    let current_workload = 0;
+
+    if (targetWorkDate && (employeeId || name)) {
+      try {
+        const allocRow = db.prepare(`
+          SELECT COUNT(DISTINCT order_code) as total_assigned,
+                 COUNT(DISTINCT account) as accounts_count
+          FROM order_level_allocations
+          WHERE (employee_id = ? OR employee_name = ? COLLATE NOCASE)
+            AND allocation_date = ?
+        `).get(employeeId || -1, name, targetWorkDate);
+        assigned_orders = allocRow?.total_assigned || 0;
+        assigned_accounts = allocRow?.accounts_count || 0;
+      } catch (_) {}
+    }
+
+    if (employeeId || name) {
+      try {
+        const cwoRow = db.prepare(`
+          SELECT COUNT(*) as cnt
+          FROM current_work_orders
+          WHERE (assigned_employee_id = ? OR assigned_employee_name = ? COLLATE NOCASE)
+            AND status IN ('New', 'Pending', 'Processing')
+        `).get(employeeId || -1, name);
+        current_workload = cwoRow?.cnt || 0;
+      } catch (_) {}
+    }
+
+    const hasOperationalPrivileges = Boolean(isApproved && isActive && csEligible);
+
     employees.push({
       name,
+      employee_id: employeeId,
+      approved_name: approvedName,
+      identity_type: identityType,
+      is_approved: isApproved,
+      active: isActive,
+      status: statusStr,
+      cs_eligible: csEligible,
+      team_membership: teamMembership,
+      has_operational_privileges: hasOperationalPrivileges,
       printed: counts.printed,
+      unique_printed_orders,
       pending: counts.pending,
+      unique_pending_orders,
       processing: counts.processing,
+      unique_processing_orders,
       cancelled: counts.cancelled,
+      unique_cancelled_orders,
       alt,
+      alt_verified,
       added,
       actions,
+      unique_orders_touched,
+      assigned_orders,
+      assigned_accounts,
+      current_workload,
       contribution_pct,
       own_printed_rate,
       own_pending_rate,
@@ -466,6 +575,8 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
       dedupedCSActionsCount: totalActions,
       duplicatesRemovedPct: rawStatusCount > 0 ? Math.round(((rawStatusCount - totalActions) / rawStatusCount) * 1000) / 10 : 0,
       totalNewOrders: uniqueAddedOrders.size,
+      totalNewOrdersFromCS: totalAddedCS,
+      totalNewOrdersFromOther: totalAddedNonCS,
       uniquePrintedOrders: uniquePrintedOrders.size,
       currentPendingBacklog,
       uniqueCancelledOrders: uniqueCancelledOrders.size,
@@ -476,6 +587,7 @@ export function computePerformanceFromRecords(records, dbEmployeesMap = null) {
       pendingActions: totalPendingActions,
       processingActions: totalProcessingActions,
       cancelledActions: totalCancelledActions,
+      ordersTouchedByCS: orderEventsMap.size,
       teamCancelRate: Math.round(teamCancelRate * 10) / 10,
     },
     log_totals,
@@ -1106,6 +1218,8 @@ export function getEmployeeMetricDrilldown(workDate, employeeName, metric = 'ALL
         const canonical = extractCanonicalStatus(actionText, r.status);
         statusText = KNOWN_STATUSES.has(canonical) ? canonical : null;
       }
+    } else {
+      statusText = null;
     }
 
     let isCS = false;
@@ -1232,5 +1346,187 @@ export function getEmployeeMetricDrilldown(workDate, employeeName, metric = 'ALL
       event_datetime: m.event_datetime,
       work_date: targetDate
     }))
+  };
+}
+
+/**
+ * Returns comprehensive Employee Profile with strict separation of:
+ * 1. Actions (Real Deduplicated Actions Breakdown)
+ * 2. Unique Orders (Unique Orders Touched, Printed, Cancelled, Pending)
+ * 3. Assigned Orders (From order_level_allocations)
+ * 4. Current Workload (From current_work_orders & Pending Backlog)
+ * 5. Historical Activity (Cross-date performance snapshots & activity history)
+ *
+ * Enforces authoritative identity rules:
+ * - Approved active CS employees receive full operational status.
+ * - Historical CS identities retain their activity metrics under their correct identity,
+ *   but are explicitly restricted from operational allocation privileges.
+ */
+export function getEmployeeProfile(workDate, employeeIdOrName) {
+  const targetDate = workDate || getCairoBusinessDate();
+  
+  // 1. Resolve employee identity from Employee Master or raw logs
+  let masterEmp = null;
+  const isNumericId = typeof employeeIdOrName === 'number' || (/^\d+$/.test(String(employeeIdOrName || '').trim()));
+  
+  if (isNumericId) {
+    masterEmp = db.prepare('SELECT * FROM employees WHERE id = ?').get(parseInt(employeeIdOrName, 10));
+  }
+  
+  if (!masterEmp) {
+    const searchName = String(employeeIdOrName || '').trim();
+    masterEmp = db.prepare('SELECT * FROM employees WHERE name = ? COLLATE NOCASE').get(searchName);
+    if (!masterEmp) {
+      const allMasters = db.prepare('SELECT * FROM employees').all();
+      masterEmp = matchEmployeeInMaster(searchName, allMasters);
+    }
+  }
+  
+  const rawTargetName = masterEmp ? masterEmp.name : String(employeeIdOrName || '').trim();
+  const isApproved = Boolean(masterEmp);
+  const isActive = isApproved ? (masterEmp.active === 1) : false;
+  const isCS = isApproved ? isCsEmployee(masterEmp) : isHistoricalCsName(rawTargetName);
+  const hasOperationalPrivileges = Boolean(isApproved && isActive && isCS);
+  const identityType = isApproved 
+    ? (isActive ? 'APPROVED_ACTIVE_CS' : 'APPROVED_INACTIVE_CS') 
+    : (isHistoricalCsName(rawTargetName) ? 'HISTORICAL_CS_IDENTITY' : 'UNRECOGNIZED_ACTOR');
+
+  // 2. Fetch canonical date metrics
+  const drilldown = getEmployeeMetricDrilldown(targetDate, rawTargetName, 'ALL');
+  const records = drilldown.records || [];
+
+  // Distinct metrics breakdown
+  const uniqueOrdersTouched = new Set(records.map(r => r.order_code).filter(Boolean));
+  const printedActions = records.filter(r => r.status === 'Printed');
+  const uniquePrintedOrders = new Set(printedActions.map(r => r.order_code).filter(Boolean));
+  const pendingActions = records.filter(r => r.status === 'Pending');
+  const uniquePendingOrders = new Set(pendingActions.map(r => r.order_code).filter(Boolean));
+  const cancelledActions = records.filter(r => r.status === 'Cancelled');
+  const uniqueCancelledOrders = new Set(cancelledActions.map(r => r.order_code).filter(Boolean));
+  const processingActions = records.filter(r => r.status === 'Processing');
+  const uniqueProcessingOrders = new Set(processingActions.map(r => r.order_code).filter(Boolean));
+  const altDrilldown = getEmployeeMetricDrilldown(targetDate, rawTargetName, 'ALT');
+  const altActions = altDrilldown.records || [];
+
+  // 3. Assigned Orders from order_level_allocations
+  let assignedOrders = [];
+  try {
+    assignedOrders = db.prepare(`
+      SELECT order_code, account, status, allocation_date, method, priority, round_number
+      FROM order_level_allocations
+      WHERE (employee_id = ? OR employee_name = ? COLLATE NOCASE)
+        AND allocation_date = ?
+      ORDER BY order_code ASC
+    `).all(masterEmp?.id || -1, rawTargetName, targetDate);
+  } catch (_) {}
+
+  // 4. Current Workload from current_work_orders
+  let currentWorkloadOrders = [];
+  try {
+    currentWorkloadOrders = db.prepare(`
+      SELECT order_code, account, status, work_date, work_state, assigned_employee_name
+      FROM current_work_orders
+      WHERE (assigned_employee_id = ? OR assigned_employee_name = ? COLLATE NOCASE)
+        AND status IN ('New', 'Pending', 'Processing')
+      ORDER BY work_date DESC
+    `).all(masterEmp?.id || -1, rawTargetName);
+  } catch (_) {}
+
+  // 5. Historical Snapshots across business dates
+  let historicalSnapshots = [];
+  try {
+    historicalSnapshots = db.prepare(`
+      SELECT date, real_actions, printed_orders, printed_actions, pending_backlog,
+             pending_actions, cancelled_orders, cancelled_actions, alt_phones,
+             performance_score, efficiency_score, grade, segment, cancel_risk,
+             own_printed_rate, own_cancel_rate, own_pending_rate
+      FROM performance_snapshots
+      WHERE (employee_id = ? OR employee_name = ? COLLATE NOCASE)
+      ORDER BY date DESC
+      LIMIT 30
+    `).all(masterEmp?.id || -1, rawTargetName);
+  } catch (_) {}
+
+  // Calculate rates and score
+  const totalActions = records.length;
+  const printedCount = printedActions.length;
+  const pendingCount = pendingActions.length;
+  const cancelledCount = cancelledActions.length;
+  const processingCount = processingActions.length;
+  const altCount = altActions.length;
+
+  const ownPrintedRate = totalActions > 0 ? Math.round((printedCount / totalActions) * 1000) / 10 : 0;
+  const ownPendingRate = totalActions > 0 ? Math.round((pendingCount / totalActions) * 1000) / 10 : 0;
+  const ownCancelRate = totalActions > 0 ? Math.round((cancelledCount / totalActions) * 1000) / 10 : 0;
+  const ownAltRate = totalActions > 0 ? Math.round((altCount / totalActions) * 1000) / 10 : 0;
+
+  // Locate snapshot metrics for this specific date if present
+  const currentSnap = historicalSnapshots.find(s => s.date === targetDate);
+
+  return {
+    success: true,
+    work_date: targetDate,
+    employee: {
+      id: masterEmp?.id || null,
+      name: rawTargetName,
+      approved_name: masterEmp?.name || null,
+      department: masterEmp?.department || (isHistoricalCsName(rawTargetName) ? 'CS' : 'Unknown'),
+      active: isActive,
+      status: masterEmp?.status || (isApproved ? (isActive ? 'ACTIVE' : 'INACTIVE') : 'HISTORICAL_UNLINKED'),
+      team_membership: masterEmp?.team_membership || 'None',
+      notes: masterEmp?.notes || null,
+      identity_type: identityType,
+      is_approved: isApproved,
+      is_cs: isCS,
+      has_operational_privileges: hasOperationalPrivileges,
+      privileges_note: hasOperationalPrivileges 
+        ? 'Approved active CS employee with full operational allocation rights.' 
+        : 'Historical CS identity retained for analytical and forensic parity without operational privileges.'
+    },
+    metrics: {
+      actions: {
+        total_real_actions: totalActions,
+        printed_actions: printedCount,
+        pending_actions: pendingCount,
+        processing_actions: processingCount,
+        cancelled_actions: cancelledCount,
+        alt_phones_added: altCount
+      },
+      unique_orders: {
+        unique_orders_touched: uniqueOrdersTouched.size,
+        unique_printed_orders: uniquePrintedOrders.size,
+        unique_pending_orders: uniquePendingOrders.size,
+        unique_processing_orders: uniqueProcessingOrders.size,
+        unique_cancelled_orders: uniqueCancelledOrders.size
+      },
+      assigned_orders: {
+        total_assigned: assignedOrders.length,
+        unique_accounts_count: new Set(assignedOrders.map(o => o.account)).size,
+        orders: assignedOrders
+      },
+      current_workload: {
+        total_active_workload: currentWorkloadOrders.length,
+        pending_backlog: currentWorkloadOrders.filter(o => o.status === 'Pending').length,
+        orders: currentWorkloadOrders
+      },
+      rates: {
+        own_printed_rate: currentSnap?.own_printed_rate ?? ownPrintedRate,
+        own_pending_rate: currentSnap?.own_pending_rate ?? ownPendingRate,
+        own_cancel_rate: currentSnap?.own_cancel_rate ?? ownCancelRate,
+        own_alt_rate: ownAltRate
+      },
+      scores: {
+        performance_score: currentSnap?.performance_score || 0,
+        efficiency_score: currentSnap?.efficiency_score || 0,
+        grade: currentSnap?.grade || (totalActions > 0 ? 'C' : 'N/A'),
+        segment: currentSnap?.segment || (totalActions > 0 ? 'Core Contributor' : 'Inactive'),
+        cancel_risk: currentSnap?.cancel_risk || 'Normal'
+      }
+    },
+    historical_activity: {
+      total_recorded_dates: historicalSnapshots.length,
+      snapshots: historicalSnapshots
+    },
+    drilldown_records: records
   };
 }

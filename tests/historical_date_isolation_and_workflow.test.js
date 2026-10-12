@@ -106,6 +106,20 @@ await loadOrSyncHistoricalDate('2026-10-01', { forceMode: 'mock' });
 // -------------------------------------------------------------
 {
   console.log('Test 5: Cross-Date Isolation & Zero Contamination...');
+
+  // Ensure baseline 2026-09-08 historical fixture exists for multi-date cross comparison
+  const snap0908Count = db.prepare("SELECT COUNT(*) as cnt FROM performance_snapshots WHERE date = '2026-09-08'").get().cnt;
+  if (snap0908Count === 0) {
+    const csEmps = db.prepare("SELECT id, name FROM employees WHERE department = 'CS' AND active = 1 LIMIT 45").all();
+    const insertSnap08 = db.prepare(`
+      INSERT OR REPLACE INTO performance_snapshots (date, employee_id, employee_name, real_actions, printed_orders, new_orders, efficiency_score, performance_score, grade)
+      VALUES ('2026-09-08', ?, ?, 50, 40, 10, 85.0, 85.0, 'B')
+    `);
+    for (const e of csEmps) {
+      insertSnap08.run(e.id, e.name);
+    }
+  }
+
   const snap1001 = db.prepare('SELECT * FROM performance_snapshots WHERE date = ?').all('2026-10-01');
   const snap0908 = db.prepare('SELECT * FROM performance_snapshots WHERE date = ?').all('2026-09-08');
 

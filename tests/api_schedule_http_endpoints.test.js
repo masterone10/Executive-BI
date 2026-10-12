@@ -2,24 +2,42 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { app, db } from '../server.js';
+import { getDevBootstrapToken } from '../services/auth_guard.js';
 
 test('HTTP API Account Day Schedule Endpoints Suite', async (t) => {
   const TEST_ACC = 'ARC_HTTP_TEST';
+  const token = getDevBootstrapToken();
 
   // Cleanup test account in SQLite
   db.prepare('DELETE FROM account_schedules WHERE account = ? COLLATE NOCASE').run(TEST_ACC);
 
-  // Start test server on ephemeral port
-  const server = http.createServer(app);
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const port = server.address().port;
-  const baseUrl = `http://127.0.0.1:${port}`;
+  let baseUrl = 'http://127.0.0.1:3000';
+  let ephemeralServer = null;
+  try {
+    const probe = await fetch('http://127.0.0.1:3000/api/allocation/schedule/day-save', {
+      method: 'OPTIONS',
+      signal: AbortSignal.timeout(600)
+    }).catch(() => null);
+    if (!probe) throw new Error('probe failed');
+  } catch {
+    ephemeralServer = http.createServer(app);
+    await new Promise((resolve) => ephemeralServer.listen(0, '127.0.0.1', resolve));
+    const port = ephemeralServer.address().port;
+    baseUrl = `http://127.0.0.1:${port}`;
+  }
+
+  t.after(() => {
+    if (ephemeralServer) {
+      ephemeralServer.close();
+    }
+  });
 
   async function request(path, options = {}) {
     const res = await fetch(`${baseUrl}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
         ...(options.headers || {})
       }
     });
@@ -129,5 +147,4 @@ test('HTTP API Account Day Schedule Endpoints Suite', async (t) => {
 
   // Cleanup
   db.prepare('DELETE FROM account_schedules WHERE account = ? COLLATE NOCASE').run(TEST_ACC);
-  await new Promise(resolve => server.close(resolve));
 });

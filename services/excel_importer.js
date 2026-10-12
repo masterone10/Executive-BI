@@ -3,6 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import { db } from '../db/index.js';
 import { extractWarehouse } from './operational_intelligence.js';
+import { parseTimestamp, isHistoricalCsName } from './parser.js';
+import { extractCanonicalStatus } from './vendoor/actions.js';
+import { getCairoBusinessDate } from './time_utils.js';
 
 /**
  * Normalizes string keys and removes invisible characters.
@@ -45,7 +48,7 @@ export function importProductsFromExcel(buffer, filename = 'orders.xlsx') {
         merchant_name = COALESCE(?, merchant_name),
         product_name = COALESCE(?, product_name),
         warehouse = COALESCE(?, warehouse)
-    WHERE order_code = ?
+    WHERE order_code = ? AND (work_date = ? OR ? IS NULL)
   `);
 
   const updateVendoorOrderStmt = db.prepare(`
@@ -54,7 +57,7 @@ export function importProductsFromExcel(buffer, filename = 'orders.xlsx') {
         merchant_name = COALESCE(?, merchant_name),
         product_name = COALESCE(?, product_name),
         warehouse = COALESCE(?, warehouse)
-    WHERE order_code = ?
+    WHERE order_code = ? AND (business_date = ? OR ? IS NULL)
   `);
 
   let lastOrderCode = '';
@@ -144,55 +147,121 @@ export function importProductsFromExcel(buffer, filename = 'orders.xlsx') {
 
 /**
  * Imports historical logs from Excel file (e.g. HISTORICAL_LOGS_1.xlsx or sample_log.xlsx).
+ * Strictly adheres to Rule A1 (/cs/i detection for historical logs) and records
+ * malformed rows into quarantine.
  *
  * @param {Buffer} buffer Excel file buffer
  * @param {string} filename Original filename
- * @returns {Object} Import summary
+ * @param {Object} options Configuration options
+ * @returns {Object} Comprehensive import & reconciliation summary
  */
-export function importHistoricalLogsFromExcel(buffer, filename = 'logs.xlsx') {
-  const wb = XLSX.read(buffer, { type: 'buffer' });
+export function importHistoricalLogsFromExcel(buffer, filename = 'logs.xlsx', options = {}) {
+  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   const sheetName = wb.SheetNames[0];
   const sheet = wb.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
 
   let totalRows = rows.length;
   let uniqueOrders = new Set();
   let logsInserted = 0;
+  let duplicateRows = 0;
+  let quarantinedRows = 0;
+  let csRecordsCount = 0;
+  let nonCsRecordsCount = 0;
+  const statusCounts = {
+    New: 0,
+    Pending: 0,
+    Printed: 0,
+    Processing: 0,
+    Cancelled: 0,
+    Completed: 0,
+    Other: 0
+  };
 
   const insertLogStmt = db.prepare(`
     INSERT OR IGNORE INTO raw_log_records (
-      work_date, order_code, employee_name, action, status, event_datetime, is_cs, is_deduped
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      work_date, order_code, employee_name, action, status, event_datetime, is_cs, is_deduped, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
+  `);
+
+  const quarantineStmt = db.prepare(`
+    INSERT INTO import_quarantine_records (
+      file_name, row_number, work_date, raw_order_code, raw_employee_name, raw_action, raw_datetime, raw_payload_json, rejection_reason
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const tx = db.transaction(() => {
-    for (const r of rows) {
-      const orderCode = cleanStr(r['كود الطلب'] || r['كود الاوردر'] || r['الرقم العشوائي'] || r.order_code);
-      const employeeName = cleanStr(r['الاسم'] || r['اسم الموظف'] || r.employee_name);
-      const action = cleanStr(r['الاكشن'] || r['Action'] || r.action);
-      const rawDate = cleanStr(r['التاريخ'] || r['Date'] || r.timestamp);
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const rowNum = i + 2; // Header is row 1
+      const orderCode = cleanStr(r['كود الطلب'] || r['كود الاوردر'] || r['الرقم العشوائي'] || r.order_code || r.OrderCode || r['Order Code']);
+      const employeeName = cleanStr(r['الاسم'] || r['اسم الموظف'] || r.employee_name || r.Employee || r['Employee Name']);
+      const action = cleanStr(r['الاكشن'] || r['Action'] || r.action || r['الحدث']);
+      const rawDate = cleanStr(r['التاريخ'] || r['Date'] || r.timestamp || r.datetime || r['الوقت']);
+      const rawStatus = cleanStr(r['الحالة'] || r['Status'] || r.status);
 
-      if (!orderCode) continue;
+      // Quarantine check 1: Missing order code
+      if (!orderCode) {
+        quarantinedRows++;
+        quarantineStmt.run(filename, rowNum, null, null, employeeName || null, action || null, rawDate || null, JSON.stringify(r), 'Missing Order Code');
+        continue;
+      }
+
+      // Quarantine check 2: Missing employee name
+      if (!employeeName) {
+        quarantinedRows++;
+        quarantineStmt.run(filename, rowNum, null, orderCode, null, action || null, rawDate || null, JSON.stringify(r), 'Missing Employee Name');
+        continue;
+      }
+
+      // Parse timestamp using canonical Cairo parser
+      let parsedTs = parseTimestamp(rawDate);
+      if (!parsedTs || !parsedTs.is_valid) {
+        if (options.fallbackDate) {
+          parsedTs = {
+            is_valid: true,
+            cairo_date: options.fallbackDate,
+            cairo_datetime: options.fallbackDate + ' 12:00:00'
+          };
+        } else {
+          quarantinedRows++;
+          quarantineStmt.run(filename, rowNum, null, orderCode, employeeName, action || null, rawDate || null, JSON.stringify(r), 'Invalid or missing timestamp');
+          continue;
+        }
+      }
+
+      const workDate = parsedTs.cairo_date;
+      const eventDatetime = parsedTs.cairo_datetime || rawDate;
+
+      // Rule A1: Historical CS name detection (/cs/i)
+      const isCs = isHistoricalCsName(employeeName) ? 1 : 0;
+      if (isCs) csRecordsCount++;
+      else nonCsRecordsCount++;
+
+      // Canonical status extraction
+      let status = extractCanonicalStatus(action, rawStatus) || 'New';
+      if (!['New', 'Pending', 'Printed', 'Processing', 'Cancelled', 'Completed'].includes(status)) {
+        status = 'Other';
+      }
+      statusCounts[status] = (statusCounts[status] || 0) + 1;
+
       uniqueOrders.add(orderCode);
-
-      const workDate = rawDate ? rawDate.slice(0, 10) : new Date().toISOString().slice(0, 10);
-      const isCs = /cs/i.test(employeeName) ? 1 : 0;
-      let status = 'New';
-      if (/pending|معلق/i.test(action)) status = 'Pending';
-      if (/printed|طبع/i.test(action)) status = 'Printed';
-      if (/completed|delivered/i.test(action)) status = 'Completed';
 
       const res = insertLogStmt.run(
         workDate,
         orderCode,
-        employeeName || 'System',
-        action,
+        employeeName,
+        action || null,
         status,
-        rawDate || null,
-        isCs,
-        1
+        eventDatetime,
+        isCs
       );
-      if (res.changes > 0) logsInserted++;
+
+      if (res.changes > 0) {
+        logsInserted++;
+      } else {
+        duplicateRows++;
+      }
     }
   });
 
@@ -202,8 +271,14 @@ export function importHistoricalLogsFromExcel(buffer, filename = 'logs.xlsx') {
     success: true,
     filename,
     total_rows: totalRows,
+    valid_rows: totalRows - quarantinedRows,
+    logs_inserted: logsInserted,
+    duplicate_rows: duplicateRows,
+    quarantined_rows: quarantinedRows,
     unique_orders: uniqueOrders.size,
-    logs_inserted: logsInserted
+    cs_records_count: csRecordsCount,
+    non_cs_records_count: nonCsRecordsCount,
+    status_counts: statusCounts
   };
 }
 
@@ -217,6 +292,15 @@ export function autoScanAndSeedAvailableExcelFiles(options = {}) {
     products: null,
     logs: null
   };
+
+  const isProd = process.env.NODE_ENV === 'production';
+  if (isProd && !options?.explicitProductionConsent) {
+    return {
+      success: false,
+      message: 'Automatic file seeding is strictly disabled in production environments.',
+      results
+    };
+  }
 
   const force = options?.force === true;
   let existingOrdersCount = 0;

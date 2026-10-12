@@ -7,7 +7,7 @@ import XLSX from 'xlsx';
 import { db } from './db/index.js';
 import { parseDailyLogBuffer, parseSpecificOrdersBuffer, isCsEmployee } from './services/parser.js';
 import { getCairoBusinessDate, getPreviousCompletedWeekRange } from './services/time_utils.js';
-import { computePerformanceFromRecords, savePerformanceSnapshotToDB, getSystemWeights, getEmployeeMetricDrilldown } from './services/performance.js';
+import { computePerformanceFromRecords, savePerformanceSnapshotToDB, getSystemWeights, getEmployeeMetricDrilldown, getEmployeeProfile } from './services/performance.js';
 import {
   saveCurrentWorkOrders,
   stageSpecificOrdersFile,
@@ -101,7 +101,9 @@ import {
   createEmployeeAllocationWorkbook,
   createAccountWorkbook,
   createZipFromEmployeeWorkbooks,
-  createContextualExportWorkbook
+  createContextualExportWorkbook,
+  createSingleEmployeeReportWorkbook,
+  createSingleMarketerReportWorkbook
 } from './export_excel.js';
 import {
   getSafeVendoorStatus,
@@ -158,6 +160,7 @@ import {
   generateSystemHealthReport,
   generateMerchantReport,
   generateMarketerReport,
+  generateSingleMarketerReport,
   generatePhoneAlertsReport,
   exportReportToCSV,
   exportReportToExcel,
@@ -189,7 +192,7 @@ import {
   syncAndRestoreObservedTeam,
   resetToObservedWorkingTeam
 } from './services/working_team_ops.js';
-import { requireRole, USER_ROLES } from './services/auth_guard.js';
+import { requireRole, requireAuth, USER_ROLES } from './services/auth_guard.js';
 import {
   getAvailableBusinessDates,
   getHistoricalDayOverview,
@@ -255,6 +258,14 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB
+});
+
+// Explicitly block any static .xlsx downloads from public directory to protect internal data
+app.use((req, res, next) => {
+  if (req.path.endsWith('.xlsx')) {
+    return res.status(403).json({ success: false, error: 'Direct static Excel download is forbidden. Please use authenticated /api/export APIs.' });
+  }
+  next();
 });
 
 // Serve static frontend with caching headers for static assets (HTML is never cached)
@@ -3051,19 +3062,24 @@ app.get('/api/performance/:date', (req, res) => {
 });
 app.get('/api/performance/employee/:id', (req, res) => {
   const { id } = req.params;
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(id);
-  if (!emp) return res.status(404).json({ error: 'Employee not found' });
+  const workDate = req.query.date || getEffectiveWorkDate();
+  try {
+    const profile = getEmployeeProfile(workDate, id);
+    if (!profile.employee.is_approved && !profile.employee.id && profile.drilldown_records.length === 0) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
 
-  const snapshots = db.prepare(`
-    SELECT * FROM performance_snapshots
-    WHERE employee_id = ?
-    ORDER BY date DESC
-  `).all(id);
+    const emp = profile.employee.id ? db.prepare('SELECT * FROM employees WHERE id = ?').get(profile.employee.id) : null;
+    const snapshots = profile.historical_activity.snapshots;
 
-  res.json({
-    employee: emp,
-    snapshots,
-  });
+    res.json({
+      ...profile,
+      employee: emp || profile.employee,
+      snapshots,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/reports/performance', (req, res) => {
@@ -3288,6 +3304,21 @@ app.get('/api/employee-profile/drilldown', (req, res) => {
   }
 });
 
+// Comprehensive Employee Profile Endpoint (Actions vs Orders vs Workload vs Identity)
+app.get('/api/employee-profile/:identifier', (req, res) => {
+  try {
+    const { identifier } = req.params;
+    const workDate = req.query.date || getEffectiveWorkDate();
+    if (!identifier) {
+      return res.status(400).json({ success: false, error: 'Employee identifier is required' });
+    }
+    const profile = getEmployeeProfile(workDate, identifier);
+    return res.json(profile);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Added Orders CS Breakdown API Endpoint (Part 33, 34, 60, 85)
 app.get(['/api/added-orders', '/api/reports/added-orders'], (req, res) => {
   const reqDate = req.query.date || getEffectiveWorkDate();
@@ -3487,7 +3518,7 @@ app.post('/api/exports/xlsx', async (req, res) => {
   }
 });
 
-app.get(['/api/export/excel', '/Executive_Report_v3.xlsx'], (req, res) => {
+app.get('/api/export/excel', requireAuth, (req, res) => {
   const reqDate = req.query.date || getEffectiveWorkDate();
   try {
     const snap = db.prepare('SELECT metrics_json FROM daily_metrics_snapshots WHERE work_date = ?').get(reqDate);
@@ -4360,7 +4391,7 @@ app.get('/api/reports/history', (req, res) => {
   }
 });
 
-app.get('/api/reports/export/:format', (req, res) => {
+app.get('/api/reports/export/:format', requireAuth, (req, res) => {
   try {
     const format = req.params.format?.toLowerCase();
     const type = req.query.report_type || 'employee';

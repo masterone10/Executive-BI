@@ -66,6 +66,32 @@ export function normalizePhoneNumber(rawPhone) {
 }
 
 /**
+ * Validates whether a normalized phone string represents a plausible, valid phone number.
+ * Explicitly rejects dummy/short numbers like '123' and non-standard strings.
+ */
+export function isValidPhoneNumber(normPhone) {
+  if (!normPhone || typeof normPhone !== 'string') return false;
+  const digits = normPhone.replace(/\D/g, '');
+  if (digits.length < 8 || digits.length > 15) return false;
+  if (/^(\d)\1+$/.test(digits)) return false; // All identical digits (000000000, 111111111)
+  if (digits === '12345678' || digits === '123456789' || digits === '1234567890') return false;
+
+  // Egyptian mobile standard (11 digits starting with 010, 011, 012, 015)
+  if (digits.length === 11 && /^01[0125]\d{8}$/.test(digits)) {
+    return true;
+  }
+  // Egyptian landlines (9-10 digits starting with 02, 03, etc.)
+  if ((digits.length === 9 || digits.length === 10) && /^0[2-9]\d+$/.test(digits)) {
+    return true;
+  }
+  // Standard regional/international phone length
+  if (digits.length >= 9 && digits.length <= 14) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * FEATURE 1: Evaluates Second Phone Quality on an order.
  *
  * @param {string} primaryPhone Raw primary phone
@@ -84,6 +110,7 @@ export function evaluateSecondPhoneQuality(primaryPhone, secondPhone, isActioned
     return {
       status: 'ALT_PHONE_MISSING',
       is_distinct: false,
+      is_valid: false,
       needs_attention: isActioned,
       primary_raw: primaryPhone || '',
       second_raw: secondPhone || '',
@@ -94,10 +121,27 @@ export function evaluateSecondPhoneQuality(primaryPhone, secondPhone, isActioned
     };
   }
 
+  // Reject invalid or dummy phone numbers (e.g. 123)
+  if (!isValidPhoneNumber(norm2)) {
+    return {
+      status: 'ALT_PHONE_INVALID',
+      is_distinct: false,
+      is_valid: false,
+      needs_attention: true,
+      primary_raw: primaryPhone || '',
+      second_raw: secondPhone || '',
+      primary_normalized: norm1,
+      second_normalized: norm2,
+      reason: 'الرقم الثاني غير صالح (أقل من الطول المطلوب أو صيغة غير مقبولة)',
+      code: 'INVALID_NUMBER'
+    };
+  }
+
   if (hasPrimary && norm1 === norm2) {
     return {
       status: 'ALT_PHONE_DUPLICATE_PRIMARY',
       is_distinct: false,
+      is_valid: true,
       needs_attention: isActioned,
       primary_raw: primaryPhone || '',
       second_raw: secondPhone || '',
@@ -111,6 +155,7 @@ export function evaluateSecondPhoneQuality(primaryPhone, secondPhone, isActioned
   return {
     status: 'ALT_PHONE_ADDED',
     is_distinct: true,
+    is_valid: true,
     needs_attention: false,
     primary_raw: primaryPhone || '',
     second_raw: secondPhone || '',
@@ -1060,9 +1105,14 @@ export function getEmployeeOperationalMetrics(workDate = getCairoBusinessDate(),
   let enriched = [];
   if (orderCodesList.length > 0) {
     for (const code of orderCodesList) {
-      let order = db.prepare('SELECT * FROM current_work_orders WHERE order_code = ?').get(code);
+      let order = db.prepare('SELECT * FROM current_work_orders WHERE work_date = ? AND order_code = ?').get(workDate, code);
       if (!order) {
-        order = db.prepare('SELECT * FROM vendoor_orders WHERE order_code = ?').get(code) || { order_code: code, work_date: workDate };
+        order = db.prepare('SELECT * FROM current_work_orders WHERE order_code = ?').get(code);
+      }
+      if (!order) {
+        order = db.prepare('SELECT * FROM vendoor_orders WHERE (business_date = ? OR source_date = ?) AND order_code = ?').get(workDate, workDate, code)
+             || db.prepare('SELECT * FROM vendoor_orders WHERE order_code = ?').get(code) 
+             || { order_code: code, work_date: workDate };
       }
       enriched.push(enrichOrderOperationalIntelligence({ ...order, is_actioned: true, assigned_employee_name: employeeName }));
     }

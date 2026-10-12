@@ -1329,6 +1329,171 @@ export function generateMarketerReport(opts = {}) {
 }
 
 /**
+ * 9b. Single Marketer Detailed Report & Orders Drilldown
+ * Strictly attributes orders based on authoritative marketer_name / affiliate_code
+ * without confusing CS actions or operational employee assignments.
+ */
+export function generateSingleMarketerReport(opts = {}) {
+  const dateMode = opts.dateMode || opts.date_mode || 'day';
+  const targetDate = opts.targetDate || opts.target_date;
+  const startDate = opts.startDate || opts.start_date;
+  const endDate = opts.endDate || opts.end_date;
+  const marketerIdentifier = String(opts.marketer || opts.marketer_name || opts.affiliate_code || opts.name || '').trim();
+  const range = resolveDateRange(dateMode, targetDate, startDate, endDate);
+  const placeholders = range.dates.map(() => '?').join(',');
+
+  // 1. Resolve marketer record in marketers table or orders
+  let marketerInfo = null;
+  try {
+    marketerInfo = db.prepare(`
+      SELECT id, marketer_name, affiliate_code, affiliate_name
+      FROM marketers
+      WHERE affiliate_code = ? OR marketer_name = ? COLLATE NOCASE OR affiliate_name = ? COLLATE NOCASE
+      LIMIT 1
+    `).get(marketerIdentifier, marketerIdentifier, marketerIdentifier);
+  } catch (_) {}
+
+  const mktName = marketerInfo?.marketer_name || marketerInfo?.affiliate_name || (marketerIdentifier.startsWith('ve') ? null : marketerIdentifier);
+  const affCode = marketerInfo?.affiliate_code || (marketerIdentifier.startsWith('ve') ? marketerIdentifier : null);
+
+  // 2. Fetch all matching orders in range
+  let orderRows = [];
+  try {
+    orderRows = db.prepare(`
+      SELECT 
+        order_code,
+        status,
+        account,
+        merchant_code,
+        merchant_name,
+        affiliate_code,
+        affiliate_name,
+        marketer_name,
+        source_date,
+        business_date,
+        city,
+        total_price,
+        created_at_original
+      FROM vendoor_orders
+      WHERE (
+        (affiliate_code IS NOT NULL AND affiliate_code = ?)
+        OR (marketer_name IS NOT NULL AND marketer_name = ? COLLATE NOCASE)
+        OR (affiliate_name IS NOT NULL AND affiliate_name = ? COLLATE NOCASE)
+      )
+      AND (business_date IN (${placeholders}) OR source_date IN (${placeholders}))
+      ORDER BY order_code DESC
+    `).all(affCode || '__NONE__', mktName || '__NONE__', mktName || '__NONE__', ...range.dates, ...range.dates);
+  } catch (_) {}
+
+  // Fallback to current_work_orders if vendoor_orders has no records for the current day
+  if (orderRows.length === 0) {
+    try {
+      orderRows = db.prepare(`
+        SELECT 
+          order_code,
+          status,
+          account,
+          merchant_code,
+          merchant_name,
+          affiliate_code,
+          marketer_name,
+          work_date as business_date,
+          work_date as source_date,
+          0 as total_price,
+          '' as city,
+          '' as created_at_original
+        FROM current_work_orders
+        WHERE (
+          (affiliate_code IS NOT NULL AND affiliate_code = ?)
+          OR (marketer_name IS NOT NULL AND marketer_name = ? COLLATE NOCASE)
+        )
+        AND work_date IN (${placeholders})
+        ORDER BY order_code DESC
+      `).all(affCode || '__NONE__', mktName || '__NONE__', ...range.dates);
+    } catch (_) {}
+  }
+
+  // 3. Compute metrics across order lifecycle
+  const totalOrders = orderRows.length;
+  let newOrders = 0;
+  let pendingOrders = 0;
+  let printedOrders = 0;
+  let cancelledOrders = 0;
+  let completedOrders = 0;
+  let processingOrders = 0;
+  let shippedOrders = 0;
+  let totalGMV = 0;
+
+  const linkedMerchants = new Set();
+  const linkedAccounts = new Set();
+
+  for (const o of orderRows) {
+    const st = String(o.status || '').toLowerCase();
+    if (st.includes('new') || st.includes('جديد')) newOrders++;
+    else if (st.includes('pending') || st.includes('معلق')) pendingOrders++;
+    else if (st.includes('print') || st.includes('طباعة')) printedOrders++;
+    else if (st.includes('cancel') || st.includes('ملغ')) cancelledOrders++;
+    else if (st.includes('deliver') || st.includes('collect') || st.includes('استلام') || st.includes('تحصيل')) completedOrders++;
+    else if (st.includes('process') || st.includes('تجهيز')) processingOrders++;
+    else if (st.includes('ship') || st.includes('شحن')) shippedOrders++;
+
+    if (o.total_price) totalGMV += Number(o.total_price) || 0;
+    if (o.merchant_name) linkedMerchants.add(o.merchant_name);
+    if (o.account) linkedAccounts.add(o.account);
+  }
+
+  const cancelRate = totalOrders > 0 ? Number(((cancelledOrders / totalOrders) * 100).toFixed(1)) : 0;
+  const deliveryRate = totalOrders > 0 ? Number(((completedOrders / totalOrders) * 100).toFixed(1)) : 0;
+
+  return {
+    success: true,
+    report_type: 'single_marketer',
+    date_mode: range.dateMode,
+    start_date: range.startDate,
+    end_date: range.endDate,
+    target_date: range.endDate,
+    marketer: {
+      name: mktName || marketerIdentifier,
+      affiliate_code: affCode || (orderRows[0]?.affiliate_code || null),
+      affiliate_name: marketerInfo?.affiliate_name || mktName,
+      has_registered_profile: Boolean(marketerInfo),
+      entity_type: 'ECOMMERCE_MARKETER_AFFILIATE',
+      methodology_notice: 'المسوق هو شريك تجارة إلكترونية مستقل (Affiliate Partner) وليس موظف CS. تُقاس نتائجه بدورة حياة طلباته المنسوبة حصراً دون احتساب حركات موظفي CS.'
+    },
+    metrics: {
+      total_orders: totalOrders,
+      new_orders: newOrders,
+      pending_orders: pendingOrders,
+      printed_orders: printedOrders,
+      cancelled_orders: cancelledOrders,
+      completed_orders: completedOrders,
+      processing_orders: processingOrders,
+      shipped_orders: shippedOrders,
+      total_gmv: Number(totalGMV.toFixed(2)),
+      cancellation_rate: cancelRate,
+      cancellation_formula: `${cancelledOrders} cancelled ÷ ${totalOrders} total orders`,
+      delivery_rate: deliveryRate,
+      delivery_formula: `${completedOrders} delivered ÷ ${totalOrders} total orders`,
+      merchants_count: linkedMerchants.size,
+      linked_merchants: Array.from(linkedMerchants),
+      accounts_count: linkedAccounts.size,
+      linked_accounts: Array.from(linkedAccounts)
+    },
+    orders: orderRows.map(o => ({
+      order_code: o.order_code,
+      status: o.status || 'New',
+      account: o.account || '—',
+      merchant_name: o.merchant_name || o.account || '—',
+      merchant_code: o.merchant_code || '—',
+      total_price: Number(o.total_price || 0),
+      city: o.city || '—',
+      date: o.business_date || o.source_date || range.endDate,
+      created_at: o.created_at_original || o.business_date || range.endDate
+    }))
+  };
+}
+
+/**
  * 10. Phone Match Alerts Report
  */
 export function generatePhoneAlertsReport(opts = {}) {

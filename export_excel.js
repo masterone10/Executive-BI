@@ -424,3 +424,173 @@ export function createContextualExportWorkbook(viewContext = {}, dataset = {}) {
 
   return wb;
 }
+
+/**
+ * Creates Excel Workbook for Single Employee Comprehensive Profile
+ */
+export function createSingleEmployeeReportWorkbook(profile = {}) {
+  const wb = XLSX.utils.book_new();
+  const emp = profile.employee || {};
+  const m = profile.metrics || {};
+  const acts = m.actions || {};
+  const unq = m.unique_orders || {};
+  const asg = m.assigned_orders || {};
+  const wkl = m.current_workload || {};
+  const rates = m.rates || {};
+  const scores = m.scores || {};
+  const recs = profile.drilldown_records || [];
+
+  // Sheet 1: Executive Profile
+  const summaryRows = [
+    ['CS EXECUTIVE BI — EMPLOYEE COMPREHENSIVE PROFILE REPORT'],
+    [`Generated: ${new Date().toISOString()} · Cairo Business Date: ${profile.work_date || 'N/A'}`],
+    [],
+    ['EMPLOYEE IDENTITY & STATUS', 'DETAILS'],
+    ['Employee Name', emp.name || '-'],
+    ['Employee ID', emp.id || 'Historical Unlinked'],
+    ['Approved Name in Master', emp.approved_name || '(Not in Master)'],
+    ['Department', emp.department || 'CS'],
+    ['Operational Privileges', emp.has_operational_privileges ? 'YES — Approved Active CS' : 'NO — Historical Analytical Retention Only'],
+    ['Identity Classification', emp.identity_type || '-'],
+    ['Methodology Note', emp.privileges_note || '-'],
+    [],
+    ['THE 5 PILLARS METRICS', 'VALUE'],
+    ['1. Real Deduplicated Actions', acts.total_real_actions || 0],
+    ['2. Unique Orders Touched', unq.unique_orders_touched || 0],
+    ['3. Assigned Orders (Today)', asg.total_assigned || 0],
+    ['4. Current Active Workload', wkl.total_active_workload || 0],
+    ['5. Historical Recorded Dates', profile.historical_activity?.total_recorded_dates || 0],
+    [],
+    ['OPERATIONAL RATES & QUALITY', 'PERCENTAGE / SCORE'],
+    ['Own Printed Rate', `${rates.own_printed_rate || 0}%`],
+    ['Own Pending Rate', `${rates.own_pending_rate || 0}%`],
+    ['Own Cancellation Rate', `${rates.own_cancel_rate || 0}%`],
+    ['Alt Phones Rate', `${rates.own_alt_rate || 0}%`],
+    ['Performance Score', scores.performance_score || '-'],
+    ['Grade', scores.grade || '-'],
+    ['Segment', scores.segment || '-'],
+    ['Cancellation Risk', scores.cancel_risk || 'Normal'],
+  ];
+
+  const wsSum = XLSX.utils.aoa_to_sheet(summaryRows);
+  wsSum['!cols'] = [{ wch: 35 }, { wch: 60 }];
+  XLSX.utils.book_append_sheet(wb, wsSum, 'Executive Profile');
+
+  // Sheet 2: 5 Pillars Actions vs Orders
+  const pillarRows = [
+    ['ACTION TYPE', 'ACTIONS COUNT', 'UNIQUE ORDERS', 'RATIO (ACTIONS/ORDER)', 'OPERATIONAL EFFECT'],
+    ['Printed / Confirmed', acts.printed_actions || 0, unq.unique_printed_orders || 0, unq.unique_printed_orders ? (acts.printed_actions / unq.unique_printed_orders).toFixed(2) : '1.00', 'Ready for shipping'],
+    ['Pending / Backlog', acts.pending_actions || 0, unq.unique_pending_orders || 0, unq.unique_pending_orders ? (acts.pending_actions / unq.unique_pending_orders).toFixed(2) : '1.00', 'Follow-up required'],
+    ['Cancelled', acts.cancelled_actions || 0, unq.unique_cancelled_orders || 0, unq.unique_cancelled_orders ? (acts.cancelled_actions / unq.unique_cancelled_orders).toFixed(2) : '1.00', 'Cancelled with reason'],
+    ['Processing / Prep', acts.processing_actions || 0, unq.unique_processing_orders || 0, unq.unique_processing_orders ? (acts.processing_actions / unq.unique_processing_orders).toFixed(2) : '1.00', 'Under preparation'],
+    ['Alt Phone Numbers Added', acts.alt_phones_added || 0, acts.alt_phones_added || 0, '1.00', 'Data quality enhancement'],
+    ['TOTAL REAL ACTIVITY', acts.total_real_actions || 0, unq.unique_orders_touched || 0, unq.unique_orders_touched ? (acts.total_real_actions / unq.unique_orders_touched).toFixed(2) : '1.00', 'Deterministic 120s window']
+  ];
+  const wsPil = XLSX.utils.aoa_to_sheet(pillarRows);
+  wsPil['!cols'] = [{ wch: 25 }, { wch: 18 }, { wch: 18 }, { wch: 24 }, { wch: 28 }];
+  XLSX.utils.book_append_sheet(wb, wsPil, 'Actions vs Orders');
+
+  // Sheet 3: Activity Audit Log
+  const logHeaders = ['#', 'Order Code', 'Action Status', 'Action Details', 'Event Datetime', 'Work Date'];
+  const logRows = [logHeaders];
+  recs.forEach((r, idx) => {
+    logRows.push([
+      idx + 1,
+      r.order_code || '-',
+      r.status || 'Action',
+      r.action || '-',
+      r.event_datetime || '-',
+      r.work_date || profile.work_date || '-'
+    ]);
+  });
+  if (logRows.length === 1) logRows.push(['No activity records found for this employee on this date']);
+  const wsLog = XLSX.utils.aoa_to_sheet(logRows);
+  wsLog['!cols'] = [{ wch: 6 }, { wch: 18 }, { wch: 16 }, { wch: 45 }, { wch: 22 }, { wch: 14 }];
+  XLSX.utils.book_append_sheet(wb, wsLog, 'Activity Audit Log');
+
+  // Sheet 4: Assigned Orders
+  const asgList = asg.orders || [];
+  const asgHeaders = ['#', 'Order Code', 'Account', 'Status', 'Allocation Date', 'Method'];
+  const asgRows = [asgHeaders];
+  asgList.forEach((o, idx) => {
+    asgRows.push([
+      idx + 1,
+      o.order_code || '-',
+      o.account || '-',
+      o.status || 'New',
+      o.allocation_date || profile.work_date || '-',
+      o.method || 'Fair Random'
+    ]);
+  });
+  if (asgRows.length === 1) asgRows.push(['No assigned orders recorded']);
+  const wsAsg = XLSX.utils.aoa_to_sheet(asgRows);
+  wsAsg['!cols'] = [{ wch: 6 }, { wch: 18 }, { wch: 24 }, { wch: 14 }, { wch: 16 }, { wch: 18 }];
+  XLSX.utils.book_append_sheet(wb, wsAsg, 'Assigned Orders');
+
+  return wb;
+}
+
+/**
+ * Creates Excel Workbook for Single Marketer Detailed Report
+ */
+export function createSingleMarketerReportWorkbook(report = {}) {
+  const wb = XLSX.utils.book_new();
+  const mkt = report.marketer || {};
+  const m = report.metrics || {};
+  const orders = report.orders || [];
+
+  // Sheet 1: Marketer Summary
+  const summaryRows = [
+    ['CS EXECUTIVE BI — MARKETER & AFFILIATE AUDIT REPORT'],
+    [`Period: ${report.start_date || 'N/A'} to ${report.end_date || 'N/A'} · Mode: ${report.date_mode || 'day'}`],
+    [],
+    ['MARKETER IDENTIFICATION', 'DETAILS'],
+    ['Marketer Name (اسم المسوق)', mkt.name || '-'],
+    ['Affiliate Code (كود الأفلييت)', mkt.affiliate_code || '-'],
+    ['Registered Profile in System', mkt.has_registered_profile ? 'YES' : 'Detected from Vendoor Orders'],
+    ['Entity Role', 'E-Commerce Marketer / Affiliate Partner (NOT CS)'],
+    ['Methodology Boundary', mkt.methodology_notice || '-'],
+    [],
+    ['LIFECYCLE ORDER PERFORMANCE', 'COUNT / VALUE'],
+    ['Total Orders Generated', m.total_orders || 0],
+    ['New Orders', m.new_orders || 0],
+    ['Pending Orders', m.pending_orders || 0],
+    ['Printed Orders', m.printed_orders || 0],
+    ['Processing Orders', m.processing_orders || 0],
+    ['Shipped Orders', m.shipped_orders || 0],
+    ['Completed / Delivered Orders', m.completed_orders || 0],
+    ['Cancelled Orders', m.cancelled_orders || 0],
+    ['Total Revenue GMV (EGP)', m.total_gmv || 0],
+    ['Cancellation Rate %', `${m.cancellation_rate || 0}% (${m.cancellation_formula || ''})`],
+    ['Delivery Fulfillment Rate %', `${m.delivery_rate || 0}% (${m.delivery_formula || ''})`],
+    ['Promoted Merchants Count', m.merchants_count || 0],
+    ['Promoted Merchants List', (m.linked_merchants || []).join(', ') || '-']
+  ];
+
+  const wsSum = XLSX.utils.aoa_to_sheet(summaryRows);
+  wsSum['!cols'] = [{ wch: 35 }, { wch: 60 }];
+  XLSX.utils.book_append_sheet(wb, wsSum, 'Marketer Summary');
+
+  // Sheet 2: Orders Drilldown
+  const orderHeaders = ['#', 'Order Code', 'Status', 'Account', 'Merchant Name', 'Total Price (EGP)', 'City', 'Date'];
+  const orderRows = [orderHeaders];
+  orders.forEach((o, idx) => {
+    orderRows.push([
+      idx + 1,
+      o.order_code || '-',
+      o.status || 'New',
+      o.account || '-',
+      o.merchant_name || '-',
+      o.total_price || 0,
+      o.city || '-',
+      o.date || '-'
+    ]);
+  });
+  if (orderRows.length === 1) orderRows.push(['No orders found for this marketer in this period']);
+
+  const wsOrd = XLSX.utils.aoa_to_sheet(orderRows);
+  wsOrd['!cols'] = [{ wch: 6 }, { wch: 18 }, { wch: 14 }, { wch: 22 }, { wch: 24 }, { wch: 18 }, { wch: 16 }, { wch: 14 }];
+  XLSX.utils.book_append_sheet(wb, wsOrd, 'Orders Drilldown');
+
+  return wb;
+}
