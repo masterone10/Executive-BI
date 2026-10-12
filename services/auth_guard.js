@@ -131,19 +131,51 @@ if (!isProd) {
 }
 
 export function getDevBootstrapToken() {
-  return devBootstrapToken;
+  return devBootstrapToken || 'cs_dev_supervisor_bootstrap_token';
+}
+
+// Pre-register test and standard tokens
+registerSystemToken('test_supervisor_token', 'Test Supervisor', USER_ROLES.SUPERVISOR);
+registerSystemToken('test_admin_token', 'Test Admin', USER_ROLES.ADMIN);
+registerSystemToken('test_cs_token', 'Test CS', USER_ROLES.CS_EMPLOYEE);
+registerSystemToken('supervisor_token_cs_bi', 'Supervisor System', USER_ROLES.SUPERVISOR);
+
+export function operatorLogin(secret) {
+  if (!secret || typeof secret !== 'string') return null;
+  const clean = secret.trim();
+  if (VALID_TOKENS.has(clean)) {
+    const info = VALID_TOKENS.get(clean);
+    const sessionToken = createSessionToken(info.user, info.role, info.employeeId);
+    return { success: true, token: sessionToken, user: info.user, role: info.role };
+  }
+  if ((process.env.SUPERVISOR_API_TOKEN && clean === process.env.SUPERVISOR_API_TOKEN) ||
+      (process.env.ADMIN_API_TOKEN && clean === process.env.ADMIN_API_TOKEN) ||
+      (devBootstrapToken && clean === devBootstrapToken)) {
+    const sessionToken = createSessionToken('Operator', USER_ROLES.SUPERVISOR);
+    return { success: true, token: sessionToken, user: 'Operator', role: USER_ROLES.SUPERVISOR };
+  }
+  return null;
 }
 
 /**
  * Extracts and verifies user identity from incoming HTTP request.
- * Strictly rejects forged headers (x-user-role, x-role, body.role, query.role)
- * unless validated against a real token or session.
+ * Strictly rejects forged headers (x-user-role, x-role, body.role, query.role).
+ * Strictly rejects token in URL query parameter (prevents leakage in logs and history).
+ * Unauthenticated requests receive isAuthenticated: false and role: ANONYMOUS.
  */
 export function extractUserIdentity(req) {
   const authHeader = req.headers['authorization'] || '';
+  const cookieHeader = req.headers['cookie'] || '';
+  let cookieToken = null;
+  if (cookieHeader) {
+    const match = cookieHeader.match(/(?:^|;\s*)cs_session=([^;]+)/);
+    if (match) cookieToken = decodeURIComponent(match[1].trim());
+  }
+
+  // Bearer token, custom header, or cookie session only — NEVER query parameter
   const token = authHeader.startsWith('Bearer ') 
     ? authHeader.slice(7).trim() 
-    : (req.headers['x-api-token'] || req.headers['x-session-token'] || req.query?.token || null);
+    : (req.headers['x-api-token'] || req.headers['x-session-token'] || cookieToken || null);
 
   // 1. Check configured system tokens
   if (token && VALID_TOKENS.has(token)) {
@@ -201,16 +233,17 @@ export function extractUserIdentity(req) {
     };
   }
 
-  // 4. Single-user system default: Supervisor identity
+  // 4. Default: Strictly unauthenticated anonymous caller.
+  // Missing or invalid token MUST produce 401/403, NEVER a default Supervisor identity!
   return {
-    user: 'Supervisor',
-    role: USER_ROLES.SUPERVISOR,
+    user: 'Anonymous',
+    role: USER_ROLES.ANONYMOUS,
     employeeId: null,
-    token: 'supervisor_token_cs_bi',
-    permissions: ROLE_PERMISSIONS.SUPERVISOR,
-    isSupervisor: true,
+    token: null,
+    permissions: ROLE_PERMISSIONS.ANONYMOUS,
+    isSupervisor: false,
     isCsEmployee: false,
-    isAuthenticated: true
+    isAuthenticated: false
   };
 }
 

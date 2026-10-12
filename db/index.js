@@ -1570,8 +1570,8 @@ export function initDB() {
     seedInitialEmployees();
   }
 
-  // Seed baseline snapshot ONLY if explicitly requested in non-production environments
-  if (process.env.SEED_DEMO_DATA === 'true' && !isExplicitProd) {
+  // Seed baseline snapshot ONLY if explicitly requested or in test environments
+  if ((process.env.SEED_DEMO_DATA === 'true' || isTest) && !isExplicitProd) {
     const baselineDate = '2026-09-08';
     const existing = db.prepare('SELECT id FROM daily_metrics_snapshots WHERE work_date = ?').get(baselineDate);
     if (!existing) {

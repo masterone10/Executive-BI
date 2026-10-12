@@ -108,6 +108,7 @@ describe('CS Executive BI — Forensic System Hardening & Invariant Verification
     const res = await apiReq('/api/allocation/configuration/save', {
       method: 'POST',
       headers: {
+        'Authorization': 'Bearer test_cs_token',
         'x-user-role': 'CS_EMPLOYEE',
         'x-user': 'Agent User'
       },

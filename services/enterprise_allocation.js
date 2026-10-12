@@ -714,15 +714,15 @@ export function saveAccountDaySchedule({
   account,
   status = 'NEW',
   day = 'all',
-  start = null,
-  end = null,
-  new_start_time = null,
-  new_end_time = null,
-  pending_start_time = null,
-  pending_end_time = null,
-  new_enabled = null,
-  pending_enabled = null,
-  enabled = null,
+  start = undefined,
+  end = undefined,
+  new_start_time = undefined,
+  new_end_time = undefined,
+  pending_start_time = undefined,
+  pending_end_time = undefined,
+  new_enabled = undefined,
+  pending_enabled = undefined,
+  enabled = undefined,
   operator = 'Supervisor'
 }) {
   const cleanAcc = String(account || '').trim();
@@ -1615,6 +1615,10 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
   const globalMode = getGlobalSettingStr('allocation_mode', 'ACTIVE');
   const effectiveMode = (globalMode === 'OFF' || mode === 'OFF' || options.forceMode === 'OFF' || options.mode === 'OFF') ? 'OFF' : (options.mode || mode);
 
+  // 1. Fetch current active configuration version
+  const config = getEnterpriseAllocationConfig();
+  const configVersion = config.version;
+
   if (effectiveMode === 'OFF') {
     return {
       plan_id: `plan_off_${Date.now()}`,
@@ -1641,10 +1645,6 @@ export function planEnterpriseAllocation(workDate, mode = 'ACTIVE', options = {}
       audit_records: []
     };
   }
-
-  // 1. Fetch current active configuration version
-  const config = getEnterpriseAllocationConfig();
-  const configVersion = config.version;
 
   // 2. Fetch inventory of orders for work date
   let orders = options.orders !== undefined ? [...options.orders] : db.prepare(`

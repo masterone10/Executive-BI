@@ -11,20 +11,10 @@ test('HTTP API Account Day Schedule Endpoints Suite', async (t) => {
   // Cleanup test account in SQLite
   db.prepare('DELETE FROM account_schedules WHERE account = ? COLLATE NOCASE').run(TEST_ACC);
 
-  let baseUrl = 'http://127.0.0.1:3000';
-  let ephemeralServer = null;
-  try {
-    const probe = await fetch('http://127.0.0.1:3000/api/allocation/schedule/day-save', {
-      method: 'OPTIONS',
-      signal: AbortSignal.timeout(600)
-    }).catch(() => null);
-    if (!probe) throw new Error('probe failed');
-  } catch {
-    ephemeralServer = http.createServer(app);
-    await new Promise((resolve) => ephemeralServer.listen(0, '127.0.0.1', resolve));
-    const port = ephemeralServer.address().port;
-    baseUrl = `http://127.0.0.1:${port}`;
-  }
+  const ephemeralServer = http.createServer(app);
+  await new Promise((resolve) => ephemeralServer.listen(0, '127.0.0.1', resolve));
+  const port = ephemeralServer.address().port;
+  const baseUrl = `http://127.0.0.1:${port}`;
 
   t.after(() => {
     if (ephemeralServer) {

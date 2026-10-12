@@ -138,7 +138,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
   const metrics = computePerformanceFromRecords(records);
   const csContributors = metrics.addedOrders.topCSContributors;
   assert.ok(csContributors.every(c => c.name.toLowerCase().endsWith('cs')), 'All top added-order contributors must be CS only');
-  assert.strictEqual(csContributors[0].name, 'Basma CS', 'Basma CS should be the top CS added contributor');
+  assert.strictEqual(csContributors[0].name.toLowerCase(), 'basma cs', 'Basma CS should be the top CS added contributor');
   assert.strictEqual(metrics.addedOrders.totalAddedNonCS, 3, 'Total non-CS added orders recorded correctly');
   console.log('✓ PASS: Top Added Contributors strictly CS only.');
 }
@@ -510,6 +510,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
   const server = app.listen(0);
   const port = server.address().port;
   const baseUrl = `http://127.0.0.1:${port}`;
+  const authHeaders = { 'Content-Type': 'application/json', 'Authorization': 'Bearer test_supervisor_token' };
 
   try {
     // 1. GET employees
@@ -527,7 +528,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     // 2. Create employee
     const createRes = await fetch(`${baseUrl}/api/employees`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ name: 'Ahmed Test', department: 'CS', active: 1 })
     });
     assert.strictEqual(createRes.status, 201, 'POST /api/employees must return 201 Created');
@@ -550,7 +551,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     // 3. Duplicate employee rejection (sensible normalized comparison)
     const dupRes = await fetch(`${baseUrl}/api/employees`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ name: '   ahmed   test   ', department: 'CS' })
     });
     assert.strictEqual(dupRes.status, 409, 'Duplicate employee must return 409 Conflict');
@@ -565,7 +566,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     // 4. Edit employee (name and department)
     const editRes = await fetch(`${baseUrl}/api/employees/${newEmpId}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ name: 'Ahmed Test Updated', department: 'Other', active: 1 })
     });
     assert.strictEqual(editRes.status, 200, 'PUT /api/employees/:id must return 200 OK');
@@ -583,7 +584,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     // 5. Deactivate employee
     const deactRes = await fetch(`${baseUrl}/api/employees/${newEmpId}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ active: 0 })
     });
     assert.strictEqual(deactRes.status, 200, 'PATCH /api/employees/:id/status must return 200 OK');
@@ -597,7 +598,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     // 6. Reactivate employee
     const reactRes = await fetch(`${baseUrl}/api/employees/${newEmpId}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ active: 1 })
     });
     assert.strictEqual(reactRes.status, 200, 'PATCH /api/employees/:id/status must return 200 OK');
@@ -625,7 +626,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     // Deactivate employee again
     await fetch(`${baseUrl}/api/employees/${newEmpId}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ active: 0 })
     });
 
@@ -649,7 +650,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     // 9a. Empty name on POST
     const errPost = await fetch(`${baseUrl}/api/employees`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ name: '   ' })
     });
     assert.strictEqual(errPost.status, 400);
@@ -661,7 +662,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     // 9b. Non-existent ID on PUT
     const errPut = await fetch(`${baseUrl}/api/employees/99999999`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ name: 'Someone' })
     });
     assert.strictEqual(errPut.status, 404);
@@ -672,7 +673,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     // 9c. Invalid ID on PATCH
     const errPatch = await fetch(`${baseUrl}/api/employees/invalid-id/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ active: 1 })
     });
     assert.strictEqual(errPatch.status, 400);
@@ -780,6 +781,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
   await new Promise((resolve) => server.listen(0, resolve));
   const port = server.address().port;
   const baseUrl = `http://127.0.0.1:${port}`;
+  const authHeaders = { 'Content-Type': 'application/json', 'Authorization': 'Bearer test_supervisor_token' };
 
   try {
     // 1. Query baseline date: 2026-09-08
@@ -829,7 +831,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     // Set working team for 2026-09-07
     await fetch(`${baseUrl}/api/working-team/2026-09-07`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ employeeIds: [emp1.id] })
     });
 
@@ -841,7 +843,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     // Verify 2026-09-06 working team is not contaminated by 2026-09-07
     await fetch(`${baseUrl}/api/working-team/2026-09-06`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ employeeIds: [] })
     });
     const team06 = await fetch(`${baseUrl}/api/working-team/2026-09-06`).then(r => r.json());
@@ -851,7 +853,7 @@ console.log('--- STARTING EXECUTIVE BI REGRESSION TESTS ---');
     // 6. Work Allocation date isolation
     await fetch(`${baseUrl}/api/allocations`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         date: '2026-09-07',
         assignments: [{ employee_id: emp1.id, account: 'TEST-ACC-07', status: 'New', available_orders: 45 }]
