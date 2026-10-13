@@ -15,6 +15,7 @@ import { computePerformanceFromRecords, savePerformanceSnapshotToDB } from './pe
 import { createSyncRunId, recordSyncRun } from './vendoor/orchestrator.js';
 import { fetchVendoorLogsForDate, canonicalWorkDate } from './vendoor/logs.js';
 import { extractCanonicalStatus } from './vendoor/actions.js';
+import { enrichOrderOperationalIntelligence } from './operational_intelligence.js';
 
 let cachedAvailableDates = null;
 let cacheTimestamp = 0;
@@ -697,9 +698,13 @@ export function getHistoricalDayOverview(workDate) {
  */
 export function getHistoricalOrdersList(workDate, options = {}) {
   const cleanDate = String(workDate || '').trim();
-  const { account, status, search, limit = 100, offset = 0 } = options;
+  const { account, status, search, exception_filter, limit = 50, offset = 0 } = options;
 
   let allOrders = getHistoricalOrdersForDate(cleanDate);
+
+  if (typeof enrichOrderOperationalIntelligence === 'function') {
+    allOrders = allOrders.map(enrichOrderOperationalIntelligence);
+  }
 
   if (account) {
     allOrders = allOrders.filter(o => String(o.account || '').toLowerCase() === String(account).toLowerCase());
@@ -709,18 +714,53 @@ export function getHistoricalOrdersList(workDate, options = {}) {
   }
   if (search) {
     const s = String(search).toLowerCase();
-    allOrders = allOrders.filter(o => String(o.order_code || '').toLowerCase().includes(s) || String(o.account || '').toLowerCase().includes(s));
+    allOrders = allOrders.filter(o =>
+      String(o.order_code || '').toLowerCase().includes(s) ||
+      String(o.account || '').toLowerCase().includes(s) ||
+      String(o.customer || o.customer_name || '').toLowerCase().includes(s) ||
+      String(o.phone || '').toLowerCase().includes(s) ||
+      String(o.assigned_employee_name || '').toLowerCase().includes(s)
+    );
+  }
+
+  if (exception_filter && exception_filter !== 'all') {
+    if (exception_filter === 'second_phone') {
+      allOrders = allOrders.filter(o => o.phone_quality && o.phone_quality.needs_attention);
+    } else if (exception_filter === 'address') {
+      allOrders = allOrders.filter(o => o.address_quality && !o.address_quality.is_valid);
+    } else if (exception_filter === 'delivery') {
+      allOrders = allOrders.filter(o => o.delivery_quality && o.delivery_quality.needs_attention);
+    } else if (exception_filter === 'merchant_mismatch') {
+      allOrders = allOrders.filter(o => o.merchant_code_quality?.has_mismatch || (o.operational_alerts || []).some(a => a.type === 'MERCHANT_CODE_MISMATCH'));
+    } else if (exception_filter === 'warehouse_mismatch') {
+      allOrders = allOrders.filter(o => o.warehouse_quality?.has_mismatch || (o.operational_alerts || []).some(a => a.type === 'PRINTED_WAREHOUSE_MISMATCH'));
+    }
   }
 
   const total = allOrders.length;
-  const paged = allOrders.slice(offset, offset + limit);
+  const pageSize = Number(limit) || 50;
+  const parsedOffset = Number(offset) || 0;
+  const paged = allOrders.slice(parsedOffset, parsedOffset + pageSize);
+  const currentPage = Math.floor(parsedOffset / pageSize);
+  const totalPages = Math.ceil(total / pageSize) || 1;
 
   return {
     work_date: cleanDate,
     source: 'canonical_historical_resolver',
     total,
-    limit,
-    offset,
+    total_count: total,
+    page: currentPage,
+    page_size: pageSize,
+    total_pages: totalPages,
+    offset: parsedOffset,
+    filters_applied: {
+      account: account || null,
+      status: status || null,
+      search: search || null,
+      exception_filter: exception_filter || 'all'
+    },
+    source_status: 'OK',
+    as_of: new Date().toISOString(),
     orders: paged
   };
 }
@@ -741,55 +781,9 @@ export function getHistoricalOrdersForDate(workDate) {
   const today = getCairoBusinessDate();
   const isToday = (cleanDate === today);
 
-  // 1. For Today (Operational Work Pool), primary source of truth is current_work_orders
-  if (isToday) {
-    const cwoOrders = db.prepare(`
-      SELECT 
-        id, 
-        order_code, 
-        account, 
-        status, 
-        COALESCE(order_date, work_date) as order_date, 
-        source_file_slot, 
-        work_state, 
-        assigned_employee_id, 
-        assigned_employee_name, 
-        tracking_id
-      FROM current_work_orders
-      WHERE (order_date = ? OR work_date = ?)
-      ORDER BY account ASC, order_code ASC
-    `).all(cleanDate, cleanDate);
-
-    if (cwoOrders && cwoOrders.length > 0) {
-      return cwoOrders;
-    }
-
-    // Fallback for today if current_work_orders not yet populated: active vendoor_orders
-    const voOrders = db.prepare(`
-      SELECT 
-        id, 
-        order_code, 
-        account, 
-        COALESCE(active_status, status) as status, 
-        COALESCE(source_date, business_date, ?) as order_date, 
-        1 as source_file_slot, 
-        'UNASSIGNED' as work_state, 
-        null as assigned_employee_id, 
-        'UNASSIGNED' as assigned_employee_name, 
-        order_code as tracking_id
-      FROM vendoor_orders
-      ORDER BY account ASC, order_code ASC
-    `).all(cleanDate);
-
-    if (voOrders && voOrders.length > 0) {
-      return voOrders;
-    }
-  }
-
-  // 2. For Historical Dates (or historical fallback)
   const ordersMap = new Map();
 
-  // A. Check historical current_work_orders snapshot for cleanDate
+  // A. Check current_work_orders snapshot for cleanDate
   const cwoHist = db.prepare(`
     SELECT 
       id, 
@@ -801,12 +795,14 @@ export function getHistoricalOrdersForDate(workDate) {
       work_state, 
       assigned_employee_id, 
       assigned_employee_name, 
-      tracking_id
+      tracking_id,
+      priority,
+      product_name,
+      warehouse
     FROM current_work_orders
     WHERE (order_date = ? OR work_date = ?)
-      AND COALESCE(order_date, work_date) = ?
     ORDER BY account ASC, order_code ASC
-  `).all(cleanDate, cleanDate, cleanDate);
+  `).all(cleanDate, cleanDate);
 
   for (const cwo of cwoHist) {
     ordersMap.set(cwo.order_code, {
@@ -819,29 +815,53 @@ export function getHistoricalOrdersForDate(workDate) {
       work_state: cwo.work_state || 'UNASSIGNED',
       assigned_employee_id: cwo.assigned_employee_id || null,
       assigned_employee_name: cwo.assigned_employee_name || 'UNASSIGNED',
-      tracking_id: cwo.tracking_id || cwo.order_code
+      tracking_id: cwo.tracking_id || cwo.order_code,
+      priority: cwo.priority || 'REGULAR',
+      product_name: cwo.product_name,
+      warehouse: cwo.warehouse
     });
   }
 
-  // B. Check historical vendoor_orders explicitly dated cleanDate
-  const voHist = db.prepare(`
-    SELECT 
-      id, 
-      order_code, 
-      account, 
-      COALESCE(active_status, status) as status, 
-      COALESCE(source_date, business_date) as order_date, 
-      1 as source_file_slot, 
-      'UNASSIGNED' as work_state, 
-      null as assigned_employee_id, 
-      'UNASSIGNED' as assigned_employee_name, 
-      order_code as tracking_id
-    FROM vendoor_orders
-    WHERE (source_date = ? OR business_date = ?)
-      AND COALESCE(source_date, business_date) IS NOT NULL
-      AND TRIM(COALESCE(source_date, business_date)) != ''
-    ORDER BY account ASC, order_code ASC
-  `).all(cleanDate, cleanDate);
+  // B. Check vendoor_orders for cleanDate
+  const voHist = isToday
+    ? db.prepare(`
+        SELECT 
+          id, 
+          order_code, 
+          account, 
+          COALESCE(active_status, status) as status, 
+          COALESCE(source_date, business_date, ?) as order_date, 
+          1 as source_file_slot, 
+          'UNASSIGNED' as work_state, 
+          null as assigned_employee_id, 
+          'UNASSIGNED' as assigned_employee_name, 
+          order_code as tracking_id,
+          product_name,
+          warehouse
+        FROM vendoor_orders
+        WHERE (source_date = ? OR business_date = ? OR is_active = 1)
+        ORDER BY account ASC, order_code ASC
+      `).all(cleanDate, cleanDate, cleanDate)
+    : db.prepare(`
+        SELECT 
+          id, 
+          order_code, 
+          account, 
+          COALESCE(active_status, status) as status, 
+          COALESCE(source_date, business_date) as order_date, 
+          1 as source_file_slot, 
+          'UNASSIGNED' as work_state, 
+          null as assigned_employee_id, 
+          'UNASSIGNED' as assigned_employee_name, 
+          order_code as tracking_id,
+          product_name,
+          warehouse
+        FROM vendoor_orders
+        WHERE (source_date = ? OR business_date = ?)
+          AND COALESCE(source_date, business_date) IS NOT NULL
+          AND TRIM(COALESCE(source_date, business_date)) != ''
+        ORDER BY account ASC, order_code ASC
+      `).all(cleanDate, cleanDate);
 
   for (const vo of voHist) {
     if (!ordersMap.has(vo.order_code)) {
@@ -855,12 +875,22 @@ export function getHistoricalOrdersForDate(workDate) {
         work_state: vo.work_state || 'UNASSIGNED',
         assigned_employee_id: vo.assigned_employee_id || null,
         assigned_employee_name: vo.assigned_employee_name || 'UNASSIGNED',
-        tracking_id: vo.tracking_id || vo.order_code
+        tracking_id: vo.tracking_id || vo.order_code,
+        product_name: vo.product_name,
+        warehouse: vo.warehouse
       });
     } else {
       const ord = ordersMap.get(vo.order_code);
-      if (ord.account === 'General Account' && vo.account) {
+      if ((!ord.account || ord.account === 'General Account') && vo.account) {
         ord.account = vo.account;
+      }
+      if (!ord.product_name && vo.product_name) ord.product_name = vo.product_name;
+      if (!ord.warehouse && vo.warehouse) ord.warehouse = vo.warehouse;
+      const voStatus = String(vo.status || '').trim();
+      const currStatus = String(ord.status || '').trim();
+      if (['Processing', 'Printed', 'Cancelled', 'Delivered'].includes(voStatus) &&
+          !['Printed', 'Cancelled'].includes(currStatus)) {
+        ord.status = voStatus;
       }
     }
   }

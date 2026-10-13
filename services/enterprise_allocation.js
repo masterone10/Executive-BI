@@ -1248,17 +1248,15 @@ export function evaluateEmployeeAllocationEligibility(employeeId, workDate, opti
     ? Number(capRow.per_distribution_limit)
     : (options.per_distribution_limits && options.per_distribution_limits[employeeId] !== undefined ? Number(options.per_distribution_limits[employeeId]) : null);
   const currentWorkload = options.currentWorkload !== undefined ? options.currentWorkload : getEmployeeCurrentWorkload(employeeId, workDate);
-  let totalWorked = currentWorkload;
-  try {
-    const totalWorkedRow = db.prepare(`
-      SELECT COUNT(*) as cnt FROM current_work_orders 
-      WHERE work_date = ? AND assigned_employee_id = ? AND (work_state IS NULL OR work_state != 'CANCELLED')
-    `).get(workDate, employeeId);
-    if (totalWorkedRow && totalWorkedRow.cnt !== undefined) {
-      totalWorked = Math.max(currentWorkload, totalWorkedRow.cnt);
-    }
-  } catch (_) {}
-  const remainingCapacity = Math.max(0, configuredMax - totalWorked);
+  const dailyAssignedCount = getEmployeeDailyAssignedCount(employeeId, workDate);
+  let remainingCapacity;
+  if (perDistLimit !== null && configuredMax > perDistLimit) {
+    // When a per-distribution limit is specified lower than configuredMax, configuredMax is a daily ceiling
+    remainingCapacity = Math.max(0, configuredMax - dailyAssignedCount);
+  } else {
+    // configuredMax acts as per-distribution batch capacity; when previous batch finishes (currentWorkload = 0), a new batch can be distributed
+    remainingCapacity = Math.max(0, configuredMax - currentWorkload);
+  }
 
   // 5b. Read Historical Completion Speed / Actions from verified performance snapshots
   let historicalActions = 0;
@@ -1319,6 +1317,15 @@ export function evaluateEmployeeAllocationEligibility(employeeId, workDate, opti
     next_event_due: nextEventDue,
     waiting_reason: waitingReason
   };
+}
+
+function getEmployeeDailyAssignedCount(employeeId, workDate) {
+  const row = db.prepare(`
+    SELECT COUNT(*) as cnt FROM current_work_orders
+    WHERE work_date = ? AND assigned_employee_id = ?
+      AND (work_state IS NULL OR work_state != 'CANCELLED')
+  `).get(workDate, employeeId);
+  return row ? row.cnt : 0;
 }
 
 function getEmployeeCurrentWorkload(employeeId, workDate) {

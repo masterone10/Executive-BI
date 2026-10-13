@@ -1386,16 +1386,14 @@ export function getTrackingOverview(workDate) {
   const isHistorical = (String(workDate).trim() !== today);
 
   // 1. Opening inventory
-  let currentOrders = isHistorical
-    ? getHistoricalOrdersForDate(workDate)
-    : db.prepare(`
-        SELECT order_code, account, status, source_file_slot 
-        FROM current_work_orders 
-        WHERE work_date = ?
-      `).all(workDate);
+  let currentOrders = db.prepare(`
+    SELECT order_code, account, status, source_file_slot 
+    FROM current_work_orders 
+    WHERE work_date = ?
+  `).all(workDate);
 
-  // If current_work_orders has not been populated yet for today's workDate, check vendoor_orders
-  if (!isHistorical && currentOrders.length === 0) {
+  // If current_work_orders has not been populated yet for workDate, check vendoor_orders then historical fallback
+  if (currentOrders.length === 0) {
     const vOrders = db.prepare(`
       SELECT order_code, account, status 
       FROM vendoor_orders 
@@ -1408,6 +1406,8 @@ export function getTrackingOverview(workDate) {
         status: v.status,
         source_file_slot: (v.status && String(v.status).toLowerCase().includes('pending')) ? 2 : 1
       }));
+    } else if (isHistorical) {
+      currentOrders = getHistoricalOrdersForDate(workDate);
     }
   }
 

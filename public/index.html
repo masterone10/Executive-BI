@@ -9248,21 +9248,25 @@ let curOrdersSearch = '';
 let curOrdersAccountFilter = '';
 let curOrdersStatusFilter = '';
 let curOrdersPage = 0;
-const curOrdersLimit = 50;
+let curOrdersLimit = 50;
 
 async function loadCurrentOrdersView() {
   const container = document.getElementById('currentOrdersContainer');
   if (!container) return;
 
   const [ordersResp, poolStatus, exceptionsResp] = await Promise.all([
-    apiFetch(`/api/orders/current/${currentWorkDate}?search=${encodeURIComponent(curOrdersSearch)}&account=${encodeURIComponent(curOrdersAccountFilter)}&status=${encodeURIComponent(curOrdersStatusFilter)}&limit=150`).catch(() => ({ orders: [], total: 0 })),
+    apiFetch(`/api/orders/current/${currentWorkDate}?search=${encodeURIComponent(curOrdersSearch)}&account=${encodeURIComponent(curOrdersAccountFilter)}&status=${encodeURIComponent(curOrdersStatusFilter)}&exception_filter=${encodeURIComponent(curOrdersExceptionFilter || 'all')}&page=${curOrdersPage}&limit=${curOrdersLimit}`).catch(() => ({ orders: [], total: 0, total_count: 0, total_pages: 1 })),
     apiFetch(`/api/orders/pool-status/${currentWorkDate}`).catch(() => null),
     apiFetch(`/api/operational-intelligence/exceptions?date=${currentWorkDate}`).catch(() => null)
   ]);
 
   let allOrders = Array.isArray(ordersResp.orders) ? ordersResp.orders : [];
   const accounts = (poolStatus && poolStatus.accounts) ? poolStatus.accounts : Array.from(new Set(allOrders.map(o => o.account).filter(Boolean)));
-  const totalOrders = ordersResp.total || allOrders.length;
+  const totalOrders = (ordersResp.total_count !== undefined) ? ordersResp.total_count : (ordersResp.total !== undefined ? ordersResp.total : allOrders.length);
+  const totalPages = ordersResp.total_pages || Math.ceil(totalOrders / curOrdersLimit) || 1;
+  if (ordersResp.page !== undefined) {
+    curOrdersPage = ordersResp.page;
+  }
 
   const exceptions = exceptionsResp?.summary || {
     actioned_without_real_second_phone: { count: 0, missing_count: 0, duplicate_primary_count: 0 },
@@ -9272,23 +9276,9 @@ async function loadCurrentOrdersView() {
     printed_warehouse_mismatch: { count: 0 }
   };
 
-  // Client-side Exception Filtering
-  let filteredOrders = allOrders;
-  if (curOrdersExceptionFilter === 'second_phone') {
-    filteredOrders = allOrders.filter(o => o.phone_quality && o.phone_quality.needs_attention);
-  } else if (curOrdersExceptionFilter === 'address') {
-    filteredOrders = allOrders.filter(o => o.address_quality && !o.address_quality.is_valid);
-  } else if (curOrdersExceptionFilter === 'delivery') {
-    filteredOrders = allOrders.filter(o => o.delivery_quality && o.delivery_quality.needs_attention);
-  } else if (curOrdersExceptionFilter === 'merchant_mismatch') {
-    filteredOrders = allOrders.filter(o => o.merchant_code_quality?.has_mismatch || (o.operational_alerts || []).some(a => a.type === 'MERCHANT_CODE_MISMATCH'));
-  } else if (curOrdersExceptionFilter === 'warehouse_mismatch') {
-    filteredOrders = allOrders.filter(o => o.warehouse_quality?.has_mismatch || (o.operational_alerts || []).some(a => a.type === 'PRINTED_WAREHOUSE_MISMATCH'));
-  }
-
-  // Pagination Slice
+  const filteredOrders = allOrders;
+  const pagedOrders = allOrders;
   const pageStart = curOrdersPage * curOrdersLimit;
-  const pagedOrders = filteredOrders.slice(pageStart, pageStart + curOrdersLimit);
   const isToday = (currentWorkDate === getTodayDate());
 
   let html = `
@@ -9404,16 +9394,17 @@ async function loadCurrentOrdersView() {
       <!-- Quick Exception Detail Inspector (Feature 1, 2, 3 Focused Peek) -->
       ${curOrdersExceptionFilter === 'second_phone' ? `
         <div style="margin-top:16px;background:#FFFFFF;border:1px solid #FECACA;border-radius:10px;padding:14px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
             <h4 style="margin:0;font-size:13px;font-weight:800;color:#991B1B">
-              📱 كشف أوردرات اتعمل عليها Action بدون رقم هاتف ثانٍ حقيقي (${filteredOrders.length})
+              📱 كشف أوردرات اتعمل عليها Action بدون رقم هاتف ثانٍ حقيقي (${fmt(totalOrders)} إجمالي — صفحة ${curOrdersPage + 1} من ${totalPages})
             </h4>
             <span style="font-size:11px;color:var(--slate)">اضغط على كود أي طلب لفتح كشف الجودة والـ Drawer فوراً</span>
           </div>
-          <div class="tbl-scroll" style="max-height:220px;overflow-y:auto">
+          <div class="tbl-scroll" style="max-height:260px;overflow-y:auto">
             <table>
               <thead>
                 <tr>
+                  <th style="width:35px">#</th>
                   <th>كود الطلب</th>
                   <th>موظف CS</th>
                   <th>الرقم الأساسي</th>
@@ -9424,8 +9415,9 @@ async function loadCurrentOrdersView() {
                 </tr>
               </thead>
               <tbody>
-                ${filteredOrders.slice(0, 15).map(o => `
+                ${pagedOrders.map((o, idx) => `
                   <tr>
+                    <td>${curOrdersPage * curOrdersLimit + idx + 1}</td>
                     <td><span class="ds-code" style="cursor:pointer;font-weight:700" onclick="openOrderDrawer('${escapeHtml(o.order_code)}')">${escapeHtml(o.order_code)}</span></td>
                     <td><b>${escapeHtml(o.assigned_employee_name || 'غير محدد')}</b></td>
                     <td><span class="ds-phone">${escapeHtml(o.phone_quality?.primary_normalized || o.phone || '-')}</span></td>
@@ -9445,16 +9437,17 @@ async function loadCurrentOrdersView() {
 
       ${curOrdersExceptionFilter === 'address' ? `
         <div style="margin-top:16px;background:#FFFFFF;border:1px solid #FED7AA;border-radius:10px;padding:14px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
             <h4 style="margin:0;font-size:13px;font-weight:800;color:#9A3412">
-              📍 كشف العناوين الضعيفة أو غير الصالحة (${filteredOrders.length})
+              📍 كشف العناوين الضعيفة أو غير الصالحة (${fmt(totalOrders)} إجمالي — صفحة ${curOrdersPage + 1} من ${totalPages})
             </h4>
             <span style="font-size:11px;color:var(--slate)">المعيار: عربي فقط + 4 كلمات فأكثر</span>
           </div>
-          <div class="tbl-scroll" style="max-height:220px;overflow-y:auto">
+          <div class="tbl-scroll" style="max-height:260px;overflow-y:auto">
             <table>
               <thead>
                 <tr>
+                  <th style="width:35px">#</th>
                   <th>كود الطلب</th>
                   <th>موظف CS</th>
                   <th>العنوان المسجل</th>
@@ -9465,8 +9458,9 @@ async function loadCurrentOrdersView() {
                 </tr>
               </thead>
               <tbody>
-                ${filteredOrders.slice(0, 15).map(o => `
+                ${pagedOrders.map((o, idx) => `
                   <tr>
+                    <td>${curOrdersPage * curOrdersLimit + idx + 1}</td>
                     <td><span class="ds-code" style="cursor:pointer;font-weight:700" onclick="openOrderDrawer('${escapeHtml(o.order_code)}')">${escapeHtml(o.order_code)}</span></td>
                     <td><b>${escapeHtml(o.assigned_employee_name || 'غير محدد')}</b></td>
                     <td style="max-width:260px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(o.address || '-')}</td>
@@ -9486,16 +9480,17 @@ async function loadCurrentOrdersView() {
 
       ${curOrdersExceptionFilter === 'delivery' ? `
         <div style="margin-top:16px;background:#FFFFFF;border:1px solid #BFDBFE;border-radius:10px;padding:14px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
             <h4 style="margin:0;font-size:13px;font-weight:800;color:#1E40AF">
-              🚚 كشف الأوردرات بنسبة تسليم منخفضة أقل من 70% (${filteredOrders.length})
+              🚚 كشف الأوردرات بنسبة تسليم منخفضة أقل من 70% (${fmt(totalOrders)} إجمالي — صفحة ${curOrdersPage + 1} من ${totalPages})
             </h4>
             <span style="font-size:11px;color:var(--slate)">معدل التسليم أقل من 70%</span>
           </div>
-          <div class="tbl-scroll" style="max-height:220px;overflow-y:auto">
+          <div class="tbl-scroll" style="max-height:260px;overflow-y:auto">
             <table>
               <thead>
                 <tr>
+                  <th style="width:35px">#</th>
                   <th>كود الطلب</th>
                   <th>العميل</th>
                   <th>الحساب</th>
@@ -9505,8 +9500,9 @@ async function loadCurrentOrdersView() {
                 </tr>
               </thead>
               <tbody>
-                ${filteredOrders.slice(0, 15).map(o => `
+                ${pagedOrders.map((o, idx) => `
                   <tr>
+                    <td>${curOrdersPage * curOrdersLimit + idx + 1}</td>
                     <td><span class="ds-code" style="cursor:pointer;font-weight:700" onclick="openOrderDrawer('${escapeHtml(o.order_code)}')">${escapeHtml(o.order_code)}</span></td>
                     <td><b>${escapeHtml(o.customer || o.customer_name || 'عميل')}</b></td>
                     <td><span class="tag" style="background:#EFF6FF;color:var(--blue)">${escapeHtml(o.account || '-')}</span></td>
@@ -9529,7 +9525,7 @@ async function loadCurrentOrdersView() {
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px">
         <div>
           <h3 style="margin:0;font-size:15px;font-weight:800;color:var(--navy);display:flex;align-items:center;gap:8px">
-            📦 جدول تشغيل الأوردرات (${fmt(filteredOrders.length)} من أصل ${fmt(totalOrders)})
+            📦 جدول تشغيل الأوردرات (${fmt(totalOrders)} أوردر)
             ${curOrdersExceptionFilter !== 'all' ? `<span class="ds-badge ds-badge-danger">مفلتر حسب الاستثناء</span>` : ''}
           </h3>
           <p style="margin:2px 0 0;font-size:11.5px;color:var(--mut)">
@@ -9538,7 +9534,7 @@ async function loadCurrentOrdersView() {
         </div>
 
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <input type="text" class="search" style="padding:6px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;width:190px" placeholder="🔍 كود / عميل / هاتف..." value="${curOrdersSearch}" oninput="curOrdersSearch=this.value;curOrdersPage=0;loadCurrentOrdersView();">
+          <input type="text" class="search" style="padding:6px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;width:180px" placeholder="🔍 كود / عميل / هاتف..." value="${curOrdersSearch}" oninput="curOrdersSearch=this.value;curOrdersPage=0;loadCurrentOrdersView();">
           
           <select class="filter" style="font-size:12px;padding:6px 10px" onchange="curOrdersAccountFilter=this.value;curOrdersPage=0;loadCurrentOrdersView();">
             <option value="">كل الحسابات (${accounts.length})</option>
@@ -9552,6 +9548,15 @@ async function loadCurrentOrdersView() {
             <option value="Processing" ${curOrdersStatusFilter==='Processing'?'selected':''}>Processing</option>
             <option value="Printed" ${curOrdersStatusFilter==='Printed'?'selected':''}>Printed</option>
             <option value="Cancelled" ${curOrdersStatusFilter==='Cancelled'?'selected':''}>Cancelled</option>
+          </select>
+
+          <select class="filter" style="font-size:12px;padding:6px 10px;font-weight:700" onchange="curOrdersLimit=parseInt(this.value,10);curOrdersPage=0;loadCurrentOrdersView();" title="عدد الأوردرات في الصفحة">
+            <option value="50" ${curOrdersLimit===50?'selected':''}>50 / صفحة</option>
+            <option value="100" ${curOrdersLimit===100?'selected':''}>100 / صفحة</option>
+            <option value="150" ${curOrdersLimit===150?'selected':''}>150 / صفحة</option>
+            <option value="200" ${curOrdersLimit===200?'selected':''}>200 / صفحة</option>
+            <option value="250" ${curOrdersLimit===250?'selected':''}>250 / صفحة</option>
+            <option value="300" ${curOrdersLimit===300?'selected':''}>300 / صفحة</option>
           </select>
 
           <button type="button" class="ds-btn ds-btn-primary ds-btn-sm" onclick="show('work', 'allocation')">
@@ -9656,11 +9661,12 @@ async function loadCurrentOrdersView() {
       </div>
 
       <!-- Pagination Controls -->
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;font-size:12px;color:var(--mut)">
-        <span>عرض ${Math.min(filteredOrders.length, pageStart + 1)} - ${Math.min(filteredOrders.length, pageStart + curOrdersLimit)} من أصل ${fmt(filteredOrders.length)} أوردر</span>
-        <div style="display:flex;gap:6px">
-          <button type="button" class="btn sm" ${curOrdersPage===0?'disabled':''} onclick="curOrdersPage--;loadCurrentOrdersView();">◀ السابق</button>
-          <button type="button" class="btn sm" ${(curOrdersPage+1)*curOrdersLimit >= filteredOrders.length ? 'disabled':''} onclick="curOrdersPage++;loadCurrentOrdersView();">التالي ▶</button>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;font-size:12px;color:var(--mut);flex-wrap:wrap;gap:10px">
+        <span>صفحة <b>${curOrdersPage + 1}</b> من <b>${totalPages}</b> (عرض ${totalOrders > 0 ? (pageStart + 1) : 0} - ${Math.min(totalOrders, pageStart + pagedOrders.length)} من أصل <b>${fmt(totalOrders)}</b> أوردر)</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button type="button" class="btn sm" ${curOrdersPage <= 0 ? 'disabled' : ''} onclick="curOrdersPage--;loadCurrentOrdersView();">◀ السابق</button>
+          <span style="font-size:11.5px;padding:3px 10px;background:var(--panel2);border-radius:6px;font-weight:700;color:var(--ink)">${curOrdersPage + 1} / ${totalPages}</span>
+          <button type="button" class="btn sm" ${(curOrdersPage + 1) >= totalPages ? 'disabled' : ''} onclick="curOrdersPage++;loadCurrentOrdersView();">التالي ▶</button>
         </div>
       </div>
     </div>

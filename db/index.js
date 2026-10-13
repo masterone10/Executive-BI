@@ -46,6 +46,10 @@ export function runMigrations(database = db) {
   if (isTest) {
     cleanupMockContamination(database);
   }
+  // Enforce FK integrity: clean up any orphaned employee_capacities
+  try {
+    database.prepare("DELETE FROM employee_capacities WHERE employee_id NOT IN (SELECT id FROM employees)").run();
+  } catch (_) {}
   // Safe table migration: Ensure team_membership, status & notes exist in employees
   try {
     const cols = database.prepare("PRAGMA table_info(employees)").all();

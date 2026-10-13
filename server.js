@@ -2530,13 +2530,28 @@ app.get('/api/orders/pool-status/:date', (req, res) => {
  */
 app.get('/api/orders/current/:date', (req, res) => {
   const { date } = req.params;
-  const { account, status, search, limit, offset } = req.query;
+  const { account, status, search, limit, offset, page, page_size, exception_filter } = req.query;
+
+  const validPageSizes = [50, 100, 150, 200, 250, 300];
+  let parsedLimit = parseInt(page_size || limit, 10);
+  if (!validPageSizes.includes(parsedLimit)) {
+    parsedLimit = parsedLimit ? parsedLimit : 50;
+  }
+
+  let parsedOffset = 0;
+  if (page !== undefined && page !== '') {
+    parsedOffset = Math.max(0, parseInt(page, 10)) * parsedLimit;
+  } else if (offset !== undefined && offset !== '') {
+    parsedOffset = Math.max(0, parseInt(offset, 10));
+  }
+
   const ordersData = getCurrentOrders(date, {
     account,
     status,
     search,
-    limit: parseInt(limit, 10) || 100,
-    offset: parseInt(offset, 10) || 0
+    limit: parsedLimit,
+    offset: parsedOffset,
+    exception_filter
   });
 
   if (ordersData && Array.isArray(ordersData.orders)) {

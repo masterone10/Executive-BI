@@ -76,7 +76,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
 });
 
 // Configured system tokens from environment
-const isProd = process.env.NODE_ENV === 'production';
+const isProd = process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production';
 const VALID_TOKENS = new Map();
 
 // Dynamic sessions store for authenticated logins
@@ -123,26 +123,37 @@ if (process.env.CS_AGENT_API_TOKEN && process.env.CS_AGENT_API_TOKEN.trim()) {
   registerSystemToken(process.env.CS_AGENT_API_TOKEN, 'CS Agent', USER_ROLES.CS_EMPLOYEE);
 }
 
+export function isProductionEnvironment() {
+  return process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production';
+}
+
 // In development or test, initialize a secure bootstrap token if none are set
 let devBootstrapToken = null;
 if (!isProd) {
   devBootstrapToken = process.env.DEV_BOOTSTRAP_TOKEN || 'cs_dev_supervisor_bootstrap_token';
   registerSystemToken(devBootstrapToken, 'Supervisor Dev', USER_ROLES.SUPERVISOR);
+
+  // Pre-register test and standard development tokens ONLY in non-production environments
+  registerSystemToken('test_supervisor_token', 'Test Supervisor', USER_ROLES.SUPERVISOR);
+  registerSystemToken('test_admin_token', 'Test Admin', USER_ROLES.ADMIN);
+  registerSystemToken('test_cs_token', 'Test CS', USER_ROLES.CS_EMPLOYEE);
+  registerSystemToken('supervisor_token_cs_bi', 'Supervisor System', USER_ROLES.SUPERVISOR);
 }
 
 export function getDevBootstrapToken() {
-  return devBootstrapToken || 'cs_dev_supervisor_bootstrap_token';
+  if (isProductionEnvironment()) {
+    return null;
+  }
+  return devBootstrapToken || (process.env.DEV_BOOTSTRAP_TOKEN || 'cs_dev_supervisor_bootstrap_token');
 }
-
-// Pre-register test and standard tokens
-registerSystemToken('test_supervisor_token', 'Test Supervisor', USER_ROLES.SUPERVISOR);
-registerSystemToken('test_admin_token', 'Test Admin', USER_ROLES.ADMIN);
-registerSystemToken('test_cs_token', 'Test CS', USER_ROLES.CS_EMPLOYEE);
-registerSystemToken('supervisor_token_cs_bi', 'Supervisor System', USER_ROLES.SUPERVISOR);
 
 export function operatorLogin(secret) {
   if (!secret || typeof secret !== 'string') return null;
   const clean = secret.trim();
+  if (isProductionEnvironment()) {
+    const isTestToken = clean.startsWith('test_') || clean.startsWith('cs_dev_') || clean === 'supervisor_token_cs_bi';
+    if (isTestToken) return null;
+  }
   if (VALID_TOKENS.has(clean)) {
     const info = VALID_TOKENS.get(clean);
     const sessionToken = createSessionToken(info.user, info.role, info.employeeId);
@@ -150,7 +161,7 @@ export function operatorLogin(secret) {
   }
   if ((process.env.SUPERVISOR_API_TOKEN && clean === process.env.SUPERVISOR_API_TOKEN) ||
       (process.env.ADMIN_API_TOKEN && clean === process.env.ADMIN_API_TOKEN) ||
-      (devBootstrapToken && clean === devBootstrapToken)) {
+      (!isProductionEnvironment() && devBootstrapToken && clean === devBootstrapToken)) {
     const sessionToken = createSessionToken('Operator', USER_ROLES.SUPERVISOR);
     return { success: true, token: sessionToken, user: 'Operator', role: USER_ROLES.SUPERVISOR };
   }
@@ -179,6 +190,21 @@ export function extractUserIdentity(req) {
 
   // 1. Check configured system tokens
   if (token && VALID_TOKENS.has(token)) {
+    if (isProductionEnvironment()) {
+      const isTestToken = token.startsWith('test_') || token.startsWith('cs_dev_') || token === 'supervisor_token_cs_bi';
+      if (isTestToken) {
+        return {
+          user: 'Anonymous',
+          role: USER_ROLES.ANONYMOUS,
+          employeeId: null,
+          token: null,
+          permissions: ROLE_PERMISSIONS.ANONYMOUS,
+          isSupervisor: false,
+          isCsEmployee: false,
+          isAuthenticated: false
+        };
+      }
+    }
     const info = VALID_TOKENS.get(token);
     const perms = ROLE_PERMISSIONS[info.role] || [];
     return {
@@ -218,7 +244,7 @@ export function extractUserIdentity(req) {
     process.env.npm_lifecycle_event?.includes('test') || 
     process.argv.some(arg => typeof arg === 'string' && (arg.includes('test') || arg.includes('spec')));
 
-  if (isTestEnv && req.headers['x-test-auth-token'] && VALID_TOKENS.has(req.headers['x-test-auth-token'])) {
+  if (!isProductionEnvironment() && isTestEnv && req.headers['x-test-auth-token'] && VALID_TOKENS.has(req.headers['x-test-auth-token'])) {
     const info = VALID_TOKENS.get(req.headers['x-test-auth-token']);
     const perms = ROLE_PERMISSIONS[info.role] || [];
     return {
