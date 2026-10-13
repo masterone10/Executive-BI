@@ -19,6 +19,7 @@ import { extractCsrfTokenFromHtml } from './auth.js';
 import { getCairoBusinessDate } from '../time_utils.js';
 
 import { extractWarehouse } from '../operational_intelligence.js';
+import { db } from '../../db/index.js';
 
 /**
  * Map status filter to Vendoor category ID

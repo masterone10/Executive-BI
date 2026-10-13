@@ -3298,19 +3298,19 @@ export function getOrderFullHistory(workDate, orderCodeOrTrackingId) {
   const orderCode = ord ? ord.order_code : clean;
   const trackingId = ord ? ord.tracking_id : null;
 
-  // Fetch all lifecycle events
+  // Fetch all lifecycle events across all dates
   const events = db.prepare(`
     SELECT * FROM order_tracking_events
-    WHERE work_date = ? AND (order_code = ? OR (tracking_id IS NOT NULL AND tracking_id = ?))
+    WHERE (order_code = ? OR (tracking_id IS NOT NULL AND tracking_id = ?))
     ORDER BY timestamp ASC, id ASC
-  `).all(workDate, orderCode, trackingId || clean);
+  `).all(orderCode, trackingId || clean);
 
-  // Fetch daily log raw records
+  // Fetch daily log raw records across all dates
   const rawLogs = db.prepare(`
     SELECT * FROM raw_log_records
-    WHERE work_date = ? AND order_code = ?
+    WHERE order_code = ?
     ORDER BY event_datetime ASC, id ASC
-  `).all(workDate, orderCode);
+  `).all(orderCode);
 
   // Fetch Phone Details & Duplication State
   let primaryPhone = null;
@@ -4145,4 +4145,95 @@ export function getTeamLiveStatusSummary(workDate, options = {}) {
     employees: emps
   };
 }
+
+/**
+ * Universal multi-date timeline aggregator.
+ * Collects and deduplicates events across order_tracking_events, vendoor_logs, and raw_log_records.
+ */
+export function getOrderTimelineAcrossAllDates(orderCode) {
+  if (!orderCode) return [];
+  const cleanCode = String(orderCode).trim();
+  
+  const events = [];
+  const seen = new Set();
+
+  // 1. order_tracking_events
+  try {
+    const ote = db.prepare(`
+      SELECT 
+        work_date,
+        stage as event_type,
+        action,
+        employee_name as actor_name,
+        timestamp as event_timestamp,
+        details,
+        source
+      FROM order_tracking_events
+      WHERE order_code = ?
+      ORDER BY timestamp ASC, id ASC
+    `).all(cleanCode);
+
+    for (const e of ote) {
+      const key = `${e.event_timestamp}|${e.action}|${e.actor_name}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        events.push(e);
+      }
+    }
+  } catch (_) {}
+
+  // 2. vendoor_logs
+  try {
+    const vl = db.prepare(`
+      SELECT 
+        work_date,
+        action_classification as event_type,
+        action,
+        employee_name as actor_name,
+        timestamp_str as event_timestamp,
+        'Vendoor Log' as details,
+        'VENDOOR' as source
+      FROM vendoor_logs
+      WHERE order_code = ?
+      ORDER BY timestamp_str ASC, id ASC
+    `).all(cleanCode);
+
+    for (const e of vl) {
+      const key = `${e.event_timestamp}|${e.action}|${e.actor_name}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        events.push(e);
+      }
+    }
+  } catch (_) {}
+
+  // 3. raw_log_records
+  try {
+    const rlr = db.prepare(`
+      SELECT 
+        work_date,
+        status as event_type,
+        action,
+        employee_name as actor_name,
+        event_datetime as event_timestamp,
+        'Historical Log' as details,
+        'EXCEL' as source
+      FROM raw_log_records
+      WHERE order_code = ?
+      ORDER BY event_datetime ASC, id ASC
+    `).all(cleanCode);
+
+    for (const e of rlr) {
+      const key = `${e.event_timestamp}|${e.action}|${e.actor_name}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        events.push(e);
+      }
+    }
+  } catch (_) {}
+
+  events.sort((a, b) => (a.event_timestamp || '').localeCompare(b.event_timestamp || ''));
+  return events;
+}
+
 

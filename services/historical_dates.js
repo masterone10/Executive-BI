@@ -734,6 +734,8 @@ export function getHistoricalOrdersList(workDate, options = {}) {
       allOrders = allOrders.filter(o => o.merchant_code_quality?.has_mismatch || (o.operational_alerts || []).some(a => a.type === 'MERCHANT_CODE_MISMATCH'));
     } else if (exception_filter === 'warehouse_mismatch') {
       allOrders = allOrders.filter(o => o.warehouse_quality?.has_mismatch || (o.operational_alerts || []).some(a => a.type === 'PRINTED_WAREHOUSE_MISMATCH'));
+    } else if (exception_filter === 'stale') {
+      allOrders = allOrders.filter(o => o.stale_quality?.is_stale || (o.operational_alerts || []).some(a => a.type === 'STALE_PENDING_ORDER'));
     }
   }
 
@@ -841,7 +843,7 @@ export function getHistoricalOrdersForDate(workDate) {
         FROM vendoor_orders
         WHERE (source_date = ? OR business_date = ?)
         ORDER BY account ASC, order_code ASC
-      `).all(cleanDate, cleanDate)
+      `).all(cleanDate, cleanDate, cleanDate)
     : db.prepare(`
         SELECT 
           id, 

@@ -555,6 +555,91 @@ export function evaluatePrintedWarehouseConsistency(products = [], isPrinted = f
 }
 
 /**
+ * Evaluates whether an order is stale in PENDING or PROCESSING state.
+ *
+ * Rules:
+ * - Only evaluates when reliable current status is PENDING or PROCESSING.
+ * - Stale if NO action/event occurred on this Order Code for 5 days or more across ALL dates.
+ * - Reference timezone: Africa/Cairo.
+ * - Reset on new action/event.
+ * - If status becomes PRINTED or CANCELLED, it is no longer an active stale alert.
+ * - 4 days = NOT stale; 5 days or more = STALE_ORDER alert.
+ *
+ * @param {Object} order Order object
+ * @param {string} [refDate] Reference business date (defaults to Cairo business date)
+ * @returns {Object} Stale evaluation
+ */
+export function evaluateStalePendingOrder(order, refDate = getCairoBusinessDate()) {
+  if (!order || !order.order_code) {
+    return { is_stale: false, days_since_action: 0, last_action_date: null, alert: null };
+  }
+
+  const st = String(order.status || '').toLowerCase();
+  const isPending = st.includes('pending') || st.includes('معلق') || st.includes('انتظار');
+  const isProcessing = st.includes('processing') || st.includes('تجهيز');
+
+  if (!isPending && !isProcessing) {
+    return { is_stale: false, days_since_action: 0, last_action_date: null, alert: null };
+  }
+
+  const code = order.order_code;
+  let latestTimestamp = null;
+
+  try {
+    const r1 = db.prepare('SELECT MAX(event_datetime) as m FROM raw_log_records WHERE order_code = ?').get(code);
+    const r2 = db.prepare('SELECT MAX(timestamp_str) as m FROM vendoor_logs WHERE order_code = ?').get(code);
+    const r3 = db.prepare('SELECT MAX(timestamp) as m FROM order_tracking_events WHERE order_code = ?').get(code);
+    
+    const candidates = [r1?.m, r2?.m, r3?.m].filter(Boolean);
+    for (const c of candidates) {
+      if (!latestTimestamp || c > latestTimestamp) {
+        latestTimestamp = c;
+      }
+    }
+  } catch (_) {}
+
+  // Fallback to order creation / arrival timestamp
+  if (!latestTimestamp) {
+    latestTimestamp = order.created_at_original || order.order_date || order.source_date || refDate;
+  }
+
+  try {
+    const lastDateStr = String(latestTimestamp).slice(0, 10);
+    const lastDate = new Date(lastDateStr + 'T00:00:00Z');
+    const todayDate = new Date(refDate + 'T00:00:00Z');
+    const diffDays = Math.floor((todayDate.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays >= 5) {
+      const typeLabel = isPending ? 'معلق (Pending)' : 'قيد التجهيز (Processing)';
+      return {
+        is_stale: true,
+        days_since_action: diffDays,
+        last_action_date: lastDateStr,
+        status_category: isPending ? 'PENDING' : 'PROCESSING',
+        alert: {
+          type: 'STALE_PENDING_ORDER',
+          severity: 'WARNING',
+          title: `طلب ${typeLabel} راكد بدون إجراء منذ ${diffDays} أيام`,
+          reason: `الطلب بحالة ${order.status} ولم تسجل أي حركة أو إجراء عليه منذ ${diffDays} أيام (آخر حركة: ${lastDateStr})`,
+          order_code: code,
+          days: diffDays
+        }
+      };
+    }
+
+    return {
+      is_stale: false,
+      days_since_action: Math.max(0, diffDays),
+      last_action_date: lastDateStr,
+      alert: null
+    };
+  } catch (_) {
+    return { is_stale: false, days_since_action: 0, last_action_date: null, alert: null };
+  }
+}
+
+
+/**
  * Authoritative Customer Delivery Rate Engine
  * Calculates customer delivery rate from historical orders or payload.
  *
@@ -928,6 +1013,9 @@ export function enrichOrderOperationalIntelligence(order) {
   // Evaluate Printed Warehouse Mismatch
   const warehouseEval = evaluatePrintedWarehouseConsistency(products, isPrinted, merged.order_code);
 
+  // Evaluate Stale Pending / Processing (no action for >= 5 days)
+  const staleEval = evaluateStalePendingOrder(merged, getCairoBusinessDate());
+
   // Unified Quality Summary
   const overallQuality = deriveOperationalQualitySummary({
     address_quality: addressEval,
@@ -939,8 +1027,11 @@ export function enrichOrderOperationalIntelligence(order) {
     has_data: Boolean(rawAddress || primaryPhone || merged.customer_name)
   });
 
-  const alerts = overallQuality.issues;
-  const needsAttention = (overallQuality.status === 'QUALITY_ISSUES_FOUND');
+  const alerts = [...overallQuality.issues];
+  if (staleEval.is_stale && staleEval.alert) {
+    alerts.push(staleEval.alert);
+  }
+  const needsAttention = (overallQuality.status === 'QUALITY_ISSUES_FOUND') || staleEval.is_stale;
 
   return {
     ...merged,
@@ -960,6 +1051,7 @@ export function enrichOrderOperationalIntelligence(order) {
     delivery_quality: deliveryEval,
     merchant_code_quality: merchantCodeEval,
     warehouse_quality: warehouseEval,
+    stale_quality: staleEval,
     operational_alerts: alerts,
     overall_quality: overallQuality,
     needs_attention: needsAttention
@@ -974,6 +1066,7 @@ export function enrichOrderOperationalIntelligence(order) {
  * 3. Delivery rate < 70%
  * 4. Merchant code mismatch
  * 5. Printed warehouse mismatch
+ * 6. Stale pending / processing orders (>= 5 days)
  *
  * @param {string} workDate Business date (YYYY-MM-DD)
  * @param {Object} options Filter options (role, employee_name, account, etc.)
@@ -1030,7 +1123,10 @@ export function getOperationalExceptions(workDate = getCairoBusinessDate(), opti
   // 5. Data quality: printed warehouse mismatch
   const warehouseMismatchOrders = enriched.filter(o => o.warehouse_quality?.has_mismatch);
 
-  // Distinct attention orders (orders with confirmed quality issues)
+  // 6. Stale pending / processing orders
+  const stalePendingOrders = enriched.filter(o => o.stale_quality?.is_stale);
+
+  // Distinct attention orders (orders with confirmed quality issues or stale)
   const attentionOrders = enriched.filter(o => o.needs_attention);
 
   return {
@@ -1068,6 +1164,11 @@ export function getOperationalExceptions(workDate = getCairoBusinessDate(), opti
         count: warehouseMismatchOrders.length,
         title: 'اختلاف المخازن بعد الطباعة (PRINTED_WAREHOUSE_MISMATCH)',
         orders_preview: warehouseMismatchOrders.slice(0, 50)
+      },
+      stale_pending_processing: {
+        count: stalePendingOrders.length,
+        title: 'أوردرات معلقة وقيد التجهيز راكدة (بدون إجراء منذ 5 أيام أو أكثر)',
+        orders_preview: stalePendingOrders.slice(0, 50)
       }
     }
   };

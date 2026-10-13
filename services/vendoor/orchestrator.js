@@ -541,11 +541,23 @@ export async function syncVendoorOrders(options = {}) {
     }
 
     // ACTIVE WORKLOAD RECONCILIATION & STALE PRUNING:
-    // Any order in current_work_orders for operationalBusinessDate that is no longer in the active Vendoor set (New/Pending)
-    // MUST NOT remain active. Prune from current_work_orders and set is_active = 0 in vendoor_orders.
+    // Only prune orders whose status was actually fetched in this synchronization cycle.
+    // Never prune Pending orders when only New was synced, and never prune New when only Pending was synced.
     if (isStatusDriven && !isHistoricalSync && activeOrderCodes.size > 0) {
-      const existingCwo = db.prepare('SELECT order_code FROM current_work_orders WHERE work_date = ?').all(operationalBusinessDate);
-      const toPrune = existingCwo.filter(row => !activeOrderCodes.has(row.order_code)).map(r => r.order_code);
+      const fetchedCanonicalStatuses = new Set(
+        statusesToFetch.map(s => {
+          const l = String(s).toLowerCase();
+          if (l.includes('pend') || l.includes('معلق')) return 'Pending';
+          if (l.includes('new') || l.includes('جديد')) return 'New';
+          return s;
+        })
+      );
+
+      const existingCwo = db.prepare('SELECT order_code, status FROM current_work_orders WHERE work_date = ?').all(operationalBusinessDate);
+      const toPrune = existingCwo
+        .filter(row => fetchedCanonicalStatuses.has(row.status) && !activeOrderCodes.has(row.order_code))
+        .map(r => r.order_code);
+
       if (toPrune.length > 0) {
         const delCwo = db.prepare('DELETE FROM current_work_orders WHERE work_date = ? AND order_code = ?');
         const inactVo = db.prepare("UPDATE vendoor_orders SET is_active = 0, last_synced_at = datetime('now') WHERE business_date = ? AND order_code = ?");

@@ -94,7 +94,8 @@ import {
   completeOrder,
   cancelOrder,
   recordInternalHandoff,
-  getOrderFullHistory
+  getOrderFullHistory,
+  getOrderTimelineAcrossAllDates
 } from './services/tracking.js';
 import {
   createExcelWorkbook,
@@ -1511,13 +1512,10 @@ app.get(['/api/work/order/:orderCode', '/api/orders/:orderCode'], (req, res) => 
     const code = req.params.orderCode;
     const date = req.query.date || getCairoBusinessDate();
     
-    // Try current_work_orders first
-    let row = db.prepare('SELECT * FROM current_work_orders WHERE order_code = ?').get(code);
+    // 1. Check canonical vendoor_orders or current_work_orders
+    let row = db.prepare('SELECT * FROM vendoor_orders WHERE order_code = ?').get(code);
     if (!row) {
-      // Fallback to vendoor_orders or raw_log_records
-      try {
-        row = db.prepare('SELECT * FROM vendoor_orders WHERE order_code = ?').get(code);
-      } catch (_) {}
+      row = db.prepare('SELECT * FROM current_work_orders WHERE order_code = ?').get(code);
     }
     if (!row) {
       try {
@@ -1529,13 +1527,18 @@ app.get(['/api/work/order/:orderCode', '/api/orders/:orderCode'], (req, res) => 
       return res.status(404).json({ success: false, error: 'Order not found', order_code: code });
     }
 
+    // Attach all line item products
+    try {
+      const prods = db.prepare('SELECT * FROM order_products WHERE order_code = ?').all(code);
+      if (prods && prods.length > 0) {
+        row.products = prods;
+      }
+    } catch (_) {}
+
     const enriched = enrichOrderOperationalIntelligence(row);
     
-    // Also pull tracking timeline
-    let timeline = [];
-    try {
-      timeline = db.prepare('SELECT * FROM order_tracking_events WHERE order_code = ? ORDER BY id DESC LIMIT 20').all(code);
-    } catch (_) {}
+    // Complete multi-date timeline across all events and sources
+    const timeline = getOrderTimelineAcrossAllDates(code);
 
     res.json({
       success: true,
