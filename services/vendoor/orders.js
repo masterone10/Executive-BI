@@ -55,15 +55,16 @@ export async function fetchVendoorOrdersPage(options = {}) {
   if (statusFilter) {
     let mappedStatus = statusFilter;
     if (typeof statusFilter === 'string') {
-      const lowerStatus = statusFilter.toLowerCase();
-      if (lowerStatus === 'new') mappedStatus = '1';
-      else if (lowerStatus === 'pending') mappedStatus = '3';
-      else if (lowerStatus === 'printed') mappedStatus = '13';
-      else if (lowerStatus === 'canceled' || lowerStatus === 'cancelled') mappedStatus = '12';
-      else if (lowerStatus === 'shipped') mappedStatus = '4';
-      else if (lowerStatus === 'partial delivery') mappedStatus = '5';
-      else if (lowerStatus === 'delivered') mappedStatus = '8';
-      else if (lowerStatus === 'collected') mappedStatus = '9';
+      const lowerStatus = statusFilter.trim().toLowerCase();
+      if (lowerStatus === '1' || lowerStatus === 'new' || lowerStatus.includes('جديد')) mappedStatus = '1';
+      else if (lowerStatus === '2' || lowerStatus === 'processing' || lowerStatus.includes('تجهيز')) mappedStatus = '2';
+      else if (lowerStatus === '3' || lowerStatus === 'pending' || lowerStatus.includes('معلق') || lowerStatus.includes('انتظار')) mappedStatus = '3';
+      else if (lowerStatus === '4' || lowerStatus === 'shipped' || lowerStatus.includes('شحن')) mappedStatus = '4';
+      else if (lowerStatus === '5' || lowerStatus.includes('partial')) mappedStatus = '5';
+      else if (lowerStatus === '8' || lowerStatus === 'delivered' || lowerStatus.includes('استلام') || lowerStatus.includes('تسليم')) mappedStatus = '8';
+      else if (lowerStatus === '9' || lowerStatus === 'collected' || lowerStatus.includes('تحصيل')) mappedStatus = '9';
+      else if (lowerStatus === '12' || lowerStatus === 'canceled' || lowerStatus === 'cancelled' || lowerStatus.includes('ملغ') || lowerStatus.includes('رفض')) mappedStatus = '12';
+      else if (lowerStatus === '13' || lowerStatus === 'printed' || lowerStatus.includes('طباعة') || lowerStatus.includes('طبع')) mappedStatus = '13';
     }
     queryParams.set('status_filter', mappedStatus);
     queryParams.set('status_id', mappedStatus);

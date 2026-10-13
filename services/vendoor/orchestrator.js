@@ -133,9 +133,14 @@ export function computeLiveReconciliation(businessDate = (getEffectiveWorkDate()
   const localPending = db.prepare(`SELECT COUNT(*) as c FROM current_work_orders WHERE work_date = ? AND status = 'Pending'`).get(businessDate)?.c || 0;
   const localTotal = db.prepare(`SELECT COUNT(DISTINCT order_code) as c FROM current_work_orders WHERE work_date = ?`).get(businessDate)?.c || 0;
 
-  const vendoorNew = db.prepare(`SELECT COUNT(*) as c FROM vendoor_orders WHERE business_date = ? AND (active_status = 'New' OR status = 'New') AND is_active = 1`).get(businessDate)?.c || localNew;
-  const vendoorPending = db.prepare(`SELECT COUNT(*) as c FROM vendoor_orders WHERE business_date = ? AND (active_status = 'Pending' OR status = 'Pending') AND is_active = 1`).get(businessDate)?.c || localPending;
-  const vendoorTotal = db.prepare(`SELECT COUNT(DISTINCT order_code) as c FROM vendoor_orders WHERE business_date = ? AND is_active = 1`).get(businessDate)?.c || localTotal;
+  const vNewRow = db.prepare(`SELECT COUNT(*) as c FROM vendoor_orders WHERE business_date = ? AND (active_status = 'New' OR status = 'New') AND is_active = 1`).get(businessDate);
+  const vendoorNew = vNewRow && vNewRow.c !== undefined ? vNewRow.c : 0;
+
+  const vPendRow = db.prepare(`SELECT COUNT(*) as c FROM vendoor_orders WHERE business_date = ? AND (active_status = 'Pending' OR status = 'Pending') AND is_active = 1`).get(businessDate);
+  const vendoorPending = vPendRow && vPendRow.c !== undefined ? vPendRow.c : 0;
+
+  const vTotRow = db.prepare(`SELECT COUNT(DISTINCT order_code) as c FROM vendoor_orders WHERE business_date = ? AND is_active = 1`).get(businessDate);
+  const vendoorTotal = vTotRow && vTotRow.c !== undefined ? vTotRow.c : 0;
 
   const localCodes = new Set(db.prepare(`SELECT order_code FROM current_work_orders WHERE work_date = ?`).all(businessDate).map(r => r.order_code));
   const vendoorCodes = new Set(db.prepare(`SELECT order_code FROM vendoor_orders WHERE business_date = ? AND is_active = 1`).all(businessDate).map(r => r.order_code));

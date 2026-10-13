@@ -839,9 +839,9 @@ export function getHistoricalOrdersForDate(workDate) {
           product_name,
           warehouse
         FROM vendoor_orders
-        WHERE (source_date = ? OR business_date = ? OR is_active = 1)
+        WHERE (source_date = ? OR business_date = ?)
         ORDER BY account ASC, order_code ASC
-      `).all(cleanDate, cleanDate, cleanDate)
+      `).all(cleanDate, cleanDate)
     : db.prepare(`
         SELECT 
           id, 

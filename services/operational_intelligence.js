@@ -244,8 +244,8 @@ export function evaluateAddressQuality(rawAddress) {
     };
   }
 
-  // Word count on valid Arabic words
-  const words = cleaned.split(' ').filter(w => /[\u0600-\u06FF0-9]/.test(w));
+  // Word count on valid Arabic words (numbers and punctuation are not words)
+  const words = cleaned.split(' ').filter(w => /[\u0600-\u06FF]/.test(w));
   const wordCount = words.length;
 
   if (wordCount <= 3) {
