@@ -35,6 +35,7 @@ export function importProductsFromExcel(buffer, filename = 'orders.xlsx') {
   let merchantCodesFound = new Set();
   let warehousesFound = new Set();
   let unlinkedRows = 0;
+  let ordersUpdated = 0;
 
   const insertProductStmt = db.prepare(`
     INSERT OR IGNORE INTO order_products (
@@ -48,7 +49,7 @@ export function importProductsFromExcel(buffer, filename = 'orders.xlsx') {
         merchant_name = COALESCE(?, merchant_name),
         product_name = COALESCE(?, product_name),
         warehouse = COALESCE(?, warehouse)
-    WHERE order_code = ? AND (work_date = ? OR ? IS NULL)
+    WHERE order_code = ?
   `);
 
   const updateVendoorOrderStmt = db.prepare(`
@@ -57,7 +58,7 @@ export function importProductsFromExcel(buffer, filename = 'orders.xlsx') {
         merchant_name = COALESCE(?, merchant_name),
         product_name = COALESCE(?, product_name),
         warehouse = COALESCE(?, warehouse)
-    WHERE order_code = ? AND (business_date = ? OR ? IS NULL)
+    WHERE order_code = ?
   `);
 
   let lastOrderCode = '';
@@ -122,9 +123,14 @@ export function importProductsFromExcel(buffer, filename = 'orders.xlsx') {
 
         // Update corresponding order in current_work_orders and vendoor_orders without changing status or CS
         try {
-          updateWorkOrderStmt.run(merchantCode, merchantName, productName || null, warehouse, activeCode);
-          updateVendoorOrderStmt.run(merchantCode, merchantName, productName || null, warehouse, activeCode);
-        } catch (_) {}
+          const r1 = updateWorkOrderStmt.run(merchantCode, merchantName, productName || null, warehouse, activeCode);
+          const r2 = updateVendoorOrderStmt.run(merchantCode, merchantName, productName || null, warehouse, activeCode);
+          if (r1.changes > 0 || r2.changes > 0) {
+            ordersUpdated++;
+          }
+        } catch (updErr) {
+          console.warn('[ExcelImporter] Update order notice:', updErr.message);
+        }
       }
     }
   });
@@ -137,6 +143,7 @@ export function importProductsFromExcel(buffer, filename = 'orders.xlsx') {
     total_rows: totalRows,
     unique_orders: uniqueOrders.size,
     products_inserted: productsInserted,
+    orders_updated: ordersUpdated,
     merchant_codes_count: merchantCodesFound.size,
     merchant_codes: Array.from(merchantCodesFound),
     warehouses_count: warehousesFound.size,

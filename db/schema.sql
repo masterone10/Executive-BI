@@ -902,3 +902,41 @@ CREATE TABLE IF NOT EXISTS allocation_operational_alerts (
   UNIQUE(work_date, alert_type, entity_id)
 );
 CREATE INDEX IF NOT EXISTS idx_alloc_alerts_date ON allocation_operational_alerts(work_date);
+
+CREATE TABLE IF NOT EXISTS order_products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_code TEXT NOT NULL,
+  order_id TEXT,
+  product_name TEXT NOT NULL,
+  product_sku TEXT,
+  merchant_code TEXT,
+  merchant_name TEXT,
+  warehouse TEXT,
+  quantity INTEGER DEFAULT 1,
+  unit_price REAL,
+  source TEXT,
+  source_row INTEGER,
+  import_batch_id TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(order_code, product_name, product_sku, merchant_code, warehouse)
+);
+CREATE INDEX IF NOT EXISTS idx_order_products_code ON order_products(order_code);
+CREATE INDEX IF NOT EXISTS idx_order_products_order_id ON order_products(order_id);
+
+CREATE TABLE IF NOT EXISTS vendoor_confirmation_age_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_code TEXT NOT NULL,
+  tier TEXT NOT NULL, -- 'ONE_DAY', 'TWO_DAYS', 'THREE_DAYS', 'OVER_THREE_DAYS'
+  customer_name TEXT,
+  phone TEXT,
+  account TEXT,
+  amount REAL,
+  confirmation_date TEXT,
+  source_url TEXT,
+  page_number INTEGER DEFAULT 1,
+  pulled_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(order_code, tier)
+);
+CREATE INDEX IF NOT EXISTS idx_conf_age_order ON vendoor_confirmation_age_records(order_code);
+CREATE INDEX IF NOT EXISTS idx_conf_age_tier ON vendoor_confirmation_age_records(tier);
+

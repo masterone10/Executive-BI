@@ -14,7 +14,8 @@ import {
   buildVendoorHeaders,
   ensureAuthenticatedVendoorSession,
   performVendoorAutoLogin,
-  invalidateActiveSession
+  invalidateActiveSession,
+  setLiveConnectionState
 } from './auth.js';
 
 export class VendoorClientError extends Error {
@@ -102,6 +103,7 @@ export async function vendoorFetch(endpointPath, options = {}) {
       const isAuthError = status === 401 || status === 419 || isRedirectedToLogin;
 
       if (isAuthError) {
+        setLiveConnectionState('SESSION_EXPIRED', 'Session expired or login redirect detected.');
         // Attempt single automatic re-authentication if credentials exist and haven't retried yet
         if (!options._isAuthRetry && cfg.hasAutoLoginCredentials) {
           invalidateActiveSession();
@@ -114,6 +116,7 @@ export async function vendoorFetch(endpointPath, options = {}) {
               retries: 0
             });
           } catch (reauthErr) {
+            setLiveConnectionState('LOGIN_FAILED', reauthErr.message);
             throw new VendoorClientError(
               'Vendoor re-authentication failed: ' + reauthErr.message,
               401,
@@ -141,6 +144,7 @@ export async function vendoorFetch(endpointPath, options = {}) {
       }
 
       if (status === 429) {
+        setLiveConnectionState('RATE_LIMITED', 'Rate limit reached (HTTP 429).');
         throw new VendoorClientError(
           'Vendoor rate limit reached (HTTP 429). Please reduce request frequency.',
           429,
@@ -214,6 +218,7 @@ export async function vendoorFetch(endpointPath, options = {}) {
           { rawError: err.message }
         );
       }
+      setLiveConnectionState('SOURCE_UNAVAILABLE', lastError.message);
 
       const isIdempotentEndpoint = endpointPath.includes('/export/check/order') || 
                                     endpointPath.includes('/export/excute') || 

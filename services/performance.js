@@ -1204,8 +1204,39 @@ export function getEmployeeMetricDrilldown(workDate, employeeName, metric = 'ALL
   const masterEmployees = db.prepare('SELECT id, name, department, active FROM employees').all();
   const csCache = new Map();
 
+  const targetNorm = normalizeEmployeeName(employeeName);
+  const targetMaster = masterEmployees.find(e => normalizeEmployeeName(e.name) === targetNorm);
+  const validTargetNames = new Set();
+  if (targetNorm) {
+    validTargetNames.add(targetNorm);
+    const cleanInput = (employeeName || '').replace(/\s+cs$/i, '').trim();
+    if (cleanInput) validTargetNames.add(normalizeEmployeeName(cleanInput));
+  }
+  if (targetMaster) {
+    validTargetNames.add(normalizeEmployeeName(targetMaster.name));
+    const cleanMaster = (targetMaster.name || '').replace(/\s+cs$/i, '').trim();
+    if (cleanMaster) validTargetNames.add(normalizeEmployeeName(cleanMaster));
+    if (targetMaster.id) {
+      try {
+        const mappings = db.prepare('SELECT vendoor_name, normalized_name FROM vendoor_identity_mappings WHERE employee_id = ?').all(targetMaster.id);
+        for (const m of mappings) {
+          if (m.normalized_name) validTargetNames.add(m.normalized_name);
+          if (m.vendoor_name) validTargetNames.add(normalizeEmployeeName(m.vendoor_name));
+        }
+      } catch (_) {}
+    }
+  }
+
+  // Pre-filter rows to target employee if specified to avoid normalizing entire company logs
+  const candidateRows = (targetNorm && validTargetNames.size > 0)
+    ? rawRows.filter(r => {
+        const norm = normalizeEmployeeName(r.employee_name);
+        return validTargetNames.has(norm);
+      })
+    : rawRows;
+
   // Uniform record normalization
-  const normalizedRecords = rawRows.map(r => {
+  const normalizedRecords = candidateRows.map(r => {
     const rawName = r.employee_name || '';
     const orderCode = r.order_code || '';
     const actionText = r.action || '';
@@ -1279,7 +1310,6 @@ export function getEmployeeMetricDrilldown(workDate, employeeName, metric = 'ALL
     return displayName;
   }
 
-  const targetNorm = normalizeEmployeeName(employeeName);
   const statusGroups = new Map();
   const altGroups = new Map();
 

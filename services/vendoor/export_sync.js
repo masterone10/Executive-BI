@@ -18,21 +18,49 @@ import { vendoorFetch, VendoorClientError } from './client.js';
 import { extractCsrfTokenFromHtml } from './auth.js';
 import { getCairoBusinessDate } from '../time_utils.js';
 
+import { extractWarehouse } from '../operational_intelligence.js';
+
 /**
  * Map status filter to Vendoor category ID
+ * Throws explicit UNSUPPORTED_STATUS_FILTER for unknown statuses
  */
 export function mapStatusToCategoryId(status) {
-  if (!status) return 1; // Default New
+  if (!status) {
+    const err = new Error('UNSUPPORTED_STATUS_FILTER: Status filter is required.');
+    err.code = 'UNSUPPORTED_STATUS_FILTER';
+    throw err;
+  }
   const s = String(status).trim().toLowerCase();
   if (s === '1' || s === 'new' || s.includes('جديد')) return 1;
-  if (s === '3' || s === 'pending' || s.includes('معلق')) return 3;
-  if (s === '13' || s === 'printed' || s.includes('طباعة')) return 13;
+  if (s === '2' || s === 'processing' || s.includes('تجهيز')) return 2;
+  if (s === '3' || s === 'pending' || s.includes('معلق') || s.includes('انتظار')) return 3;
   if (s === '4' || s === 'shipped' || s.includes('شحن')) return 4;
   if (s === '5' || s.includes('partial')) return 5;
-  if (s === '8' || s === 'delivered' || s.includes('استلام')) return 8;
+  if (s === '8' || s === 'delivered' || s.includes('استلام') || s.includes('تسليم')) return 8;
   if (s === '9' || s === 'collected' || s.includes('تحصيل')) return 9;
-  if (s === '12' || s === 'canceled' || s === 'cancelled' || s.includes('ملغ')) return 12;
-  return 1;
+  if (s === '12' || s === 'canceled' || s === 'cancelled' || s.includes('ملغ') || s.includes('رفض')) return 12;
+  if (s === '13' || s === 'printed' || s.includes('طباعة') || s.includes('طبع')) return 13;
+
+  const err = new Error(`UNSUPPORTED_STATUS_FILTER: Status "${status}" cannot be mapped to a known Vendoor category.`);
+  err.code = 'UNSUPPORTED_STATUS_FILTER';
+  throw err;
+}
+
+/**
+ * Universal canonical status normalization
+ */
+export function normalizeCanonicalStatus(status) {
+  if (!status) return 'Unknown';
+  const s = String(status).trim().toLowerCase();
+  if (s === '1' || s === 'new' || s.includes('جديد')) return 'New';
+  if (s === '2' || s === 'processing' || s.includes('تجهيز')) return 'Processing';
+  if (s === '3' || s === 'pending' || s.includes('معلق') || s.includes('انتظار')) return 'Pending';
+  if (s === '13' || s === 'printed' || s.includes('طباعة') || s.includes('طبع')) return 'Printed';
+  if (s === '12' || s === 'canceled' || s === 'cancelled' || s.includes('ملغ') || s.includes('رفض')) return 'Cancelled';
+  if (s === '4' || s === 'shipped' || s.includes('شحن')) return 'Shipped';
+  if (s === '8' || s === 'delivered' || s.includes('تسليم') || s.includes('مكتمل')) return 'Delivered';
+  if (s === '9' || s === 'collected' || s.includes('تحصيل')) return 'Collected';
+  return String(status).trim();
 }
 
 /**
@@ -212,25 +240,34 @@ export async function exportAndParseVendoorOrders(categoryId, options = {}) {
   const sheet = wb.Sheets[sheetName];
   const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
 
-  // Step 6: Deduplicate by Order Code & extract canonical Merchant Name + Code
-  const uniqueOrdersMap = new Map();
-  let duplicateRowsCount = 0;
+  // Step 6: 2-Level Multi-Product Parser (ordersByCode & productsByCode)
+  const ordersByCode = new Map();
+  const productsByCode = new Map();
+  let continuationRowsCount = 0;
+  let totalProductsCount = 0;
+  let lastOrderCode = '';
 
-  for (const r of rawRows) {
+  for (let rowIndex = 0; rowIndex < rawRows.length; rowIndex++) {
+    const r = rawRows[rowIndex];
     const rawOrderCode = r['رقم الاوردر'] || r['Order Code'] || r['Order ID'] || r['id'];
-    const orderCode = String(rawOrderCode || '').trim();
-    if (!orderCode) continue;
+    let orderCode = String(rawOrderCode || '').trim();
 
-    if (uniqueOrdersMap.has(orderCode)) {
-      duplicateRowsCount++;
-      continue;
+    // Continuation row detection: if order code is empty but row contains product information
+    const rowHasProduct = Boolean(
+      String(r['اسم المنتج'] || r['Product Name'] || '').trim() ||
+      String(r['كود الصنف'] || r['SKU'] || '').trim()
+    );
+
+    if (!orderCode && lastOrderCode && rowHasProduct) {
+      orderCode = lastOrderCode;
+      continuationRowsCount++;
     }
+
+    if (!orderCode) continue;
+    lastOrderCode = orderCode;
 
     const merchantName = String(r['اسم التاجر'] || r['Merchant Name'] || r['Merchant'] || r['Account'] || '').trim();
     const merchantCode = String(r['كود التاجر'] || r['Merchant Code'] || r['Vendor Code'] || '').trim();
-    
-    // Stable account display identity: Real Merchant Name (or stable fallback to Merchant_<code>)
-    // NEVER use marketer/affiliate, employee name, or order code as account name
     const canonicalAccount = merchantName || (merchantCode ? `Merchant_${merchantCode}` : 'Unassigned');
 
     const rawStatus = String(r['حالة الاوردر'] || r['Status'] || statusLabel).trim();
@@ -242,15 +279,11 @@ export async function exportAndParseVendoorOrders(categoryId, options = {}) {
     const address = String(r['العنوان'] || r['Address'] || '').trim();
     const governorate = String(r['المحافظة'] || r['Governorate'] || '').trim();
     const city = String(r['المدينة'] || r['City'] || '').trim();
-    const productName = String(r['اسم المنتج'] || r['Product Name'] || '').trim();
-    const productSku = String(r['كود الصنف'] || r['SKU'] || '').trim();
     const totalPrice = Number(r['Total'] || r['Net'] || r['السعر'] || 0);
     const shippingCompany = String(r['شركة الشحن'] || '').trim();
     const trackingNumber = String(r['بوليصة الشحن'] || '').trim();
-    
-    const liveMeta = orderMetadata ? orderMetadata.get(orderCode) : null;
 
-    // Extract affiliate code directly from live DataTables metadata or Excel column
+    const liveMeta = orderMetadata ? orderMetadata.get(orderCode) : null;
     const rawAffiliateCode = liveMeta?.affiliate_code || 
       r['الافيليت كود'] || r['كود الافلييت'] || r['كود المسوق'] || r['كود_المسوق'] || 
       r['Affiliate Code'] || r['Marketer Code'] || r.affiliate_code || '';
@@ -259,7 +292,6 @@ export async function exportAndParseVendoorOrders(categoryId, options = {}) {
       affiliateCode = null;
     }
 
-    // Extract marketer name directly from live Vendoor runtime metadata or Excel column
     const rawMarketerName = liveMeta?.affiliate_name || 
       (affiliateCode && affiliateNamesMap ? affiliateNamesMap.get(affiliateCode) : null) ||
       r['اسم المسوق'] || r['اسم_المسوق'] || r['المسوق'] || r['اسم الافلييت'] || r['اسم الافيليت'] || 
@@ -270,33 +302,121 @@ export async function exportAndParseVendoorOrders(categoryId, options = {}) {
       marketerName = null;
     }
 
-    uniqueOrdersMap.set(orderCode, {
-      order_code: orderCode,
-      status: rawStatus,
-      substatus,
-      account: canonicalAccount,
-      merchant_name: merchantName,
-      merchant_code: merchantCode,
-      created_at_original: createdAtOriginal,
-      date: createdAtOriginal ? createdAtOriginal.slice(0, 10) : getCairoBusinessDate(),
-      customer_name: customerName,
-      phone,
-      phone2,
-      address,
-      governorate,
-      city,
-      product_name: productName,
-      product_sku: productSku,
-      total_price: totalPrice,
-      shipping_company: shippingCompany,
-      tracking_number: trackingNumber,
-      affiliate_code: affiliateCode,
-      marketer_name: marketerName,
-      affiliate_name: marketerName
-    });
+    // 1. Initialize or merge master order record
+    if (!ordersByCode.has(orderCode)) {
+      ordersByCode.set(orderCode, {
+        order_code: orderCode,
+        status: normalizeCanonicalStatus(rawStatus),
+        raw_status: rawStatus,
+        substatus,
+        account: canonicalAccount,
+        merchant_name: merchantName,
+        merchant_code: merchantCode,
+        created_at_original: createdAtOriginal,
+        date: createdAtOriginal ? createdAtOriginal.slice(0, 10) : getCairoBusinessDate(),
+        customer_name: customerName,
+        phone,
+        phone2,
+        address,
+        governorate,
+        city,
+        total_price: totalPrice,
+        shipping_company: shippingCompany,
+        tracking_number: trackingNumber,
+        affiliate_code: affiliateCode,
+        marketer_name: marketerName,
+        affiliate_name: marketerName,
+        products: []
+      });
+    } else {
+      const existing = ordersByCode.get(orderCode);
+      if (!existing.phone && phone) existing.phone = phone;
+      if (!existing.phone2 && phone2) existing.phone2 = phone2;
+      if (!existing.address && address) existing.address = address;
+      if (!existing.customer_name && customerName) existing.customer_name = customerName;
+      if (!existing.merchant_code && merchantCode) existing.merchant_code = merchantCode;
+      if (!existing.merchant_name && merchantName) existing.merchant_name = merchantName;
+    }
+
+    // 2. Extract and preserve every individual product line
+    const prodName = String(r['اسم المنتج'] || r['Product Name'] || '').trim();
+    const prodSku = String(r['كود الصنف'] || r['SKU'] || '').trim();
+    const prodQty = parseInt(r['الكمية'] || r['Quantity'] || 1, 10) || 1;
+    const prodPrice = parseFloat(r['السعر'] || r['Price'] || r['Total'] || 0) || 0;
+    const prodWh = extractWarehouse(prodName, r);
+    const prodMerchCode = merchantCode || null;
+    const prodMerchName = merchantName || null;
+
+    if (prodName || prodSku) {
+      if (!productsByCode.has(orderCode)) {
+        productsByCode.set(orderCode, []);
+      }
+      const productList = productsByCode.get(orderCode);
+      productList.push({
+        order_code: orderCode,
+        product_name: prodName,
+        product_sku: prodSku || null,
+        merchant_code: prodMerchCode,
+        merchant_name: prodMerchName,
+        warehouse: prodWh,
+        quantity: prodQty,
+        unit_price: prodPrice,
+        source: 'VENDOOR_EXPORT',
+        source_row: rowIndex + 1
+      });
+      totalProductsCount++;
+    }
   }
 
-  const uniqueOrders = Array.from(uniqueOrdersMap.values());
+  // 3. Attach full products list to each order and persist to order_products
+  const insertProductStmt = db.prepare(`
+    INSERT OR IGNORE INTO order_products (
+      order_code, order_id, product_name, product_sku, merchant_code, merchant_name,
+      warehouse, quantity, unit_price, source, source_row
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const persistTx = db.transaction(() => {
+    for (const [code, pList] of productsByCode.entries()) {
+      for (const p of pList) {
+        try {
+          insertProductStmt.run(
+            code,
+            code,
+            p.product_name,
+            p.product_sku,
+            p.merchant_code,
+            p.merchant_name,
+            p.warehouse,
+            p.quantity,
+            p.unit_price,
+            p.source,
+            p.source_row
+          );
+        } catch (_) {}
+      }
+    }
+  });
+
+  try {
+    persistTx();
+  } catch (dbErr) {
+    console.warn('[ExportSync] Product persistence warning:', dbErr.message);
+  }
+
+  for (const [code, ord] of ordersByCode.entries()) {
+    ord.products = productsByCode.get(code) || [];
+    if (ord.products.length > 0) {
+      ord.product_name = ord.products[0].product_name;
+      ord.product_sku = ord.products[0].product_sku;
+      ord.warehouse = ord.products[0].warehouse;
+      if (!ord.merchant_code && ord.products[0].merchant_code) {
+        ord.merchant_code = ord.products[0].merchant_code;
+      }
+    }
+  }
+
+  const uniqueOrders = Array.from(ordersByCode.values());
 
   return {
     success: true,
@@ -306,7 +426,8 @@ export async function exportAndParseVendoorOrders(categoryId, options = {}) {
     reportedTotal,
     reportedFiltered,
     exportedRowsCount: rawRows.length,
-    duplicateRowsCount,
+    continuationRowsCount,
+    totalProductsCount,
     uniqueOrdersCount: uniqueOrders.length,
     orders: uniqueOrders
   };

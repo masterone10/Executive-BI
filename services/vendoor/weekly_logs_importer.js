@@ -229,7 +229,9 @@ export async function importWeeklyVendoorLogs(options = {}) {
   // 3. Ensure live session authentication & datasource initialization
   try {
     ds = getVendoorDataSource(options.forceMode);
-    await ensureAuthenticatedVendoorSession();
+    if (ds && ds.mode !== 'MOCK') {
+      await ensureAuthenticatedVendoorSession();
+    }
   } catch (initErr) {
     activeWeeklyImportState.isRunning = false;
     activeWeeklyImportState.status = 'FAILED';

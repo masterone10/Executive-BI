@@ -1514,6 +1514,67 @@ export function runMigrations(database = db) {
       VALUES ('large_load_threshold', '1000', 'Operational alert threshold for high-volume order days')
     `).run();
 
+    // Ensure order_products has source, source_row, import_batch_id
+    try {
+      const opCols = database.prepare("PRAGMA table_info(order_products)").all();
+      if (opCols.length > 0) {
+        if (!opCols.some(c => c.name === 'source')) database.exec("ALTER TABLE order_products ADD COLUMN source TEXT");
+        if (!opCols.some(c => c.name === 'source_row')) database.exec("ALTER TABLE order_products ADD COLUMN source_row INTEGER");
+        if (!opCols.some(c => c.name === 'import_batch_id')) database.exec("ALTER TABLE order_products ADD COLUMN import_batch_id TEXT");
+      }
+    } catch (_) {}
+
+    // Ensure account_rules has female_only column
+    try {
+      const arCols = database.prepare("PRAGMA table_info(account_rules)").all();
+      if (arCols.length > 0 && !arCols.some(c => c.name === 'female_only')) {
+        database.exec("ALTER TABLE account_rules ADD COLUMN female_only INTEGER DEFAULT 0");
+      }
+    } catch (_) {}
+
+    // Ensure employees has gender column
+    try {
+      const empCols = database.prepare("PRAGMA table_info(employees)").all();
+      if (empCols.length > 0 && !empCols.some(c => c.name === 'gender')) {
+        database.exec("ALTER TABLE employees ADD COLUMN gender TEXT DEFAULT 'Unspecified'");
+        // Seed known female CS names
+        database.exec(`
+          UPDATE employees 
+          SET gender = 'Female' 
+          WHERE gender = 'Unspecified' AND (
+            name LIKE '%Basma%' OR name LIKE '%Sara%' OR name LIKE '%Sanaa%' OR 
+            name LIKE '%Nour%' OR name LIKE '%Mai%' OR name LIKE '%Esraa%' OR 
+            name LIKE '%Hala%' OR name LIKE '%Mona%' OR name LIKE '%Dina%' OR
+            name LIKE '%بسمة%' OR name LIKE '%سارة%' OR name LIKE '%سناء%' OR 
+            name LIKE '%نور%' OR name LIKE '%مي%' OR name LIKE '%إسراء%' OR 
+            name LIKE '%هالة%' OR name LIKE '%منى%' OR name LIKE '%دينا%'
+          )
+        `);
+      }
+    } catch (_) {}
+
+    // Create table for Vendoor Confirmation-Age records
+    try {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS vendoor_confirmation_age_records (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          order_code TEXT NOT NULL,
+          tier TEXT NOT NULL,
+          customer_name TEXT,
+          phone TEXT,
+          account TEXT,
+          amount REAL,
+          confirmation_date TEXT,
+          source_url TEXT,
+          page_number INTEGER DEFAULT 1,
+          pulled_at TEXT DEFAULT (datetime('now')),
+          UNIQUE(order_code, tier)
+        );
+        CREATE INDEX IF NOT EXISTS idx_conf_age_order ON vendoor_confirmation_age_records(order_code);
+        CREATE INDEX IF NOT EXISTS idx_conf_age_tier ON vendoor_confirmation_age_records(tier);
+      `);
+    } catch (_) {}
+
   } catch (e) {
     console.warn('Migration for Enterprise Allocation Engine tables:', e.message);
   }

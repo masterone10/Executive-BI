@@ -20,6 +20,22 @@ let runtimeEmployeeEmail = '';
 let runtimeEmployeePassword = '';
 let runtimeBaseUrl = '';
 
+// Connection status & audit state
+let activeConnectionState = 'NOT_CONFIGURED'; // NOT_CONFIGURED, AUTHENTICATING, CONNECTED, SESSION_EXPIRED, LOGIN_FAILED, RATE_LIMITED, SOURCE_UNAVAILABLE
+let lastSuccessfulAuthAt = null;
+let lastSafeError = null;
+
+export function setLiveConnectionState(state, safeError = null) {
+  activeConnectionState = state;
+  if (safeError) {
+    lastSafeError = String(safeError).replace(/(password|token|_token|cookie|authorization)=[^&\s]+/gi, '$1=[REDACTED]').slice(0, 300);
+  }
+  if (state === 'CONNECTED') {
+    lastSuccessfulAuthAt = new Date().toISOString();
+    lastSafeError = null;
+  }
+}
+
 /**
  * Configure in-memory runtime credentials (server memory only, never saved to DB or localStorage)
  */
@@ -158,8 +174,10 @@ export function getSafeVendoorStatus() {
     has_auto_login_credentials: cfg.hasAutoLoginCredentials,
     has_active_session: cfg.hasActiveSession,
     auth_method: authMethod,
-    connection_state: connectionState, // CONNECTED / NOT CONNECTED / LOGIN_FAILED / NOT_CONFIGURED
+    connection_state: activeConnectionState !== 'NOT_CONFIGURED' ? activeConnectionState : connectionState,
     session_state: sessionState, // ACTIVE / EXPIRED / NOT_AUTHENTICATED
+    last_successful_auth_at: lastSuccessfulAuthAt,
+    last_safe_error: lastSafeError,
     email_configured: Boolean(cfg.employeeEmail),
     email_preview: cfg.employeeEmail ? `${cfg.employeeEmail.slice(0, 2)}•••@•••` : 'NOT_CONFIGURED',
     password_configured: Boolean(cfg.employeePassword),
@@ -254,93 +272,131 @@ export async function performVendoorAutoLogin() {
     return activeLoginPromise;
   }
 
+  setLiveConnectionState('AUTHENTICATING');
+
   activeLoginPromise = (async () => {
     const cfg = getVendoorConfig();
     if (!cfg.hasAutoLoginCredentials) {
-      throw new Error('Vendoor employee credentials (VENDOOR_EMPLOYEE_EMAIL / VENDOOR_EMPLOYEE_PASSWORD) are not configured.');
+      setLiveConnectionState('NOT_CONFIGURED', 'Vendoor employee credentials are not configured.');
+      const err = new Error('Vendoor employee credentials (VENDOOR_EMPLOYEE_EMAIL / VENDOOR_EMPLOYEE_PASSWORD) are not configured.');
+      err.code = 'VENDOOR_NOT_CONFIGURED';
+      throw err;
     }
 
     const loginUrl = `${cfg.baseUrl}/dashboard/login`;
     const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
 
-    // Step 1: Fetch login page to capture initial CSRF token and initial session cookie
-    const getRes = await fetch(loginUrl, {
-      method: 'GET',
-      headers: {
+    try {
+      // Step 1: Fetch login page to capture initial CSRF token and initial session cookie
+      const getRes = await fetch(loginUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': userAgent,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        },
+        signal: AbortSignal.timeout(cfg.timeoutMs)
+      });
+
+      if (!getRes.ok && getRes.status !== 200) {
+        throw new Error(`Failed to load Vendoor login page: HTTP ${getRes.status}`);
+      }
+
+      const htmlText = await getRes.text();
+      const initialCookies = parseCookiesFromResponse(getRes);
+      const csrfToken = extractCsrfTokenFromHtml(htmlText);
+
+      if (!csrfToken) {
+        throw new Error('Failed to extract CSRF token from Vendoor login page.');
+      }
+
+      // Step 2: POST credentials to /dashboard/login
+      const formData = new URLSearchParams();
+      formData.append('_token', csrfToken);
+      formData.append('email', cfg.employeeEmail);
+      formData.append('password', cfg.employeePassword);
+      formData.append('remember', 'on');
+
+      const postHeaders = {
         'User-Agent': userAgent,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      },
-      signal: AbortSignal.timeout(cfg.timeoutMs)
-    });
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Origin': cfg.baseUrl,
+        'Referer': loginUrl
+      };
+      if (initialCookies) {
+        postHeaders['Cookie'] = initialCookies;
+      }
 
-    if (!getRes.ok && getRes.status !== 200) {
-      throw new Error(`Failed to load Vendoor login page: HTTP ${getRes.status}`);
+      const postRes = await fetch(loginUrl, {
+        method: 'POST',
+        headers: postHeaders,
+        body: formData.toString(),
+        redirect: 'manual',
+        signal: AbortSignal.timeout(cfg.timeoutMs)
+      });
+
+      const postCookies = parseCookiesFromResponse(postRes);
+      const mergedCookies = mergeCookieStrings(initialCookies, postCookies);
+
+      // Analyze post response (Laravel redirects on successful login or failure)
+      const status = postRes.status;
+      const location = postRes.headers.get('location') || '';
+
+      // If redirected back to login page, credentials failed
+      if (location.includes('/dashboard/login') || location.endsWith('/login')) {
+        throw new Error('Vendoor authentication failed: Invalid credentials or rejected login.');
+      }
+
+      // HTTP 302/301 redirecting to /dashboard or /dashboard/orders or HTTP 200 with cookies indicates success
+      const isRedirectToApp = (status === 302 || status === 301) && !location.includes('/login');
+      const hasLaravelSession = mergedCookies.includes('laravel_session');
+
+      if (!isRedirectToApp && !hasLaravelSession && status !== 200) {
+        throw new Error(`Vendoor authentication failed with HTTP ${status}`);
+      }
+
+      // Step 3: Verify access to protected resource to confirm session validity
+      const verifyHeaders = {
+        'User-Agent': userAgent,
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Cookie': mergedCookies
+      };
+      if (csrfToken) {
+        verifyHeaders['X-CSRF-TOKEN'] = csrfToken;
+      }
+
+      const verifyRes = await fetch(`${cfg.baseUrl}/dashboard/orders?length=1`, {
+        method: 'GET',
+        headers: verifyHeaders,
+        signal: AbortSignal.timeout(cfg.timeoutMs)
+      });
+
+      if (verifyRes.status === 401 || verifyRes.status === 419 || (verifyRes.redirected && verifyRes.url.includes('/login'))) {
+        throw new Error('Vendoor authentication verification failed: Session rejected on protected endpoint.');
+      }
+
+      const verifyText = await verifyRes.text();
+      if (verifyText.includes('<input name="_token"') && verifyText.includes('password')) {
+        throw new Error('Vendoor returned login form instead of authorized response. Authentication rejected.');
+      }
+
+      // Update in-memory state
+      inMemorySessionCookie = mergedCookies;
+      inMemoryCsrfToken = csrfToken;
+      inMemorySessionExpiry = Date.now() + (2 * 60 * 60 * 1000); // 2 hours
+
+      setLiveConnectionState('CONNECTED');
+
+      return {
+        success: true,
+        authMethod: 'AUTO_LOGIN',
+        expiresAt: inMemorySessionExpiry
+      };
+    } catch (err) {
+      setLiveConnectionState('LOGIN_FAILED', err.message);
+      throw err;
     }
-
-    const htmlText = await getRes.text();
-    const initialCookies = parseCookiesFromResponse(getRes);
-    const csrfToken = extractCsrfTokenFromHtml(htmlText);
-
-    if (!csrfToken) {
-      throw new Error('Failed to extract CSRF token from Vendoor login page.');
-    }
-
-    // Step 2: POST credentials to /dashboard/login
-    const formData = new URLSearchParams();
-    formData.append('_token', csrfToken);
-    formData.append('email', cfg.employeeEmail);
-    formData.append('password', cfg.employeePassword);
-    formData.append('remember', 'on');
-
-    const postHeaders = {
-      'User-Agent': userAgent,
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Origin': cfg.baseUrl,
-      'Referer': loginUrl
-    };
-    if (initialCookies) {
-      postHeaders['Cookie'] = initialCookies;
-    }
-
-    const postRes = await fetch(loginUrl, {
-      method: 'POST',
-      headers: postHeaders,
-      body: formData.toString(),
-      redirect: 'manual',
-      signal: AbortSignal.timeout(cfg.timeoutMs)
-    });
-
-    const postCookies = parseCookiesFromResponse(postRes);
-    const mergedCookies = mergeCookieStrings(initialCookies, postCookies);
-
-    // Analyze post response (Laravel redirects on successful login or failure)
-    const status = postRes.status;
-    const location = postRes.headers.get('location') || '';
-
-    // If redirected back to login page, credentials failed
-    if (location.includes('/dashboard/login') || location.endsWith('/login')) {
-      throw new Error('Vendoor authentication failed: Invalid credentials or rejected login.');
-    }
-
-    // HTTP 302/301 redirecting to /dashboard or /dashboard/orders or HTTP 200 with cookies indicates success
-    const isRedirectToApp = (status === 302 || status === 301) && !location.includes('/login');
-    const hasLaravelSession = mergedCookies.includes('laravel_session');
-
-    if (!isRedirectToApp && !hasLaravelSession && status !== 200) {
-      throw new Error(`Vendoor authentication failed with HTTP ${status}`);
-    }
-
-    // Update in-memory state
-    inMemorySessionCookie = mergedCookies;
-    inMemoryCsrfToken = csrfToken;
-    inMemorySessionExpiry = Date.now() + (2 * 60 * 60 * 1000); // 2 hours
-
-    return {
-      success: true,
-      authMethod: 'AUTO_LOGIN',
-      expiresAt: inMemorySessionExpiry
-    };
   })().finally(() => {
     activeLoginPromise = null;
   });
