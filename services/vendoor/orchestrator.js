@@ -128,7 +128,11 @@ export function recordReconciliationAudit({
   }
 }
 
-export function computeLiveReconciliation(businessDate = (getEffectiveWorkDate() || getCairoBusinessDate())) {
+export function computeLiveReconciliation(businessDate = (getEffectiveWorkDate() || getCairoBusinessDate()), options = {}) {
+  const cfg = getVendoorConfig();
+  const poller = getAutonomousPollerStatus();
+  const connState = poller.connection_state || 'NOT_CONFIGURED';
+
   const localNew = db.prepare(`SELECT COUNT(*) as c FROM current_work_orders WHERE work_date = ? AND status = 'New'`).get(businessDate)?.c || 0;
   const localPending = db.prepare(`SELECT COUNT(*) as c FROM current_work_orders WHERE work_date = ? AND status = 'Pending'`).get(businessDate)?.c || 0;
   const localTotal = db.prepare(`SELECT COUNT(DISTINCT order_code) as c FROM current_work_orders WHERE work_date = ?`).get(businessDate)?.c || 0;
@@ -148,15 +152,54 @@ export function computeLiveReconciliation(businessDate = (getEffectiveWorkDate()
   const missingInLocal = Array.from(vendoorCodes).filter(c => !localCodes.has(c));
   const extraInLocal = Array.from(localCodes).filter(c => !vendoorCodes.has(c));
 
+  // Determine freshness and connection reality
+  const now = Date.now();
+  const lastSuccessAt = poller.orders?.last_success_at || null;
+  const lastSuccessTs = lastSuccessAt ? new Date(lastSuccessAt).getTime() : 0;
+  const ordersSecAgo = lastSuccessTs > 0 ? Math.max(0, Math.floor((now - lastSuccessTs) / 1000)) : null;
+
+  let freshness = 'NO_PREVIOUS_SYNC';
+  if (ordersSecAgo !== null) {
+    freshness = ordersSecAgo > 300 ? 'STALE' : 'FRESH';
+  } else if (cfg.mockMode) {
+    freshness = 'MOCK_ACTIVE';
+  }
+
   let status = 'PASS';
-  if (missingInLocal.length > 0 || extraInLocal.length > 0) {
+  let explanation = 'Verified parity between local operational pool and local Vendoor mirror.';
+
+  if (connState === 'AUTH_FAILED') {
+    status = 'ERROR';
+    explanation = 'Vendoor authentication failed: credentials invalid or session expired. Local mirror cannot be verified against source.';
+  } else if (connState === 'ERROR') {
+    status = 'ERROR';
+    explanation = poller.orders?.last_error ? `Vendoor connection error: ${poller.orders.last_error}` : 'Vendoor connection error.';
+  } else if (missingInLocal.length > 0 || extraInLocal.length > 0) {
     status = extraInLocal.length > 0 ? 'IN_FLIGHT_TRANSITION' : 'DELTA_DETECTED';
+    explanation = extraInLocal.length > 0
+      ? `${extraInLocal.length} orders changed status locally or completed during reconciliation window.`
+      : `${missingInLocal.length} new orders arrived in local Vendoor mirror awaiting operational queue update.`;
+  } else if (freshness === 'STALE') {
+    status = 'STALE';
+    explanation = `Last successful sync was ${ordersSecAgo}s ago (>5 minutes). Data may be stale.`;
+  } else if (freshness === 'NO_PREVIOUS_SYNC' && !cfg.mockMode && localTotal === 0 && vendoorTotal === 0) {
+    status = 'UNKNOWN';
+    explanation = 'No sync runs recorded for this date and Vendoor is not actively connected.';
   }
 
   return {
     cycle_timestamp: new Date().toISOString(),
     business_date: businessDate,
     sync_run_id: null,
+    comparison_mode: options.isLiveSource ? 'LIVE_SOURCE_VERIFICATION' : 'LOCAL_TABLE_MIRROR_AUDIT',
+    source_verification: {
+      is_external_live_check: Boolean(options.isLiveSource),
+      connection_state: connState,
+      has_credentials: Boolean(cfg.hasCredentials || cfg.mockMode),
+      last_successful_sync_at: lastSuccessAt,
+      data_freshness: freshness,
+      seconds_since_last_sync: ordersSecAgo
+    },
     pending: {
       vendoor: vendoorPending,
       local: localPending,
@@ -175,7 +218,7 @@ export function computeLiveReconciliation(businessDate = (getEffectiveWorkDate()
     mismatches: {
       missing_in_local: missingInLocal,
       extra_in_local: extraInLocal,
-      explanation: extraInLocal.length > 0 ? "Status changed during reconciliation window." : (missingInLocal.length > 0 ? "New orders arrived in live Vendoor stream." : "Perfect parity across active sets.")
+      explanation
     },
     reconciliation_status: status
   };
@@ -368,10 +411,14 @@ export async function syncVendoorOrders(options = {}) {
 
     const checkExistingStmt = db.prepare('SELECT id, status, account, source_date, raw_payload_json FROM vendoor_orders WHERE order_code = ?');
 
+    // Track statuses that completed their full page sequence without error or premature cutoff
+    const completedCanonicalStatuses = new Set();
+
     for (const currentStatus of statusesToFetch) {
       let reportedTotal = null;
       let reportedFiltered = null;
       let statusOrdersCount = 0;
+      let statusCompleted = false;
 
       for (let page = 0; page < maxPages; page++) {
         const start = page * pageSize;
@@ -398,7 +445,10 @@ export async function syncVendoorOrders(options = {}) {
           }
         }
 
-        if (orders.length === 0) break;
+        if (orders.length === 0) {
+          statusCompleted = true;
+          break;
+        }
 
         const tx = db.transaction(() => {
           for (const ord of orders) {
@@ -530,32 +580,36 @@ export async function syncVendoorOrders(options = {}) {
         tx();
 
         // If export flow was used or fewer items than pageSize were returned, reached end for this status
-        if (res.pages_fetched || orders.length < pageSize) break;
+        if (res.pages_fetched || orders.length < pageSize) {
+          statusCompleted = true;
+          break;
+        }
 
         // If we've collected the target count reported by DataTables
         const targetCount = (reportedFiltered !== null && reportedFiltered > 0) ? reportedFiltered : reportedTotal;
         if (targetCount !== null && targetCount > 0 && statusOrdersCount >= targetCount) {
+          statusCompleted = true;
           break;
         }
+      }
+
+      if (statusCompleted) {
+        const canonical = String(currentStatus).toLowerCase().includes('pend') || String(currentStatus).includes('معلق')
+          ? 'Pending'
+          : (String(currentStatus).toLowerCase().includes('new') || String(currentStatus).includes('جديد') ? 'New' : currentStatus);
+        completedCanonicalStatuses.add(canonical);
+      } else {
+        console.warn(`[Vendoor Orchestrator] Status ${currentStatus} pagination ended without confirmed completion (${statusOrdersCount} fetched). Pruning skipped for this status.`);
       }
     }
 
     // ACTIVE WORKLOAD RECONCILIATION & STALE PRUNING:
-    // Only prune orders whose status was actually fetched in this synchronization cycle.
-    // Never prune Pending orders when only New was synced, and never prune New when only Pending was synced.
-    if (isStatusDriven && !isHistoricalSync && activeOrderCodes.size > 0) {
-      const fetchedCanonicalStatuses = new Set(
-        statusesToFetch.map(s => {
-          const l = String(s).toLowerCase();
-          if (l.includes('pend') || l.includes('معلق')) return 'Pending';
-          if (l.includes('new') || l.includes('جديد')) return 'New';
-          return s;
-        })
-      );
-
+    // Only prune orders whose status was confirmed COMPLETELY fetched in this synchronization cycle.
+    // Never prune on partial responses, pagination cutoffs, or unconfirmed completions.
+    if (isStatusDriven && !isHistoricalSync && activeOrderCodes.size > 0 && completedCanonicalStatuses.size > 0) {
       const existingCwo = db.prepare('SELECT order_code, status FROM current_work_orders WHERE work_date = ?').all(operationalBusinessDate);
       const toPrune = existingCwo
-        .filter(row => fetchedCanonicalStatuses.has(row.status) && !activeOrderCodes.has(row.order_code))
+        .filter(row => completedCanonicalStatuses.has(row.status) && !activeOrderCodes.has(row.order_code))
         .map(r => r.order_code);
 
       if (toPrune.length > 0) {

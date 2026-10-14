@@ -636,8 +636,32 @@ export function getHistoricalDayOverview(workDate) {
   // 1. Orders resolution via single canonical source
   const allOrders = getHistoricalOrdersForDate(cleanDate);
   const accountsSet = new Set(allOrders.map(o => o.account));
-  const newCount = allOrders.filter(o => String(o.status || '').toLowerCase() === 'new' || String(o.status || '').includes('جديد')).length;
-  const pendingCount = allOrders.filter(o => String(o.status || '').toLowerCase() === 'pending' || String(o.status || '').includes('معلق')).length;
+
+  let newCount = 0;
+  let pendingCount = 0;
+  let processingCount = 0;
+  let printedCount = 0;
+  let cancelledCount = 0;
+  let otherCount = 0;
+
+  for (const o of allOrders) {
+    const s = String(o.status || '').trim().toLowerCase();
+    if (s === 'new' || s === 'جديد' || s.includes('طلب جديد')) {
+      newCount++;
+    } else if (s === 'pending' || s.includes('معلق') || s.includes('انتظار')) {
+      pendingCount++;
+    } else if (s === 'processing' || s.includes('تجهيز')) {
+      processingCount++;
+    } else if (s === 'printed' || s === 'print' || s.includes('طبع')) {
+      printedCount++;
+    } else if (s === 'cancelled' || s === 'canceled' || s.includes('ملغي') || s.includes('ملغى') || s.includes('إلغاء') || s.includes('الغاء') || s.includes('رفض')) {
+      cancelledCount++;
+    } else {
+      otherCount++;
+    }
+  }
+
+  const activeWorkloadCount = newCount + pendingCount;
 
   // 2. Working team resolution
   const teamRow = db.prepare(`
@@ -685,6 +709,18 @@ export function getHistoricalDayOverview(workDate) {
     accounts_count: accountsSet.size,
     new_count: newCount,
     pending_count: pendingCount,
+    processing_count: processingCount,
+    printed_count: printedCount,
+    cancelled_count: cancelledCount,
+    active_workload_count: activeWorkloadCount,
+    status_breakdown: {
+      New: newCount,
+      Pending: pendingCount,
+      Processing: processingCount,
+      Printed: printedCount,
+      Cancelled: cancelledCount,
+      Other: otherCount
+    },
     working_team_count: teamCount,
     working_team_source: teamSource,
     allocated_count: allocatedCount,
@@ -802,7 +838,7 @@ export function getHistoricalOrdersForDate(workDate) {
       product_name,
       warehouse
     FROM current_work_orders
-    WHERE (order_date = ? OR work_date = ?)
+    WHERE (work_date = ? OR (work_date IS NULL AND order_date = ?))
     ORDER BY account ASC, order_code ASC
   `).all(cleanDate, cleanDate);
 
@@ -841,7 +877,7 @@ export function getHistoricalOrdersForDate(workDate) {
           product_name,
           warehouse
         FROM vendoor_orders
-        WHERE (source_date = ? OR business_date = ?)
+        WHERE (business_date = ? OR (business_date IS NULL AND source_date = ?))
         ORDER BY account ASC, order_code ASC
       `).all(cleanDate, cleanDate, cleanDate)
     : db.prepare(`
@@ -859,7 +895,7 @@ export function getHistoricalOrdersForDate(workDate) {
           product_name,
           warehouse
         FROM vendoor_orders
-        WHERE (source_date = ? OR business_date = ?)
+        WHERE (business_date = ? OR (business_date IS NULL AND source_date = ?))
           AND COALESCE(source_date, business_date) IS NOT NULL
           AND TRIM(COALESCE(source_date, business_date)) != ''
         ORDER BY account ASC, order_code ASC

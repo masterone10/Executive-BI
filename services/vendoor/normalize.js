@@ -116,12 +116,20 @@ export function normalizeVendoorOrder(rawOrder) {
 
   if (rawStatus.includes('<')) {
     rawStatus = rawStatus.replace(/<[^>]*>/g, '').trim();
-    const cleanUpper = rawStatus.toUpperCase();
-    if (cleanUpper === 'NEW' || cleanUpper.includes('NEW')) rawStatus = 'New';
-    else if (cleanUpper === 'PENDING' || cleanUpper.includes('PENDING')) rawStatus = 'Pending';
-    else if (cleanUpper === 'PROCESSING' || cleanUpper.includes('PROCESSING')) rawStatus = 'Processing';
-    else if (cleanUpper === 'DELIVERED' || cleanUpper.includes('DELIVERED')) rawStatus = 'Delivered';
-    else if (cleanUpper === 'CANCELLED' || cleanUpper.includes('CANCEL')) rawStatus = 'Cancelled';
+  }
+  const cleanUpper = rawStatus.toUpperCase();
+  if (cleanUpper === 'NEW' || cleanUpper === 'جديد' || cleanUpper.includes('NEW')) {
+    rawStatus = 'New';
+  } else if (cleanUpper === 'PENDING' || cleanUpper === 'معلق' || cleanUpper.includes('PENDING') || cleanUpper.includes('معلق')) {
+    rawStatus = 'Pending';
+  } else if (cleanUpper === 'PROCESSING' || cleanUpper === 'قيد التجهيز' || cleanUpper === 'تجهيز' || cleanUpper.includes('PROCESSING') || cleanUpper.includes('تجهيز')) {
+    rawStatus = 'Processing';
+  } else if (cleanUpper === 'PRINTED' || cleanUpper === 'طباعة' || cleanUpper.includes('PRINT') || cleanUpper.includes('طباعة')) {
+    rawStatus = 'Printed';
+  } else if (cleanUpper === 'CANCELLED' || cleanUpper === 'CANCELED' || cleanUpper === 'ملغي' || cleanUpper === 'ملغى' || cleanUpper.includes('CANCEL') || cleanUpper.includes('ملغي')) {
+    rawStatus = 'Cancelled';
+  } else if (cleanUpper === 'DELIVERED' || cleanUpper === 'تم التسليم' || cleanUpper.includes('DELIVERED') || cleanUpper.includes('تسليم')) {
+    rawStatus = 'Delivered';
   }
   const status = rawStatus || 'Unknown';
 

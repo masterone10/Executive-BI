@@ -192,17 +192,38 @@ export function extractCanonicalStatus(actionText, statusText = '') {
   const targetText = toMatch ? toMatch[1].trim() : '';
 
   if (targetText) {
-    if (/cancel|ملغي|إلغاء|الغاء|رفض|مرتجع|reject|refused/i.test(targetText)) return 'Cancelled';
+    if (/cancel|ملغي|ملغى|إلغاء|الغاء|رفض|مرتجع|reject|refused/i.test(targetText)) return 'Cancelled';
     if (/print|طبع|طباعة/i.test(targetText)) return 'Printed';
     if (/pending|معلق|قيد.*الانتظار/i.test(targetText)) return 'Pending';
     if (/processing|تجهيز|قيد.*التجهيز/i.test(targetText)) return 'Processing';
     if (/delivered|تسليم|تم.*التسليم/i.test(targetText)) return 'Delivered';
     if (/shipping|شحن/i.test(targetText)) return 'Shipping';
     if (/collected|تحصيل|تم.*التحصيل/i.test(targetText)) return 'Collected';
-    if (/new|جديد/i.test(targetText)) return 'New';
+    if (/\bnew\b|جديد/i.test(targetText)) return 'New';
   }
 
-  if (/cancel|ملغي|إلغاء|الغاء|رفض|مرتجع|reject|refused/i.test(combined)) {
+  // Check direct canonical status tokens
+  const cleanTrimmed = combined.toLowerCase().replace(/['"؛;:]/g, ' ').trim();
+  if (/^(?:new|جديد|طلب جديد|قيد المراجعة)$/i.test(cleanTrimmed)) {
+    return 'New';
+  }
+  if (/^(?:pending|معلق|قيد الانتظار|في الانتظار)$/i.test(cleanTrimmed)) {
+    return 'Pending';
+  }
+  if (/^(?:printed|print|طباعة|طبع|تمت الطباعة|تم الطباعة)$/i.test(cleanTrimmed)) {
+    return 'Printed';
+  }
+  if (/^(?:processing|تجهيز|قيد التجهيز|جاري التجهيز)$/i.test(cleanTrimmed)) {
+    return 'Processing';
+  }
+  if (/^(?:cancelled|canceled|ملغي|ملغى|إلغاء|الغاء|رفض|مرتجع|reject|refused)$/i.test(cleanTrimmed)) {
+    return 'Cancelled';
+  }
+  if (/^(?:delivered|تسليم|تم التسليم|مسلم)$/i.test(cleanTrimmed)) {
+    return 'Delivered';
+  }
+
+  if (/cancel|ملغي|ملغى|إلغاء|الغاء|رفض|مرتجع|reject|refused/i.test(combined)) {
     return 'Cancelled';
   }
   if (/print|طبع|طباعة/i.test(combined)) {
@@ -223,7 +244,7 @@ export function extractCanonicalStatus(actionText, statusText = '') {
   if (/collected|تحصيل|تم.*التحصيل/i.test(combined)) {
     return 'Collected';
   }
-  if (/أضاف.*اوردر|اضاف.*اوردر|انشاء.*اوردر|إنشاء.*اوردر|اضافة.*اوردر|ايزي.*اوردر/i.test(combined)) {
+  if (/(?:^|\s)(?:new|جديد|طلب جديد|قيد المراجعة)(?:$|\s)/i.test(combined) || /أضاف.*اوردر|اضاف.*اوردر|انشاء.*اوردر|إنشاء.*اوردر|اضافة.*اوردر|ايزي.*اوردر/i.test(combined)) {
     return 'New';
   }
   if (/alt.*phone|رقم.*بديل|هاتف.*بديل|تليفون.*بديل|رقم.*هاتف.*آخر|رقم.*هاتف.*اخر/i.test(combined)) {
